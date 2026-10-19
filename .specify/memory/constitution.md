@@ -1,75 +1,81 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: (none) → 1.0.0
-Bump rationale: Initial ratification. Every principle and section is new; there
-                were no prior principles to remove or redefine. The principles
-                are carried from the two sibling services built to the same
-                pattern - service-cp-crime-informant-register (constitution
-                1.0.2, parity-first) and service-cp-crime-yot-results-distribution
-                (constitution 5.2.0, fix-first) - and re-grounded in the design
-                of this service, "Probation Results Distribution Service", rev
-                3.1 (2026-10-19). Neither sibling's stance is taken whole: the
-                design's D1 ("lift and shift") ports the rules and what is sent
-                verbatim and fixes the delivery defects around them, each as a
-                registered deviation (design §1.2, §7.0). Principle I is written
-                to that middle line.
+Version change: 1.0.0 → 1.1.0
+Bump rationale: MINOR. Design rev 3.3 records H8 (decided 2026-10-19; rows
+                A3-23 … A3-29): an unreadable youth switch no longer sends
+                nothing. The leg resolves it to the configured default,
+                `distribution.youth-switch.default-when-unreadable` (`ACTIVE`
+                unless set to `INACTIVE`), and the hearing is sent normally;
+                P16 moves from carried to fixed under DV-25. This materially
+                changes the guidance of Principles I, VI, VII and IX and of the
+                stack section, but removes no principle and invalidates no
+                practice (no business code had landed), so it is not MAJOR.
+                H9 (rev 3.3 rows A3-30 … A3-36: DLQ resubmission as a replay
+                route, the operations API in scope for replay and resend-leg,
+                forced resend) is NOT adopted by this amendment; the text that
+                H9 changes is left as it stood at 1.0.0, pending its own
+                amendment.
 
 Design citations: "design §n" in this document means a section of the design
-rev 3.1. Decision ids (H5, H7, D1, D4a, D10, Q15, ...), deviation ids (DV-n),
-defect ids (P01-P36), rule ids (R0-R12) and row ids (A2-n, A3-n) are the
-design's and are never renumbered here.
+rev 3.3. Decision ids (H5, H7, H8, D1, D4a, D10, Q15, ...), deviation ids
+(DV-n), defect ids (P01-P36), rule ids (R0-R12) and row ids (A2-n, A3-n) are
+the design's and are never renumbered here.
 
-Added sections:
-  - Core Principles
-      I.    Behaviour Parity with Registered Deviations
-      II.   Test-Driven Development
-      III.  Message-Contract First
-      IV.   Canonical JSON In, Typed Models Out
-      V.    SOLID with Ports and Adapters
-      VI.   Explicit Failure - Nothing Is Ever Swallowed
-      VII.  Privacy in Telemetry
-      VIII. Estate Conventions
-      IX.   Scope - the HMPPS Leg Only
-  - Technology Stack & Deployment
-  - Development Workflow & Quality Gates
-  - Governance
+Modified principles (1.1.0):
+  - I.   Behaviour Parity with Registered Deviations - P16 leaves the carried
+         list (fixed under DV-25); R3/R4 also run on a switch defaulted to
+         `ACTIVE`; the next free DV id is DV-26; the harness derives corpus
+         case 13 under DV-25.
+  - VI.  Explicit Failure - an unreadable switch is no longer a terminal
+         failure: `youth-switch-unreadable` leaves the leg and request reason
+         vocabularies; the defaulted read is logged at WARN, counted and
+         alerted, and the leg's outcome is whatever its send gives.
+  - VII. Privacy in Telemetry - the recorded `youth_switch` value set and the
+         bounded `defaulted` metric label.
+  - IX.  Scope - the youth switch bullet gains H8 and the go/no-go check that
+         the default equals the environment's live switch (A3-29).
+  - Technology Stack & Deployment - the youth-switch bullet names the default.
+  - Preamble and Governance - design rev 3.3 referenced.
 
-Removed sections: None.
+Added sections: None. Removed sections: None.
 
 Templates requiring updates:
-  - .specify/templates/plan-template.md       ✅ compatible - the "Constitution
-      Check" block is filled per feature by `/speckit-plan`; no structural
-      change required. Plan authors MUST gate on Principles I-IX and MUST
-      state the status of pre-build gate G1 (Principle III).
-  - .specify/templates/spec-template.md       ✅ compatible - no
-      constitution-specific content; spec authors MUST express behaviour in
-      terms of the queue message in and the HMPPS send out (Principle III),
-      not in terms of REST endpoints.
-  - .specify/templates/tasks-template.md      ✅ compatible - test tasks are
-      already mandatory and ordered before the implementation tasks they
-      guard (Principle II).
-  - .specify/templates/checklist-template.md  ✅ compatible - no changes.
-  - CLAUDE.md                                 ✅ aligned - written in the same
-      change: the message-contract rule in place of an API-first rule.
-  - .claude/rules/*.md, .claude/agents/*.md   ✅ aligned - written in the same
-      change; retained as quick-reference, and this constitution is
-      authoritative where they disagree.
+  - .specify/templates/*.md                   ✅ compatible - no
+      constitution-specific content changed.
+  - CLAUDE.md, README.md, doc/API_CONTRACTS.md, doc/CHANGELOG.md
+                                              ✅ aligned in the same change.
+  - .claude/rules/*.md, .claude/agents/*.md   ✅ aligned in the same change;
+      retained as quick-reference, and this constitution is authoritative
+      where they disagree.
+  - src/main/resources/application.yaml       ✅ the property
+      `distribution.youth-switch.default-when-unreadable` added (config only;
+      nothing reads it yet).
 
-Follow-up TODOs (open at ratification; each is open in the design, not here):
+Follow-up TODOs (each is open in the design, not here):
   - Pre-build gate G1 (design §6.6, §9.2): the interim HMPPS outbound schema
     is not yet derived or approved.
   - O-1 (design §4.8, §11.1): whether the operator actions get an HTTP front
     (the operations API). Until decided, actuator is the only HTTP surface.
+    Rev 3.3 narrows O-1 under H9; adopting that is the next amendment.
   - D13 (design §11.1): what is stored about each outbound message; this
     constitution applies the design's recommendation (digest-only) until the
     data owner decides.
-  - Corpus location (design §6.4): RESOLVED before the first push
-    (2026-10-19). SIT holds no production data, so the recorded corpus of SIT
-    payloads is committed to this repository under
-    `src/test/resources/corpus/` (Principle VII).
+  - The environment variable name `YOUTH_SWITCH_DEFAULT_WHEN_UNREADABLE` is
+    proposed by the design (row A3-24), not yet confirmed.
   - `doc/DEVIATIONS.md` is seeded from design §7.2 by the first feature that
-    lands behaviour; it does not exist at ratification.
+    lands behaviour; it does not exist yet.
+
+History:
+  - 1.0.0 (2026-10-19) - initial ratification against design rev 3.1, from
+    the sibling constitutions of service-cp-crime-informant-register (1.0.2,
+    parity-first) and service-cp-crime-yot-results-distribution (5.2.0,
+    fix-first), re-grounded in D1 ("lift and shift"). Corpus location
+    resolved before the first push: SIT payloads committed under
+    `src/test/resources/corpus/` (Principle VII).
+  - 1.1.0 (2026-10-19) - H8 adopted from design rev 3.3: an unreadable youth
+    switch defaults (default `ACTIVE`) and the hearing is sent; P16 fixed
+    under DV-25; next free DV id DV-26.
 -->
 
 # service-cp-crime-probation-results-distribution Constitution
@@ -87,10 +93,12 @@ attempt in its own processed log (design §1.1, §4.1).
 The legacy app reports success even when a send fails, keeps no record, logs
 whole payloads at info, and sends nothing — silently — for a share whose
 switch read or Redis read fails (design §1.1, §7.1). This service exists to
-end the silence, not to change what is sent. Management's instruction is "lift
-and shift" (D1): the rules and the body are copied as they are; the delivery
-and reliability defects around them are fixed, and every intended difference
-is a numbered, tested deviation.
+end the silence, not to change what is sent: the one send it makes where the
+legacy makes none — a hearing whose switch cannot be read, sent with the
+configured default applied — is a registered deviation (H8, DV-25).
+Management's instruction is "lift and shift" (D1): the rules and the body are
+copied as they are; the delivery and reliability defects around them are
+fixed, and every intended difference is a numbered, tested deviation.
 
 ## Core Principles
 
@@ -106,17 +114,21 @@ legacy Node code** over a corpus of real hearing payloads (design §6.1).
 
 - **The rules are ported verbatim** (D1; design §5): R0–R12 in the legacy
   order, one Java method per JavaScript rule, rule ids stable (row A3-2). R3
-  and R4 (the youth rules) run only when the switch reads `ACTIVE`, in the
-  legacy's place (H7; row A3-17). Where a rule tests "truthy", the port
+  and R4 (the youth rules) run only when the switch reads `ACTIVE`, or cannot
+  be read and the configured default is `ACTIVE`, in the legacy's place (H7,
+  H8; rows A3-17, A3-25). Where a rule tests "truthy", the port
   reproduces JavaScript truthiness, including for the switch's own
   `permissions[0].active` (design §5).
 - **What is sent does not change in this delivery** (D10, decided
-  2026-10-15). Known quirks are carried and reported, not fixed: P16 (an
-  unreadable switch sends nothing and the run completes), P17 (the first
-  permission decides), P18 (with the switch on, R4 drops a court application
-  with no `masterDefendant`), P35 (`plea.delegatedPowers` not removed; pending
-  D10). A reviewer who finds one of these "obviously wrong" is looking at a
-  carried defect, not a bug in the port.
+  2026-10-15). Known quirks are carried and reported, not fixed: P17 (the
+  first permission decides), P18 (with the switch on, R4 drops a court
+  application with no `masterDefendant`), P35 (`plea.delegatedPowers` not
+  removed; pending D10). A reviewer who finds one of these "obviously
+  wrong" is looking at a carried defect, not a bug in the port. P16 (an
+  unreadable switch sends nothing) is no longer among them: it is fixed under
+  **DV-25** (H8, decided 2026-10-19; row A3-26) — the body sent is the one
+  the legacy sends for the same payload with the switch in the configured
+  default state, so no payload rule changes.
 - **Every catalogued defect P01–P36 has exactly one disposition** from the
   classification of design §7.0: fixed by construction (a DV-n), carried
   (pinned by the harness), pending external, moot, or out of scope (H5). The
@@ -128,7 +140,8 @@ legacy Node code** over a corpus of real hearing payloads (design §6.1).
   it**. An undocumented behaviour change is a defect, whether or not it looks
   like an improvement. DV ids are never reused: DV-01, DV-02, DV-03 and DV-15
   are withdrawn; DV-11 and DV-12 are unallocated until D10; DV-18 to DV-22 are
-  reserved; the next free id is **DV-25** (design §7.0).
+  reserved; DV-25 is the unreadable-switch default (H8); the next free id is
+  **DV-26** (design §7.0; row A3-26).
 - **Standing rule** (design §7.0): where the legacy throws and swallows, the
   port throws and reports. A carried crash still sends nothing for its leg,
   but it becomes `FAILED(rules-exception)`, logged at ERROR and counted. It
@@ -139,12 +152,17 @@ legacy Node code** over a corpus of real hearing payloads (design §6.1).
   canonicalisation, BigDecimal throughout; a registered deviation that
   changes output is asserted **by derivation** from the oracle and the stated
   rule, never by editing the golden; **any unregistered difference fails the
-  build**. The exact bytes sent are pinned separately, by `body_digest` and
-  fixed test vectors.
+  build**. Corpus case 13 (the switch read fails) is such a derived case:
+  its expected output is the oracle's `ACTIVE` output for the same payload,
+  where the legacy gives "no message", registered under DV-25 and derived for
+  every corpus payload, not recorded (row A3-28). The exact bytes sent are
+  pinned separately, by `body_digest` and fixed test vectors.
 - **The `shadow` profile** (design §6.5) is the run-time half of the same
   discipline: the HMPPS publisher replaced by a capture sink, gateway egress
   denied, and a per-hearing comparison against the deployed SIT artefact.
-  Which days and how many is D8 (open).
+  A defaulted switch read yields a body where the legacy produced none; the
+  comparison classifies it under DV-25, not as an unregistered difference
+  (row A3-29). Which days and how many is D8 (open).
 
 **Rationale**: HMPPS, the receiver behind the gateway, is unchanged and has
 not been asked to accept anything new. The only safe migration is one that is
@@ -350,12 +368,25 @@ failure path therefore ends in exactly one of:
    `PARKED` leg (`leg-exhausted`, item 1). The reason set is closed:
    `{validation, collision, exhausted, leg-exhausted}` (row A2-34).
 3. **Record a terminal failure and complete** — `receiver-rejected`,
-   `contract-invalid` and `rules-exception` are terminal at once; and an
-   unreadable youth switch is `FAILED(youth-switch-unreadable)` at once with
-   nothing sent and the message completed, as the legacy completes today
-   (P16 carried), while the request is settled `FAILED` with no exhausted
-   message id, replayable and resend-eligible (rows A3-12, A3-21). A completed
+   `contract-invalid` and `rules-exception` are terminal at once. A completed
    message is not a silent one: what was not sent is on a row.
+
+**An unreadable youth switch is not a failure path** (H8; rows A3-23,
+A3-25). An HTTP failure after the legacy 3 × 1 s retry, a timeout, an empty
+or missing `permissions` list, a `null` `permissions[0]`, an unparseable
+body, or the switch stage passing its 25 s budget resolves to
+`distribution.youth-switch.default-when-unreadable` (`ACTIVE` unless set to
+`INACTIVE`), and the leg continues — redact → validate + body digest → send —
+on a queue delivery, a replay and a resend alike. Its outcome is whatever
+those stages give, settled like any other run; nothing about the read itself
+parks, fails or dead-letters. The row records
+`youth_switch = UNREADABLE_DEFAULTED_ACTIVE` (or `_INACTIVE`); the read is
+logged at WARN with its cause, counted and alerted (design §4.4, §10). It is
+not silent: the assumption is on the row, in the metric and behind an alert.
+`youth-switch-unreadable` is no longer a leg or request reason: it is absent
+from the (status, reason) and (leg, reason) vocabularies, the `LegReason`
+and `FailureReason` enums and their CHECKs; the request failure reasons are
+`leg-exhausted` and `rolled-back` (design §4.5, §4.6).
 
 **Alerting is required in addition, never instead.** Whichever outcome is
 taken, a failure MUST also produce a sanitised ERROR log line and increment a
@@ -386,7 +417,9 @@ Specific rules:
 
 **Rationale**: the legacy reports success when a send fails, keeps no record,
 and leaves an info line where a hearing went unsent (P05, P06, P16; design
-§1.1). A loud, recorded, counted failure is a success of this design; a quiet
+§1.1). Where a hearing can still be sent safely — an unreadable switch, with
+its default stated, recorded and alerted (H8) — sending it beats a recorded
+non-send. A loud, recorded, counted failure is a success of this design; a quiet
 one is the only true outage.
 
 ### VII. Privacy in Telemetry (NON-NEGOTIABLE)
@@ -400,16 +433,19 @@ service does neither (DV-09).
 - The permitted correlation set at `INFO` is: `requestId`, `hearingId`,
   `hearingDay`, `source`, the broker `sequenceNumber` and `deliveryCount`,
   `leg`, status and bounded reason, HTTP status, `body_digest`, the run's
-  `runOrigin`, the `youth_switch` state read and its bounded cause, counts and
-  timings (design §10.2). Every log line about processing MUST carry
-  `requestId` and `hearingId`.
+  `runOrigin`, the `youth_switch` value recorded (`ACTIVE`, `INACTIVE`,
+  `UNREADABLE_DEFAULTED_ACTIVE`, `UNREADABLE_DEFAULTED_INACTIVE`) and, for a
+  defaulted read, its bounded cause, counts and timings (design §10.2).
+  Every log line about processing MUST carry `requestId` and `hearingId`.
 - Whole payloads and outbound bodies MUST NOT be logged at any level in a
   deployed environment. Where a payload dump is genuinely needed for local
   diagnosis it goes behind `DEBUG` **and** an explicit local-only profile
   guard.
 - Metric labels and dimensions are logs too: never label a metric with
-  anything identifying a person. `reason`, `cause`, `status` and `origin` are
-  bounded enums — never raw exception text, never a fragment of a body or a
+  anything identifying a person. `reason`, `cause`, `defaulted`, `status` and
+  `origin` are bounded enums — `probation_youth_switch_unreadable_total`
+  carries `cause` and `defaulted` (`ACTIVE` | `INACTIVE`) and nothing more
+  (row A3-27) — never raw exception text, never a fragment of a body or a
   far end's words.
 - What is stored about each outbound message is **digest-only** — status,
   response code, digests and reproduction identifiers, no body — unless the
@@ -492,10 +528,24 @@ history let them read it the way they read everything else.
   the users-groups `EMYouthFilter` permission as the legacy does and decides
   by `permissions[0].active`; `ACTIVE` applies R3 and R4. The read keeps the
   legacy's retry (3 attempts, fixed 1 s, the legacy's stop rule — row A3-13);
-  its finite timeouts are the one difference (DV-24). The service follows the
+  its finite timeouts are one difference (DV-24). The service follows the
   live toggle, so cutover carries no youth behaviour change; whether the
   toggle changes (CHD-2701) is the business's choice, made in users-groups
   data, not in this service (design §1.4).
+- **An unreadable switch defaults and sends** (H8, decided 2026-10-19;
+  DV-25, the other difference). The default,
+  `distribution.youth-switch.default-when-unreadable` (`ACTIVE` | `INACTIVE`,
+  default `ACTIVE` — production's live state today; env
+  `YOUTH_SWITCH_DEFAULT_WHEN_UNREADABLE`, name proposed), is validated and
+  logged at startup (row A3-24). It is configuration, not a read of
+  users-groups, so it does not follow the toggle by itself, and a mismatch
+  fails either way: `ACTIVE` against a live `INACTIVE` removes, in an outage,
+  youth defendants the live setting would send; `INACTIVE` against a live
+  `ACTIVE` sends youth defendants production removes — the data-protection
+  direction, and the more serious. **The property MUST equal the
+  environment's live `EMYouthFilter` reading**, checked at the go/no-go and
+  again after any CHD-2701 change (design §9.2 row 7, §9.5 row 5; row
+  A3-29). It is the one coupling to the toggle; it is not a cutover lever.
 - **The service does not read the cutover flag** `ProbationResultsDistributionService`
   (Q15): the producer and the legacy triggers do. Which implementation is live
   is decided there, and nothing in this service — no property, endpoint or
@@ -547,7 +597,9 @@ here" change re-opens decisions the business has taken.
   API fallback, which runs with the command's `userId` or, when it is absent,
   the configured system user (DV-17). A miss everywhere is transient.
 - **Youth switch**: the users-groups permission read per message, legacy retry,
-  connect 2 s / read 5 s (DV-24).
+  connect 2 s / read 5 s (DV-24); an unreadable read resolves to
+  `distribution.youth-switch.default-when-unreadable`, default `ACTIVE`
+  (DV-25).
 - **Outbound**: Spring `RestClient` POST to the HMPPS route, with
   `Ocp-Apim-Subscription-Key` from configuration (the existing key, D4a) and
   connect/read timeouts; `RetryPolicy` copied from YOT (408, 429, 5xx and
@@ -636,10 +688,11 @@ retained as quick-reference material and MUST be kept in sync.
 The design — the Confluence page "Probation Results Distribution Service" in
 the CRA space
 (https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service),
-rev 3.1 at ratification — is the source of truth for names and
-behaviour. This constitution states the principles the design's decisions
-imply; it does not take decisions the design leaves open. A later design
-revision that changes a decision cited here is adopted by amendment.
+rev 3.1 at ratification and rev 3.3 at amendment 1.1.0 (H8 only; H9
+awaits its own amendment) — is the source of truth for names and behaviour.
+This constitution states the principles the design's decisions imply; it
+does not take decisions the design leaves open. A later design revision that
+changes a decision cited here is adopted by amendment.
 
 **Amendment procedure**:
 
@@ -667,4 +720,4 @@ revision that changes a decision cited here is adopted by amendment.
   reverted or registered retrospectively with named approval. DV ids are
   stable: renumber never, reuse never, append only.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-19 | **Last Amended**: 2026-10-19
+**Version**: 1.1.0 | **Ratified**: 2026-10-19 | **Last Amended**: 2026-10-19

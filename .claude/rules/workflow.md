@@ -60,8 +60,9 @@ A change ships only when all applicable gates are green:
    back (producer-chosen text); the reason code is.
 2. **Settlement gate.** Every path through the message listener performs exactly one explicit
    `complete()` / `abandon()` / `deadLetter()`, after the state that justifies it is written. Tests
-   cover the success, park-and-redeliver, final-delivery and dead-letter paths, and the
-   unreadable-youth-switch path (message completed, leg and request `FAILED(youth-switch-unreadable)`).
+   cover the success, park-and-redeliver, final-delivery and dead-letter paths. An unreadable youth
+   switch is not a path of its own: the leg applies the configured default and settles by its send
+   (H8).
    A path that can return unsettled fails review.
 3. **Idempotency gate.** A redelivery or republish of the same `(source, requestId)` never sends a
    second time; a terminal-success leg is never touched again. Proven by test, not by inspection.
@@ -70,8 +71,9 @@ A change ships only when all applicable gates are green:
    deviation that changes output is asserted by derivation; a golden changes only in the same commit
    as a `doc/DEVIATIONS.md` entry; **any unregistered difference fails the build**.
 5. **Deviation gate.** Every intended difference from the legacy has a DV row naming its pinning
-   test, and every carried defect (P16, P17, P18, ...) stays carried — "it looked wrong so I fixed
-   it" is a failed gate. DV ids are never reused; the next free one is DV-25.
+   test, and every carried defect (P17, P18, P35, ...) stays carried — "it looked wrong so I fixed
+   it" is a failed gate. P16 is fixed under DV-25 (H8), not carried. DV ids are never reused; the
+   next free one is DV-26.
 6. **Outbound-contract gate.** No HMPPS POST without validation against the approved interim schema;
    a body that fails is `FAILED(contract-invalid)`, not sent, and alerted. Nothing VEP-shaped is
    added (H5).

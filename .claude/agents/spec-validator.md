@@ -23,7 +23,7 @@ This service is a message-in, **redact-and-send** service: a lift-and-shift port
 |---|----------|-------|------------------|
 | 3 | Redis `EXT_{hearingId}_{hearingDay}_result_` (and the undated key) | results | A different key order (dated, then undated, then the query API); a payload persisted; an unparseable cache value treated as anything but a miss |
 | 4 | Results query API `hearingDetails/{hearingId}?hearingDate=` | results | Wrong path or Accept type; `CJSCPPUID` not the command's `userId` (or the system user when absent, DV-17); an empty body or `{}` not treated as a miss (DV-10) |
-| 5 | Users-groups permission read by feature key (`EMYouthFilter`) | users-groups | Not read per message; read before the payload fetch; a permission other than `permissions[0]` deciding (P17 is carried); a retry rule other than the legacy's; timeouts other than DV-24's |
+| 5 | Users-groups permission read by feature key (`EMYouthFilter`) | users-groups | Not read per message; read before the payload fetch; a permission other than `permissions[0]` deciding (P17 is carried); a retry rule other than the legacy's; timeouts other than DV-24's; an unreadable read not resolved to `distribution.youth-switch.default-when-unreadable` (H8, DV-25) |
 | 6 | The APIM gateway's HMPPS route | platform | A new subscription, header or certificate (D4a: no gateway change); a POST without `Ocp-Apim-Subscription-Key` from configuration |
 
 **Properties of this service's own shape:**
@@ -32,7 +32,7 @@ This service is a message-in, **redact-and-send** service: a lift-and-shift port
 |---|----------|-----------------|
 | 7 | **Legacy behaviour or a registered deviation** | the legacy HMPPS code in `cpp-context-azure-legalaidagency` at `122e2152` (the oracle, executed) + `doc/DEVIATIONS.md` (seeded from design §7.2) + the parity harness in `src/test/` |
 | 8 | **Every admitted share ends with a recorded outcome per leg; every delivery is settled once** | constitution Principle VI; design §4.5 |
-| 9 | **Scope** — HMPPS only (H5); youth switch at legacy parity (H7); no cutover-flag read (Q15); no business REST | constitution Principle IX |
+| 9 | **Scope** — HMPPS only (H5); youth switch at legacy parity (H7), an unreadable one defaulted and sent (H8); no cutover-flag read (Q15); no business REST | constitution Principle IX |
 
 > Where this file and the constitution disagree, the constitution wins.
 
@@ -69,9 +69,9 @@ This service is a message-in, **redact-and-send** service: a lift-and-shift port
 ### 2. Idempotency and state
 
 - `processed_request` keyed `(source, request_id)`; `outbound_message` one row per leg per attempt, `UNIQUE (source, request_id, leg, attempt)`. The copied informant DDL is byte-identical; additions are in the ALTER section. Every CHECK the design names is present; `SchemaVocabularyIT` matches the SQL value sets to the enums.
-- Request statuses `RECEIVED`, `RETRYING`, `COMPLETED`, `FAILED`; completion reasons `both-legs-terminal`, `recovered`; failure reasons `leg-exhausted`, `rolled-back`, `youth-switch-unreadable`. **No statement moves a `COMPLETED` row.**
+- Request statuses `RECEIVED`, `RETRYING`, `COMPLETED`, `FAILED`; completion reasons `both-legs-terminal`, `recovered`; failure reasons `leg-exhausted`, `rolled-back` (`youth-switch-unreadable` removed, H8). **No statement moves a `COMPLETED` row.**
 - Leg statuses `PENDING`, `SENT`, `NOT_APPLICABLE`, `PARKED`, `FAILED`, each non-`SENT` with a bounded reason; `leg` has the one value `HMPPS`. A `NOT_SENT_DISABLED` status, a `vep-*` reason or a second leg value is drift (H5).
-- An unreadable youth switch: leg and request `FAILED(youth-switch-unreadable)`, `exhausted_message_id` NULL, message completed, no `PARKED(youth-switch-unreadable)` anywhere. Any other handling is a HIGH finding.
+- An unreadable youth switch (H8, DV-25): resolved to `distribution.youth-switch.default-when-unreadable` (default `ACTIVE`), recorded `youth_switch = UNREADABLE_DEFAULTED_ACTIVE` or `UNREADABLE_DEFAULTED_INACTIVE`, R3/R4 when the value is `ACTIVE`, then redact → validate → send as any run; counted on `probation_youth_switch_unreadable_total{cause, defaulted}`. `youth-switch-unreadable` in any vocabulary, enum or CHECK, or a send withheld for the read itself, is a HIGH finding.
 - Leg-outcome writes guarded by the claim token; a zero-row update is a counted stale-runner rejection with no settlement.
 - A comment or javadoc promising strict at-most-once is drift: the crash-after-2xx window is at-least-once.
 
@@ -85,7 +85,7 @@ This service is a message-in, **redact-and-send** service: a lift-and-shift port
 ### 4. Legacy behaviour or a registered deviation
 
 - Every behaviour difference from the oracle maps to a DV row in `doc/DEVIATIONS.md` naming a pinning test that exists and passes. A difference with no row is a HIGH finding; so is a row with no test.
-- **A carried defect "fixed" is a HIGH finding**: P16 (unreadable switch sends nothing), P17 (`permissions[0]` decides), P18 (with the switch on, an application with no `masterDefendant` is dropped), P35 (`plea.delegatedPowers` kept). No payload change in this delivery (D10).
+- **A carried defect "fixed" is a HIGH finding**: P17 (`permissions[0]` decides), P18 (with the switch on, an application with no `masterDefendant` is dropped), P35 (`plea.delegatedPowers` kept). P16 is fixed under DV-25 (H8), not carried; corpus case 13 is derived from the oracle's `ACTIVE` output. No payload change in this delivery (D10).
 - R0–R12 ported in the legacy order; R3/R4 only when the switch is `ACTIVE`; JavaScript truthiness reproduced; the input deep-copied once on entry.
 - The harness compares semantically after canonicalisation, BigDecimal throughout, in both switch states; registered deviations asserted by derivation, not by edited goldens.
 - DV ids never reused; withdrawn ids stay withdrawn.

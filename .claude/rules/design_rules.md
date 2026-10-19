@@ -4,7 +4,8 @@ This service is a **message-driven pipeline**, not a REST application. There is 
 and no business HTTP API — actuator only. The operator actions (replay, resend-leg, pause and resume
 intake, submit-hearing, purge-queue) are decided capabilities that run as command-line runners in
 the image; whether they also get an HTTP front under `/operations/**` is open (design §4.8, O-1).
-Everything below assumes that shape. Section references are to the design, rev 3.1.
+Everything below assumes that shape. Section references are to the design, rev 3.3 (H8 adopted;
+H9 not yet).
 
 ## Pipeline Architecture (ports and adapters)
 
@@ -94,8 +95,9 @@ typed facade where one helps. Do not write a typed model of the hearing.
 - `COMPLETED` names a `completion_reason` ∈ {`both-legs-terminal`, `recovered`} (the first keeps its
   name with one leg, row A3-7). **No statement moves a `COMPLETED` row** — replay, recovery and
   rollback included (row A2-27).
-- `FAILED` names a `failure_reason` ∈ {`leg-exhausted`, `rolled-back`, `youth-switch-unreadable`};
-  only `leg-exhausted` carries an `exhausted_message_id`. `failure_reason` is NULL off `FAILED`.
+- `FAILED` names a `failure_reason` ∈ {`leg-exhausted`, `rolled-back`}; only `leg-exhausted`
+  carries an `exhausted_message_id`. `youth-switch-unreadable` is not a reason, of the request or of
+  a leg (H8; row A3-25). `failure_reason` is NULL off `FAILED`.
 - A `FAILED` request is **replayable**: the replay action re-sends the stored command under a fresh
   `messageId`; the guard's replay statement sets `replayed_at`, and every delivery while it is set
   follows the replay column of the §4.5 eligibility table (row A2-60).
@@ -106,7 +108,7 @@ typed facade where one helps. Do not write a typed model of the hearing.
 admit (guard, claim)
  └─ fetch payload (EXT_ day → EXT_ no-day → query)   miss everywhere ⇒ PARKED(payload-unavailable)
      └─ HMPPS leg: switch → redact → validate + body_digest → send
-                   switch UNREADABLE ⇒ FAILED(youth-switch-unreadable) at once; nothing sent; no park
+                   switch UNREADABLE ⇒ the configured default (ACTIVE unless set) and carry on; no park
  settle from the leg's result
 ```
 
@@ -118,9 +120,14 @@ Settlement:
 - leg `PARKED` (`payload-unavailable`, `gateway-transient`) → request `RETRYING` (failure reason
   NULL), message abandoned for redelivery; on the **final** delivery the leg is `FAILED(reason)`, the
   request `FAILED(leg-exhausted)` and the message dead-lettered `leg-exhausted`;
-- leg `FAILED(youth-switch-unreadable)` → the **message is completed** (legacy parity, P16 carried),
-  the **request is `FAILED(youth-switch-unreadable)`** with no exhausted message id — replayable, the
-  leg resend-eligible, never counted towards recovery (rows A3-12, A3-21).
+- an **unreadable switch is not a settlement case** (H8; row A3-23): the leg resolves it to
+  `distribution.youth-switch.default-when-unreadable` (`ACTIVE` | `INACTIVE`, default `ACTIVE`),
+  records `youth_switch = UNREADABLE_DEFAULTED_ACTIVE` (or `_INACTIVE`), runs R3/R4 when the value is
+  `ACTIVE`, and goes on to validate and send on a queue delivery, a replay and a resend alike; it
+  settles by whatever the send gives. The read is logged at WARN with its cause and counted on
+  `probation_youth_switch_unreadable_total{cause, defaulted}`; the alert stays.
+- `outbound_message.youth_switch` ∈ {`ACTIVE`, `INACTIVE`, `UNREADABLE_DEFAULTED_ACTIVE`,
+  `UNREADABLE_DEFAULTED_INACTIVE`}, NULL before the read, tied to no reason (row A3-25).
 
 Rules:
 
@@ -182,15 +189,21 @@ The rules and what is sent are **lift-and-shift** (D1): ported verbatim, quirks 
   deviation by derivation and **fails on any unregistered difference**.
 - Do NOT "fix" behaviour that looks wrong while porting. Carried, deliberately: the first permission
   decides the switch (P17); with the switch on, an application with no `masterDefendant` is dropped
-  (P18); an unreadable switch sends nothing for that hearing (P16 — made visible, not changed);
-  `plea.delegatedPowers` is not removed (P35, pending D10). No payload change in this delivery (D10).
+  (P18); `plea.delegatedPowers` is not removed (P35, pending D10). No payload change in this
+  delivery (D10).
+- P16 (an unreadable switch sends nothing) is **fixed under DV-25** (H8), not carried: the body sent
+  is the legacy's body for the same payload with the switch in the configured default state. Corpus
+  case 13 (the switch read fails) expects the oracle's `ACTIVE` output, asserted by derivation, never
+  by editing the golden; in the shadow run the comparison classifies a defaulted read under DV-25.
+  The next free DV id is DV-26.
 - JavaScript truthiness is reproduced wherever a rule tests "truthy" (an empty array is truthy;
   `null`, absent, `false`, `0` and `""` are not).
 - Fixed by construction, each a DV: timeouts and bounded retries on the POST (DV-04), the real
   outcome recorded (DV-05), failures at ERROR and counted (DV-06), the Redis outage falling back
   (DV-07), no duplicate sends (DV-08), no payload in logs (DV-09), an empty answer as a miss (DV-10),
   Lettuce and verified TLS (DV-13, DV-14), the closed schema (DV-16), the fallback without `userId`
-  (DV-17), the results-read retry (DV-23), the users-groups timeouts (DV-24).
+  (DV-17), the results-read retry (DV-23), the users-groups timeouts (DV-24), the unreadable-switch
+  default (DV-25).
 - Golden files: Jest fixtures copied byte-identical into `src/test/resources/fixtures/`; every Jest
   case gets a JUnit twin. The recorded corpus covers both switch states and both payload forms.
   The recorded corpus is **SIT payloads only**, committed under `src/test/resources/corpus/` (SIT holds

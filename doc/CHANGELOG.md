@@ -15,6 +15,17 @@ assertion in the parity harness.
 
 ## [Unreleased]
 
+### Changed
+- **Constitution 1.1.0 — an unreadable youth switch defaults and sends.** Design decision H8: a
+  youth switch that cannot be read resolves to `distribution.youth-switch.default-when-unreadable`
+  (`ACTIVE` by default), and the hearing is sent as normal. Under constitution 1.0.0 (design
+  rev 3.1) the guidance was that nothing would be sent and the leg recorded
+  `FAILED(youth-switch-unreadable)`; no code implemented it. P16 is now fixed under deviation DV-25.
+  `youth-switch-unreadable` is no longer a failure reason. `youth_switch` records
+  `UNREADABLE_DEFAULTED_ACTIVE` or `UNREADABLE_DEFAULTED_INACTIVE`. The unreadable counter gains a
+  `defaulted` label. The property is added to `application.yaml`
+  (`YOUTH_SWITCH_DEFAULT_WHEN_UNREADABLE`). The engineering guidance is updated to match.
+
 ### Added
 - **Initial scaffold.**
   - **Build and quality gates.** A Gradle build on a Java 25 toolchain, with Spring Boot 4.1,

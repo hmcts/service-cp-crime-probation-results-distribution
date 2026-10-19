@@ -24,7 +24,9 @@ no record and swallowed failures. Each fix is a registered deviation with its ow
 - The service is **HMPPS-only**. The function app's second receiver is not built, and it is
   decommissioned with the app.
 - The youth filter is **kept at legacy parity**. The service follows whatever the live
-  `EMYouthFilter` toggle says, so cutover changes no youth behaviour.
+  `EMYouthFilter` toggle says, so cutover changes no youth behaviour. If the switch cannot be
+  read, the configured default (`ACTIVE` unless set otherwise) is assumed and the hearing is
+  still sent (H8, DV-25); that default must match the live toggle.
 
 | Field     | Value                                                 |
 |-----------|-------------------------------------------------------|
@@ -85,8 +87,10 @@ cpp-context-results (WildFly)                     probation-results-distribution
   - The users-groups `EMYouthFilter` permission is read once per message, with the legacy's
     3 × 1 s retry and finite timeouts.
 - **Pipeline.** The HMPPS rules are a pure function over the payload. The youth rules apply only
-  while the switch reads active. If the switch cannot be read, nothing is sent for that hearing, as
-  today, and the leg is recorded `FAILED(youth-switch-unreadable)`.
+  while the switch reads active. If the switch cannot be read, the leg assumes the configured
+  default (`ACTIVE`, matching production today) and the hearing is sent as normal. Today nothing is
+  sent in that case. The row records `UNREADABLE_DEFAULTED_ACTIVE` (or `_INACTIVE`), and the read
+  is counted and alerted (DV-25).
 - **Outbound.** There is one HTTPS POST to the APIM gateway's HMPPS route. It carries the existing
   gateway subscription key, so the gateway itself does not change. Before the POST, the body is
   validated against a closed interim schema. Transient failures (408, 429, 5xx and I/O) are
@@ -217,6 +221,7 @@ nothing to borrow.
 | `USERSGROUPS_BASE_URL` | `distribution.usersgroups.base-url` | `http://localhost:8080` | The youth-switch read, and the operations API's group resolution |
 | `USERSGROUPS_SYSTEM_USER_ID` | `distribution.usersgroups.system-user-id` | empty | **Required.** Key Vault |
 | `EM_YOUTH_FILTER_FEATURE_KEY` | `distribution.usersgroups.youth-filter-key` | `EMYouthFilter` | The permission key the legacy reads |
+| `YOUTH_SWITCH_DEFAULT_WHEN_UNREADABLE` | `distribution.youth-switch.default-when-unreadable` | `ACTIVE` | `ACTIVE` or `INACTIVE`: the value assumed when the youth switch cannot be read. Logged at startup. **Must equal the environment's live `EMYouthFilter` state**; check it at go-live and after any change to the switch. Variable name proposed |
 | `HMPPS_PUBLISH_URL` | `distribution.hmpps.url` | empty | **Required**, https (relaxed under the `local` profile only). The gateway's HMPPS route |
 | `GATEWAY_SUBSCRIPTION_KEY` | `distribution.gateway.subscription-key` | empty | **Required.** Sent as `Ocp-Apim-Subscription-Key`. Key Vault, never committed |
 | `AUTHZ_HTTP_ENABLED` | `authz.http.enabled` | `true` | `cp-auth-rules-filter`, default-deny |

@@ -11,7 +11,9 @@ leg per attempt in its own processed log.
 It is a **lift-and-shift** port (design decision D1): the rules and what is sent are copied
 verbatim, quirks included, and the delivery and reliability defects around them are fixed — each as
 a numbered deviation (DV-n) with its own pinning test. It is **HMPPS-only**: the legacy's VEP leg is
-not built (H5). The youth switch is **retained at legacy parity** (H7).
+not built (H5). The youth switch is **retained at legacy parity** (H7), except that a switch that
+cannot be read resolves to the configured default (`ACTIVE` unless set otherwise) and the hearing is
+sent (H8, DV-25).
 
 ## Programme
 Crime Common Platform (CPP) — Modern by Default (MbD)
@@ -32,7 +34,7 @@ Jira: none — this work carries no ticket; features land on `main` through pull
 ## Key Documentation
 | Document | Location |
 |---|---|
-| **Design (authoritative)** | Confluence — [Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service) (CRA space), rev 3.1. This repo carries **no** design narrative; do not create `doc/*_DESIGN.md` or `SOLUTION_BRIEF.md` here |
+| **Design (authoritative)** | Confluence — [Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service) (CRA space), rev 3.3 (H8 adopted; H9 not yet). This repo carries **no** design narrative; do not create `doc/*_DESIGN.md` or `SOLUTION_BRIEF.md` here |
 | Constitution | `.specify/memory/constitution.md` |
 | Contracts | `doc/API_CONTRACTS.md` |
 | Deviation register | `doc/DEVIATIONS.md` — seeded from design §7.2 by the first feature that lands behaviour; not present yet |
@@ -65,10 +67,13 @@ deviation register after implementation.
 The legacy HMPPS code at `cpp-context-azure-legalaidagency` `122e2152` is the oracle for every
 behaviour that is not a registered deviation, recorded by executing it over a corpus in both youth
 switch states. Every intended difference is a DV row in `doc/DEVIATIONS.md` naming its pinning
-test; a difference without a row is reverted. Carried quirks stay carried — P16 (an unreadable
-switch sends nothing; now recorded `FAILED(youth-switch-unreadable)` and alerted), P17 (the first
+test; a difference without a row is reverted. Carried quirks stay carried — P17 (the first
 permission decides), P18 (with the switch on, an application with no `masterDefendant` is dropped),
-P35. DV ids are never reused; the next free one is DV-25. See constitution Principles I and IX.
+P35. P16 (an unreadable switch sends nothing) is fixed under DV-25 (H8): the leg applies
+`distribution.youth-switch.default-when-unreadable` and sends, recording
+`youth_switch = UNREADABLE_DEFAULTED_<value>`; corpus case 13 derives its expected output from the
+oracle's `ACTIVE` output. DV ids are never reused; the next free one is DV-26. See constitution
+Principles I and IX.
 
 ## Scope Rule
 HMPPS only — no VEP projection, sender, schema, stub, key or flag (H5). The service does **not**

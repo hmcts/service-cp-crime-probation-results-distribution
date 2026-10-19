@@ -73,7 +73,9 @@ private CachedHearingPayloadAdapter adapter;
   starts only if its worst case fits before the stage deadline, the wait included)
 - The users-groups permission read uses the legacy's rule instead (`LegacyGetRetry`: 3 attempts,
   fixed 1 s wait, retry only an error without a response or a status above 429), connect 2 s /
-  read 5 s (DV-24)
+  read 5 s (DV-24). A read that stays unreadable resolves to
+  `distribution.youth-switch.default-when-unreadable` (`ACTIVE` | `INACTIVE`, default `ACTIVE`,
+  validated and logged at startup) and the leg carries on (DV-25)
 - No client certificate; the gateway key is `Ocp-Apim-Subscription-Key` from configuration
 - Exact CPP vendor media types on the internal reads; asserted in tests
 
@@ -104,7 +106,9 @@ private CachedHearingPayloadAdapter adapter;
 - MDC on every message: `requestId`, `hearingId`, `hearingDay`, `source` (cleared in a `finally`)
 - `LoggingEventCompositeJsonEncoder` emits structured JSON unconditionally (`logback.xml`)
 - One log line per leg outcome: status, reason, HTTP status, body digest, `runOrigin`, the
-  `youth_switch` state read and, for an unreadable switch, its bounded cause
+  `youth_switch` value recorded (`ACTIVE`, `INACTIVE`, `UNREADABLE_DEFAULTED_ACTIVE`,
+  `UNREADABLE_DEFAULTED_INACTIVE`) and, for a defaulted read, its bounded cause; a defaulted read is
+  logged at WARN
 - NEVER use `System.out.println`, `System.err.println`, or `Throwable#printStackTrace()`
 - NEVER log secrets, tokens, subscription keys or connection strings
 - **NEVER log defendant PII at `info` or above**, and never a payload or outbound body at any level

@@ -137,9 +137,9 @@ park the message as `MaxDeliveryCountExceeded`. Each settlement is counted in
 | `exhausted` | Written on the final permitted delivery by the inherited guard paths — a delivery not admitted (including a replay deferred over a `PENDING` resend row), a redelivery under the identity that exhausted the request, a stale runner — and by the listener's store-outage and unexpected-run-failure hand-backs (design §4.5, row A2-34) |
 | `leg-exhausted` | The final delivery still has a `PARKED` leg. The request becomes `FAILED` and records the exhausted `messageId` |
 
-A youth switch that cannot be read is **not** a dead-letter. The message is completed and the
-request is settled `FAILED(youth-switch-unreadable)`. It stays replayable, and the leg can be
-resent.
+A youth switch that cannot be read is **not** a dead-letter, and not a failure. The leg assumes
+`distribution.youth-switch.default-when-unreadable` (`ACTIVE` unless configured otherwise) and the
+hearing is sent as normal. The message settles by the outcome of that send (DV-25).
 
 ---
 
@@ -175,7 +175,9 @@ agreement with HMPPS.
 - **Fallback form.** From the query API the payload is `{hearing, sharedTime}` only, and its
   `hearing` field set differs.
 - **Youth defendants.** While the users-groups `EMYouthFilter` switch reads active, youth
-  defendants are removed as the legacy removes them.
+  defendants are removed as the legacy removes them. When the switch cannot be read, the configured
+  default decides (`ACTIVE` unless configured otherwise). The body is then exactly the one the
+  legacy would send with the switch in that state. The legacy sends nothing in this case (DV-25).
 
 The schema rules are **design §6.6**, and **design Appendix B** carries the related contracts and
 the `outbound_message` DDL. The schema is vendored as

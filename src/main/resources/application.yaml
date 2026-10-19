@@ -141,6 +141,14 @@ distribution:
     max-attempts: 3
     retry-wait: 1s
 
+  youth-switch:
+    # The value assumed when the switch cannot be read (ACTIVE or INACTIVE), after which the
+    # hearing is sent as normal; the legacy sends nothing. ACTIVE matches production today. It
+    # does not follow the live toggle by itself, so it must equal the environment's live
+    # EMYouthFilter state: check it at go-live and after any change to the switch. Logged at
+    # startup.
+    default-when-unreadable: ${YOUTH_SWITCH_DEFAULT_WHEN_UNREADABLE:ACTIVE}
+
   hmpps:
     # The APIM gateway's HMPPS route. Required, https; no packaged value. As with the Redis TLS
     # and workload-identity checks, the https check is relaxed under the `local` profile only, so

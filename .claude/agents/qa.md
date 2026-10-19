@@ -41,7 +41,7 @@ For the ASB consumer, always cover:
 - Happy path — leg `SENT`, request `COMPLETED(both-legs-terminal)`, `complete()` called
 - Park and redeliver — payload miss everywhere or a transient gateway failure: leg `PARKED`, request `RETRYING`, `abandon()` called
 - Final delivery with a `PARKED` leg — leg `FAILED(reason)`, request `FAILED(leg-exhausted)`, dead-lettered `leg-exhausted`
-- **Unreadable youth switch** — each cause (`HTTP_FAILURE`, `TIMEOUT`, `EMPTY_PERMISSIONS`, `UNPARSEABLE`): no POST, leg and request `FAILED(youth-switch-unreadable)`, `exhausted_message_id` NULL, the message **completed** on its first delivery, no dead-letter, the cause counted
+- **Unreadable youth switch** (H8, DV-25; `YouthSwitchUnreadableIT`) — each cause (`HTTP_FAILURE`, `TIMEOUT`, `EMPTY_PERMISSIONS`, `UNPARSEABLE`, including a `null` `permissions[0]` and the switch stage passing its 25 s budget): the `ACTIVE`-redacted body is POSTed, the row `SENT` with `youth_switch = UNREADABLE_DEFAULTED_ACTIVE`, `probation_youth_switch_unreadable_total{cause, defaulted="ACTIVE"}` incremented, a WARN line; with `distribution.youth-switch.default-when-unreadable=INACTIVE`, the `INACTIVE` body and `UNREADABLE_DEFAULTED_INACTIVE`. No `FAILED(youth-switch-unreadable)` anywhere — the reason no longer exists
 - Closed-schema violations — unknown field, missing field, `null` `userId`, wrong `eventType`: dead-lettered `validation`, no `processed_request` row
 - **Redelivery of an already-processed `(source, requestId)`** — no second POST; a terminal-success leg never touched
 - Replay of a `FAILED` request — the stored command re-sent under a fresh `messageId`; `replayed_at` keys the replay column; completion reason `recovered`
@@ -52,7 +52,7 @@ For the ASB consumer, always cover:
 - One JUnit twin per legacy Jest case for the HMPPS rules R0–R12
 - The recorded corpus run through `HmppsRedaction` and compared with the oracle output: semantic equality after canonicalisation, BigDecimal throughout, **in both switch states**, for both the cache and the fallback payload forms
 - Registered deviations asserted **by derivation**, never by an edited golden; an unregistered difference fails the build
-- Blind spots covered explicitly (design §6.3), including: a youth defendant in an adult-court hearing; an application with no `masterDefendant` under the switch on (P18); a non-boolean `isYouth`; the switch on removing everything (→ nothing sent); a rule that throws (→ `FAILED(rules-exception)`)
+- Blind spots covered explicitly (design §6.3), including: a youth defendant in an adult-court hearing; an application with no `masterDefendant` under the switch on (P18); a non-boolean `isYouth`; the switch on removing everything (→ nothing sent); the switch read failing (corpus case 13 → the oracle's `ACTIVE` output, derived under DV-25, golden not edited); a rule that throws (→ `FAILED(rules-exception)`)
 - Every oracle output validated against the interim HMPPS schema; `hearing.id` present in every body (Q13)
 - Every DV row in `doc/DEVIATIONS.md` names a test that exists and passes
 - No production (PRD/PRP) hearing data in the repository — it is public; recorded SIT payloads are allowed as test fixtures under `src/test/resources/corpus/`
