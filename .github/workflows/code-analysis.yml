@@ -1,0 +1,49 @@
+name: Code analysis
+
+on:
+  pull_request:
+    branches:
+      - master
+      - main
+      - 'team/**'
+
+permissions:
+  contents: read
+
+jobs:
+  pmd-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: 'temurin'
+          java-version: '25'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6
+        with:
+          gradle-version: current
+
+      # PMD runs through the build's own gate (gradle/pmd.gradle), not the standalone PMD CLI
+      # action it replaced. The Gradle task hands PMD the compiled classes as its auxclasspath,
+      # so PMD can resolve the enum a switch selects on and can therefore tell an exhaustive
+      # switch from a partial one. The CLI action has no way to pass an auxclasspath: type
+      # resolution silently fails, every switch reads as non-exhaustive, and
+      # TooFewBranchesForSwitch fires on two-arm switch expressions over an enum -- false
+      # positives on code the build's own gate accepts. Version and ruleset are identical; the
+      # auxclasspath is the whole difference, so running the build's task is what makes the two
+      # agree.
+      # pmdMain fails the job on a real violation by itself (ignoreFailures = false), so no
+      # separate violation-counting step is needed.
+      - name: PMD (main sources)
+        run: ./gradlew pmdMain
+
+      - name: Upload PMD report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pmd-report
+          path: build/reports/pmd/
+          if-no-files-found: ignore

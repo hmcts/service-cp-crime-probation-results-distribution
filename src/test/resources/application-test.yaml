@@ -1,0 +1,63 @@
+# The `test` profile - plain context-load tests only.
+#
+# It exists so tests that have nothing to do with messaging or persistence (TestProfileContextTest,
+# and any later context-load test) run with no broker, no database, no Redis and therefore without
+# Docker. Container-backed suites do NOT activate it: they boot the real configuration against
+# Testcontainers.
+distribution:
+  consumer:
+    # Master switch for starting the Service Bus processor at all. Off here, so no test in this
+    # profile ever tries to reach a broker.
+    enabled: false
+
+# The two estate filters, off in this profile. `application.yaml` defaults the authorisation filter
+# ON and the HTTP audit filter ON, and these lines replace those defaults for context-load tests -
+# which is the only thing a yaml file can do about them, since an exported AUTHZ_HTTP_ENABLED or
+# HTTP_AUDIT_ENABLED reaches Spring as a system-environment property source that out-ranks every
+# config-data file including this one.
+#
+# Off because this profile has neither of the estates the filters talk to: no users-groups to
+# resolve a caller's groups through, and no audit broker to publish to.
+authz:
+  http:
+    enabled: false
+
+audit:
+  http:
+    enabled: false
+
+# The audit starter's own transport switch, written as a literal so this profile does not inherit
+# whatever CP_AUDIT_ENABLED resolved to: the library's auto-configuration validates the broker
+# settings while it builds its connection factory, whether or not HTTP auditing is on.
+cp:
+  audit:
+    enabled: false
+
+spring:
+  autoconfigure:
+    # No datasource is configured for this profile, and with the JDBC starter on the classpath
+    # DataSourceAutoConfiguration would otherwise build a pool for the local default URL. Flyway's
+    # auto-configuration is conditional on a DataSource and would back off on its own; it is
+    # excluded explicitly so the reason is stated rather than inferred. Service Bus and Redis need
+    # nothing here: neither has a Boot auto-configuration on this classpath (the Azure SDK and
+    # lettuce-core are used directly), so nothing connects until the service's own beans do.
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration
+
+management:
+  otlp:
+    metrics:
+      export:
+        # No collector is listening during a test, and the exporter's shutdown attempt writes a
+        # connection warning into every suite's output.
+        enabled: false
+  endpoint:
+    health:
+      group:
+        # The deployed readiness group is `db`. Spring validates group membership at startup, so
+        # naming an absent `db` contributor here - absent precisely because the datasource
+        # auto-configuration is excluded above - would fail the context. `ping` keeps the group
+        # well formed and the endpoint shape identical.
+        readiness:
+          include: ping

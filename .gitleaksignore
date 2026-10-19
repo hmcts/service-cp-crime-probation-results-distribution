@@ -1,0 +1,3 @@
+# Fingerprints of reviewed false positives, one per line, in gitleaks' `<commit>:<file>:<rule>:<line>`
+# form. A fingerprint is bound to its commit, so an entry covers only that line in history; new
+# findings are not silenced by this file.

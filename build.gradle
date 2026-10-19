@@ -1,0 +1,136 @@
+plugins {
+  id 'application'
+  id 'java'
+  id 'org.springframework.boot' version '4.1.1'
+  id 'io.spring.dependency-management' version '1.1.7'
+  id 'jacoco'
+  id 'maven-publish'
+  id 'com.github.ben-manes.versions' version '0.64.0'
+  id 'org.cyclonedx.bom' version '3.4.1'
+  id 'com.gorylenko.gradle-git-properties' version '4.0.1'
+}
+
+group = 'uk.gov.hmcts.cp'
+version = System.getProperty('ARTEFACT_VERSION') ?: '0.0.999'
+
+apply {
+  from("$rootDir/gradle/repositories.gradle")
+  from("$rootDir/gradle/java.gradle")
+  from("$rootDir/gradle/dependency.gradle")
+  from("$rootDir/gradle/pmd.gradle")
+  from("$rootDir/gradle/checkstyle.gradle")
+  from("$rootDir/gradle/test.gradle")
+  from("$rootDir/gradle/jar.gradle")
+}
+
+// CVE-2026-68497 (jackson-databind, unbounded numeric parsing), then CVE-2026-89407, -89425,
+// -91776 and -91777 (fixed in 3.1.7 / 2.21.7): Spring Boot 4.1.1 manages 3.1.5 and 2.21.5, and
+// the image scan refuses those. Remove once a Boot release manages these versions or later.
+ext['jackson-bom.version'] = '3.1.7'
+ext['jackson-2-bom.version'] = '2.21.7'
+
+// We MUST keep all dependencies in the build.gradle to allow dependabot to provide version updates
+// Sadly, dependabot does not track dependencies in the apply-from files
+dependencies {
+  // Java core
+  implementation 'net.logstash.logback:logstash-logback-encoder:9.0'
+
+  compileOnly 'org.projectlombok:lombok:1.18.48'
+  annotationProcessor 'org.projectlombok:lombok:1.18.48'
+  testCompileOnly 'org.projectlombok:lombok:1.18.48'
+  testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
+
+  // Spring boot core
+  implementation 'org.springframework.boot:spring-boot-starter-web'
+  testImplementation "org.springframework.boot:spring-boot-starter-webmvc-test"
+  testImplementation('org.springframework.boot:spring-boot-starter-test') {
+    exclude group: 'junit', module: 'junit'
+    exclude group: 'org.junit.vintage', module: 'junit-vintage-engine'
+  }
+
+  // --- The operations API's two estate starters (design §4.8) ---
+  // Authorisation: drools rules over the caller's usersgroups membership, identity from the
+  // CJSCPPUID header. Audit: every request and response published to the estate's audit context.
+  // Declared in gradle/libs.versions.toml rather than inline - the one exception to the rule above,
+  // because dependabot DOES read a version catalogue (what it does not read is the `apply from:`
+  // files), and because the sibling services pin the same pair the same way.
+  implementation libs.cp.auth.rules.filter
+  implementation libs.cp.audit.filter.springboot
+
+  // --- Persistence: processed_request + outbound_message store (JdbcClient + Flyway) ---
+  implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+  implementation 'org.springframework.boot:spring-boot-starter-flyway'
+  implementation 'org.flywaydb:flyway-database-postgresql'
+  runtimeOnly 'org.postgresql:postgresql'
+
+  // --- Messaging: Azure Service Bus consumer with explicit settlement on `probation.requests`,
+  // and the sender the submit-hearing and replay actions enqueue through (design §4.8) ---
+  // Spring Boot's BOM does not manage com.azure:*, so the vendor BOM supplies those versions and no
+  // com.azure artefact is ever pinned individually.
+  implementation platform('com.azure:azure-sdk-bom:1.3.8')
+  implementation 'com.azure:azure-messaging-servicebus'
+  implementation 'com.azure:azure-identity'
+
+  // Not declared, deliberately: com.azure:azure-data-appconfiguration. The service does not read
+  // the ProbationResultsDistributionService cutover flag (design Q15); the client is needed only if
+  // the operations API's optional flag-check action is adopted (design §4.8 action 7), and is added
+  // with that action. Version would come from the azure-sdk-bom platform above.
+
+  // --- Payload source: Redis EXT_ cache (Lettuce) + results-query-api fallback ---
+  // Lettuce directly rather than spring-boot-starter-data-redis: this service reads one string key
+  // and needs no template, repository or converter, and the starter's auto-configuration would add
+  // a health contributor and a connection factory nothing else here uses. Version from the Boot BOM.
+  implementation 'io.lettuce:lettuce-core'
+
+  // --- Observability / Actuator / OTEL / Prometheus ---
+  implementation 'org.springframework.boot:spring-boot-starter-actuator'
+  implementation 'org.springframework.boot:spring-boot-starter-opentelemetry'
+  implementation 'io.micrometer:micrometer-registry-prometheus'
+
+  // --- Test: Testcontainers harness (Postgres + Service Bus emulator) ---
+  // Versions come from testcontainers-bom, imported by the Spring Boot BOM. Testcontainers 2.x
+  // renamed every module to a `testcontainers-` prefix, so these are the 2.x coordinates.
+  testImplementation 'org.testcontainers:testcontainers-postgresql'
+  testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+  testImplementation 'org.testcontainers:testcontainers-azure'
+  // Deterministic transport fault injection for the broker- and store-outage suites: stopping or
+  // freezing a container makes an outage whose *timing* the suite cannot control. Version from
+  // testcontainers-bom.
+  testImplementation 'org.testcontainers:testcontainers-toxiproxy'
+  // The Service Bus emulator's SQL Server companion is an MSSQLServerContainer, and its readiness
+  // check opens a JDBC connection — without the driver the companion never reports started. Version
+  // from the Spring Boot BOM.
+  testRuntimeOnly 'com.microsoft.sqlserver:mssql-jdbc'
+
+  // HTTP stub for the results-query-api fallback, the users-groups EMYouthFilter permission read
+  // and the APIM gateway's HMPPS route. The standalone, shaded artefact deliberately: the plain one
+  // drags its own Jetty and Jackson 2 onto the test classpath beside the Jackson 3 stack this
+  // service runs on, and the resulting version fight is the kind that surfaces as a mystery at
+  // runtime rather than as a failed resolution. Not managed by any BOM on this build, so the
+  // version is declared here for dependabot to track.
+  testImplementation 'org.wiremock:wiremock-standalone:3.13.2'
+
+  // Draft-07 validator. RUNTIME dependency, not test-only:
+  // OutboundContractValidator (design §4.4, §6.6) validates every redacted HMPPS body against the
+  // vendored interim outbound schema (classpath:contracts/outbound/) BEFORE the POST, so a
+  // schema-invalid body is an explicit FAILED(contract-invalid) rather than a 400 from the
+  // receiver. The inbound closed command schema and the contract corpus use the same dependency.
+  // Not managed by any BOM on this build, so the version is declared here for dependabot to track.
+  implementation 'com.networknt:json-schema-validator:3.0.7'
+
+  // Security: pin transitive tomcat-embed-core to patched version (CVE-2026-41293, -43512, et al.)
+  // Brought in transitively via spring-boot-starter-web; >=11.0.0-M1,<11.0.22 are vulnerable
+  implementation 'org.apache.tomcat.embed:tomcat-embed-core:11.0.26'
+}
+
+// Guard against any legacy javax.jms slipping onto the classpath alongside Spring Boot 4's jakarta.jms.
+// This service has no JMS code of its own, but cp-audit-filter-springboot brings
+// spring-boot-starter-artemis for its audit publisher. artemis-jms-client is the javax.jms client,
+// and Artemis 3 relocated it from the `org.apache.activemq` group to `org.apache.artemis`, so both
+// coordinates are excluded: dropping the old one alone would let the relocated artefact back in the
+// moment a transitive dependency moved to the new group.
+configurations.all {
+  exclude group: 'javax.jms', module: 'javax.jms-api'
+  exclude group: 'org.apache.activemq', module: 'artemis-jms-client'
+  exclude group: 'org.apache.artemis', module: 'artemis-jms-client'
+}

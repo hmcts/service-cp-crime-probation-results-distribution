@@ -1,0 +1,138 @@
+# Local development stack.
+#
+# Everything here is LOCAL ONLY. The credentials below are development defaults, deliberately
+# committed so the stack starts with no .env file; they are never used in any deployed environment,
+# where the Postgres credentials, the Redis key, the gateway subscription key and the system user
+# ids come from Key Vault via the Secrets Store CSI driver, and the Service Bus identity is the
+# pod's workload identity.
+#
+#   docker compose up -d postgres servicebus-emulator redis wiremock   # dependencies, for ./gradlew bootRun
+#   docker compose up app                                              # the service in its container
+#
+# `wiremock` stands in for every HTTP dependency the service calls: the results query API (the
+# payload fallback), the users-groups permission read (EMYouthFilter) and the APIM gateway's HMPPS
+# route. Its mappings live in docker/wiremock/mappings/ and arrive with the features that call them.
+#
+# `app` deliberately declares no depends_on, so it can be started on its own. Only `postgres` has to
+# be there for the pod to report ready; the broker is never a readiness input.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      SERVER_PORT: 8082
+      # The local profile relaxes the deployed-only startup checks (Redis TLS, workload identity,
+      # an https HMPPS route) that this plain-text compose network cannot satisfy.
+      SPRING_PROFILES_ACTIVE: local
+      # The emulator's published development string. Deployed environments set
+      # SERVICEBUS_NAMESPACE instead and authenticate with workload identity.
+      SERVICEBUS_CONNECTION_STRING: "Endpoint=sb://servicebus-emulator;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+      SERVICEBUS_QUEUE: probation.requests
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/probationresultsdistribution
+      SPRING_DATASOURCE_USERNAME: probationresultsdistribution
+      SPRING_DATASOURCE_PASSWORD: probationresultsdistribution
+      # Plain-text Redis inside the compose network; TLS with peer verification is the deployed
+      # default and is refused off outside the local profile.
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_SSL: "false"
+      # Hosts only: each client appends its own contract path. All three are the one WireMock,
+      # whose stubbed paths are disjoint.
+      RESULTS_BASE_URL: http://wiremock:8080
+      USERSGROUPS_BASE_URL: http://wiremock:8080
+      HMPPS_PUBLISH_URL: http://wiremock:8080/probation/api/v1/hearing/results
+      # Local-only dummies. Never a real user id and never a real key.
+      RESULTS_SYSTEM_USER_ID: 00000000-0000-0000-0000-000000000000
+      USERSGROUPS_SYSTEM_USER_ID: 00000000-0000-0000-0000-000000000000
+      GATEWAY_SUBSCRIPTION_KEY: local-only-not-a-key
+      # The two estate filters, off for the local loop: a laptop has no usersgroups for
+      # `cp-auth-rules-filter` to resolve a caller's groups through and no audit broker for
+      # `cp-audit-filter-springboot` to publish to.
+      AUTHZ_HTTP_ENABLED: "false"
+      HTTP_AUDIT_ENABLED: "false"
+
+  # The service's own store. Flyway runs at the application's start-up, not here.
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: probationresultsdistribution
+      POSTGRES_USER: probationresultsdistribution
+      POSTGRES_PASSWORD: probationresultsdistribution
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U probationresultsdistribution -d probationresultsdistribution"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Azure Service Bus emulator, per Microsoft's reference compose file. It needs a SQL Server
+  # container beside it for its own state; from the host the broker is on localhost:5672, and the
+  # connection string is
+  #   Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
+  #
+  # The tag is PINNED deliberately, not tracked with `latest`: a moved tag on a broker emulator can
+  # change settlement or delivery-count behaviour under a green build. Bump it as its own reviewed
+  # change, re-running the *IT suites. The same config.json is mounted by the Testcontainers
+  # harness, so the queue definition cannot drift between this stack and CI.
+  servicebus-emulator:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2
+    ports:
+      - "5672:5672"
+      - "5300:5300"
+    environment:
+      ACCEPT_EULA: "Y"
+      SQL_SERVER: servicebus-emulator-mssql
+      MSSQL_SA_PASSWORD: "LocalOnly_Passw0rd!"
+    volumes:
+      - ./docker/servicebus-emulator/config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    depends_on:
+      - servicebus-emulator-mssql
+
+  # State store for the emulator. `mcr.microsoft.com/azure-sql-edge` is retired and must not be
+  # reintroduced; Microsoft's current emulator topology uses SQL Server. MSSQL_SA_PASSWORD matches
+  # the value the emulator is configured with above.
+  servicebus-emulator-mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "LocalOnly_Passw0rd!"
+
+  # The EXT_ payload cache the results producer writes. No password and no TLS locally; PINNED for
+  # the same reason the emulator is.
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # The results query API, the users-groups permission read and the APIM gateway's HMPPS route, all
+  # on one port. PINNED for the same reason the emulator is: a moved tag on a stub server can change
+  # matching behaviour under a green build.
+  wiremock:
+    image: wiremock/wiremock:3.13.2
+    ports:
+      - "8089:8080"
+    volumes:
+      # The whole directory, so WireMock finds `mappings/` where it expects it.
+      - ./docker/wiremock:/home/wiremock:ro
+    # Verbose deliberately: a mapping that does not match prints the near-miss diff, which is the
+    # difference between "the local loop is broken" and "the Content-Type is wrong".
+    command: ["--verbose", "--local-response-templating"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8080/__admin/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres-data:

@@ -1,0 +1,28 @@
+apply plugin: 'pmd'
+
+pmd {
+  ruleSets = []
+  ruleSetFiles = files(".github/pmd-ruleset.xml")
+  ignoreFailures = false
+  toolVersion = "7.22.0"
+}
+
+// src/test gets its own ruleset -- same base, minus a few rules that are inapplicable to test
+// code or false-positive against this project's own test conventions (see the ruleset file).
+tasks.named("pmdTest").configure {
+  ruleSetFiles = files(".github/pmd-test-ruleset.xml")
+}
+
+tasks.withType(Pmd) {
+  reports {
+    xml.required.set(true)
+    html.required.set(true)
+  }
+}
+
+tasks.withType(Checkstyle).configureEach {
+  def generatedDir = file("${layout.buildDirectory.get().asFile.absolutePath}/generated/src/main/java").canonicalPath
+  source = source.filter { file ->
+    !file.canonicalPath.startsWith(generatedDir)
+  }
+}

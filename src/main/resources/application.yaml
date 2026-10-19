@@ -1,0 +1,245 @@
+spring:
+  application:
+    name: service-cp-crime-probation-results-distribution
+
+  # The processed_request / outbound_message store. Every value here is a LOCAL development default
+  # matching the `postgres` service in docker-compose.yml; deployed environments override them from
+  # Key Vault through the Secrets Store CSI driver, which reaches these keys by the usual
+  # relaxed-binding environment variables (SPRING_DATASOURCE_URL and friends).
+  datasource:
+    url: jdbc:postgresql://localhost:5432/probationresultsdistribution
+    username: probationresultsdistribution
+    password: probationresultsdistribution
+    hikari:
+      # Lazy pool initialisation: no connection is opened during context refresh, so the application
+      # starts even with the store down. It has to — actuator must be up to report readiness DOWN
+      # honestly, and a pod that cannot start cannot tell anyone why.
+      initialization-fail-timeout: -1
+      data-source-properties:
+        # A store that dies without closing its connections would otherwise block the health probe
+        # for ever, and intake would never suspend. Seconds, per the PostgreSQL JDBC driver.
+        socketTimeout: 30
+
+  flyway:
+    # The Flyway bean is configured here; when the migration runs is a separate decision. The
+    # intake lifecycle controller takes it off the context-refresh path and runs it on the first
+    # successful store probe, before intake starts, so no message is ever consumed against an
+    # unmigrated schema. Until that controller exists, Flyway runs at refresh.
+    enabled: true
+
+server:
+  port: ${SERVER_PORT:8082}
+
+# The property catalogue (design §8.1). Every property has a type, a default, an environment source
+# and a startup check; a property not in this tree does not exist. Secrets are bindings to
+# environment variables mounted from Key Vault, never values: an empty default leaves a local run
+# with nothing to borrow, and the startup validator refuses what is required and missing.
+distribution:
+  consumer:
+    # The master switch for intake. Off in the `test` profile, so context-load tests need no broker.
+    enabled: true
+
+  servicebus:
+    # Exactly one credential source may be set, and startup fails fast otherwise:
+    # `connection-string` for local and CI (the emulator's development string, supplied by
+    # docker-compose.yml and the test suites, never packaged here), or `namespace` for deployed
+    # environments, which authenticate with the pod's workload identity (AZURE_CLIENT_ID,
+    # AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE, read by azure-identity itself).
+    connection-string: ${SERVICEBUS_CONNECTION_STRING:}
+    namespace: ${SERVICEBUS_NAMESPACE:}
+    # Stack-prefixed in deployed environments ({{ stack }}.probation.requests). Used for receiving
+    # and, by the submit-hearing and replay actions, for sending.
+    queue-name: ${SERVICEBUS_QUEUE:probation.requests}
+    # Two concurrent deliveries, matching the Durable Functions throttle this service replaces. A
+    # starting point, not a measurement.
+    max-concurrent-calls: 2
+    # Mirrors the broker queue's own setting. Used to recognise the final permitted delivery, so it
+    # must be changed here and on the queue together.
+    max-delivery-count: 5
+    # Mirrors the broker queue's own LockDuration, which this service cannot read. The claim lease
+    # must be strictly shorter, so a dead runner's claim has always lapsed by the time the broker
+    # redelivers; validated at startup. 5m is the ASB maximum, and like max-delivery-count above it
+    # must be changed here and on the queue together.
+    lock-duration: 5m
+    # Must be at least the processing deadline plus the fixed 30s renewal margin, so the broker lock
+    # always outlives a legitimate run. Validated at startup.
+    max-auto-lock-renew-duration: 5m
+    # An unresolved connection error older than this, with no traffic since, stops being reported as
+    # an outage: an idle queue produces no traffic, and absence of traffic is not a failure.
+    health-staleness: 60s
+
+  claim:
+    # How long an acquired claim stays live, written as now() + lease by the database. Strictly
+    # shorter than lock-duration above, by a 30s margin: a redelivery arriving on lock expiry must
+    # find a crashed runner's claim already lapsed. Compound durations must be ISO-8601: Spring's
+    # simple format takes one value and one unit, so `4m30s` will not bind.
+    lease: PT4M30S
+    # The enforced bound on a run. Strictly shorter than the lease, so a slow runner stops itself
+    # before its claim can be reclaimed. Validated at startup.
+    processing-deadline: 4m
+
+  store:
+    # How often the store is probed, driving the gated start and the resume after an outage.
+    probe-interval: 10s
+
+  budget:
+    # The per-message time budget (design §4.7): payload + youth-switch + leg must stay under the
+    # processing deadline (60s + 25s + 130s = 215s < 240s). Each client's connect + read timeout
+    # must fit its stage, and the composed stages must fit their budgets; validated at startup.
+    payload: 60s
+    youth-switch: 25s
+    leg: 130s
+
+  redis:
+    # The EXT_ payload cache the results producer writes. The packaged port is the estate's TLS
+    # port (design §8.1); the local compose Redis listens on 6379, so docker-compose.yml and the
+    # README's bootRun command set REDIS_PORT=6379. Deployed environments set the address and
+    # mount the key from Key Vault.
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:10000}
+    key: ${REDIS_KEY:}
+    # TLS with certificates verified is the default, and startup refuses either off outside the
+    # local profile: the function app this replaces does not verify the peer. The local compose
+    # Redis is plain text, so docker-compose.yml sets REDIS_SSL=false.
+    ssl: ${REDIS_SSL:true}
+    verify-peer: ${REDIS_SSL:true}
+    # The prefix the producer writes the external payload under. Read by the dated key
+    # EXT_{hearingId}_{hearingDay}_result_, then the undated key, then the results query API.
+    key-prefix: EXT_
+    connect-timeout: 5s
+    command-timeout: 5s
+
+  results:
+    # The results query API, the payload fallback. LOCAL DEFAULT ONLY; deployed environments set
+    # RESULTS_BASE_URL to the internal mesh host. The context root belongs to the call's path.
+    base-url: ${RESULTS_BASE_URL:http://localhost:8080}
+    # The CJSCPPUID identity the fallback sends when the command carries no userId, and on every
+    # resend. A secret from Key Vault through the Secrets Store CSI driver; REQUIRED.
+    system-user-id: ${RESULTS_SYSTEM_USER_ID:}
+    connect-timeout: 5s
+    # Shorter than the processing deadline on purpose: a read that outlives the deadline outlives
+    # the claim behind it.
+    read-timeout: 30s
+    # Connect and read failures, 5xx and 429 are retried, honouring Retry-After up to max-backoff.
+    max-attempts: 4
+    initial-backoff: 500ms
+    max-backoff: 20s
+
+  usersgroups:
+    # The per-message EMYouthFilter permission read, the HMPPS leg's first step. LOCAL DEFAULT
+    # ONLY; deployed environments set USERSGROUPS_BASE_URL to the internal mesh host.
+    base-url: ${USERSGROUPS_BASE_URL:http://localhost:8080}
+    # The CJSCPPUID the legacy sends on this call is a configured identity, not the event's user.
+    # A secret from Key Vault; REQUIRED.
+    system-user-id: ${USERSGROUPS_SYSTEM_USER_ID:}
+    youth-filter-key: ${EM_YOUTH_FILTER_FEATURE_KEY:EMYouthFilter}
+    # Finite timeouts are the one difference from the legacy, which sets none.
+    connect-timeout: 2s
+    read-timeout: 5s
+    # The legacy's retry, kept: at most three attempts with a fixed wait, retrying only an error
+    # without a response or a status above 429, with no Retry-After.
+    max-attempts: 3
+    retry-wait: 1s
+
+  hmpps:
+    # The APIM gateway's HMPPS route. Required, https; no packaged value. As with the Redis TLS
+    # and workload-identity checks, the https check is relaxed under the `local` profile only, so
+    # the compose WireMock can stand in for the route over plain http.
+    url: ${HMPPS_PUBLISH_URL:}
+
+  gateway:
+    # Sent as Ocp-Apim-Subscription-Key. A secret from Key Vault; REQUIRED, never committed.
+    subscription-key: ${GATEWAY_SUBSCRIPTION_KEY:}
+    connect-timeout: 5s
+    read-timeout: 30s
+    # 408, 429, 5xx and connect/IO errors are retried, honouring Retry-After up to max-backoff.
+    max-attempts: 3
+    initial-backoff: 500ms
+    max-backoff: 10s
+
+  # Not configured, deliberately: `distribution.feature.connection-string` / `label`
+  # (PROBATION_FEATURE_CONNECTION_STRING, STACK_LABEL). The service does not read the cutover flag;
+  # the properties exist only if the operations API's optional flag-check action is adopted.
+
+# The operations API's authorisation, owned by `cp-auth-rules-filter`.
+authz:
+  http:
+    enabled: ${AUTHZ_HTTP_ENABLED:true}
+    # Where the caller's groups come from. The caller is named by the CJSCPPUID header and never in
+    # the path, so this template is a plain URL.
+    identity-url-template: ${USERSGROUPS_BASE_URL:http://localhost:8080}/usersgroups-query-api/query/api/rest/usersgroups/users/logged-in-user/permissions
+    user-id-header: "CJSCPPUID"
+    action-header: "CPP-ACTION"
+    accept-header: "application/vnd.usersgroups.get-logged-in-user-permissions+json"
+    drools-classpath-pattern: "classpath:/acl/**/*.drl"
+    # The library default is TRUE - it recompiles the rules on every request. Off by default here;
+    # a developer editing rules against a running service sets AUTHZ_RELOAD_RULES=true.
+    reload-on-each-request: ${AUTHZ_RELOAD_RULES:false}
+    action-required: false
+    # DEFAULT-DENY: the absence of a rule is the denial, and a rules file that will not compile
+    # refuses every action rather than admitting everything.
+    deny-when-no-rules: true
+    # SETTING THIS REPLACES THE LIBRARY'S OWN LIST WHOLESALE. `/actuator` has to be re-listed or the
+    # liveness and readiness probes start answering 401 and the pod is rolled for ever; `/error` has
+    # to be, because the filter refuses through `sendError`, which forwards there.
+    exclude-path-prefixes:
+      - "/actuator"
+      - "/error"
+
+# The operations API's audit, owned by `cp-audit-filter-springboot`.
+audit:
+  http:
+    enabled: ${HTTP_AUDIT_ENABLED:true}
+    # The filter resolves this as a SUFFIX glob over every jar on the classpath, so the name is
+    # specific to this service rather than `openapi.yaml`, which a dependency could also ship.
+    openapi-rest-spec: ${HTTP_AUDIT_OPENAPI_SPEC:probation-results-distribution-openapi.yaml}
+    # EXPLICIT, BECAUSE THE LIBRARY DEFAULT IS TRUE. The audit topic is a telemetry surface, and
+    # response bodies carrying hearing data must not reach it.
+    include-payload-body: false
+
+# The estate's audit transport. The library's auto-configuration is on whenever the dependency is
+# present, and its connection factory validates the broker settings while it is built, so it is
+# off unless an environment says otherwise. Every environment that serves the operations API must
+# set CP_AUDIT_ENABLED=true; hosts, port, credentials and TLS material arrive from Key Vault.
+cp:
+  audit:
+    enabled: ${CP_AUDIT_ENABLED:false}
+    jms:
+      # Bounded, because the request event is published on the caller's own thread: the library's
+      # default retries cost about two minutes per call against an absent broker.
+      initial-connect-attempts: ${CP_AUDIT_INITIAL_CONNECT_ATTEMPTS:2}
+
+# Application Insights is configured by the Java agent (lib/applicationinsights.json). The
+# per-environment connection string is supplied as APPLICATIONINSIGHTS_CONNECTION_STRING, mounted
+# from Key Vault via the Secrets Store CSI driver; there is nothing to set here. OTLP export from
+# spring-boot-starter-opentelemetry stays off until an endpoint is configured
+# (management.opentelemetry.tracing.export.otlp.endpoint).
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      # `loggers` is deliberately NOT here: it is a write surface, and anyone who could reach the
+      # pod could raise a client logger to TRACE and put hearing payloads into the log index.
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true   # enables liveness / readiness groups
+      group:
+        readiness:
+          # The store gates readiness, because processing is unsafe without it. The intake
+          # lifecycle controller's own indicator joins this group when it lands. The Service Bus
+          # indicator is deliberately never in it: a broker blip must never roll the pods, and the
+          # service cannot heal the queue by restarting.
+          include: db
+  health:
+    # spring-boot-starter-artemis arrives with cp-audit-filter-springboot, and its indicator would
+    # report the audit broker - which this service never gates on - as the pod's health.
+    jms:
+      enabled: false
+
+logging:
+  level:
+    root: INFO

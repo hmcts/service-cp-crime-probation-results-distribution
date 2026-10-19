@@ -1,0 +1,8 @@
+# The operations API's contract, read by cp-audit-filter-springboot to name audited operations.
+# There is no endpoint yet: the empty path set lets the audit filter start wherever
+# CP_AUDIT_ENABLED and HTTP_AUDIT_ENABLED are both true. The operations API feature fills it in.
+openapi: 3.0.3
+info:
+  title: Probation Results Distribution operations API
+  version: 0.0.0
+paths: {}
