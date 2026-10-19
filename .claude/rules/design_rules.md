@@ -193,7 +193,8 @@ The rules and what is sent are **lift-and-shift** (D1): ported verbatim, quirks 
   (DV-17), the results-read retry (DV-23), the users-groups timeouts (DV-24).
 - Golden files: Jest fixtures copied byte-identical into `src/test/resources/fixtures/`; every Jest
   case gets a JUnit twin. The recorded corpus covers both switch states and both payload forms.
-  **Real hearing data is not committed to this public repository**; where the corpus lives is open.
+  The recorded corpus is **SIT payloads only**, committed under `src/test/resources/corpus/` (SIT holds
+  no production data; decision 2026-10-19). **Production (PRD/PRP) hearing data is never committed.**
 
 ## Error Handling and Logging (domain-specific)
 

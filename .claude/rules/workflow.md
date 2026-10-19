@@ -78,8 +78,8 @@ A change ships only when all applicable gates are green:
 7. **No-swallowed-exception gate.** No empty catch, no catch-and-continue, no success returned from
    a catch block. Reviewers reject on sight.
 8. **No-PII gate.** No defendant PII (names, addresses, DOB, ASN, URN) at `info` level or above, no
-   payload or outbound body at any level in a deployed environment (DV-09), and no real hearing data
-   committed to this public repository.
+   payload or outbound body at any level in a deployed environment (DV-09), and no production hearing data
+   (PRD/PRP) committed to this public repository; recorded SIT payloads are allowed as test fixtures.
 
 ## Agent Definitions
 

@@ -96,7 +96,7 @@ This service is a message-in, **redact-and-send** service: a lift-and-shift port
 - **ASB connectivity must NOT gate readiness.** A broker health indicator in the readiness group is a HIGH finding.
 - No VEP code, configuration, schema or stub (H5). No read of `ProbationResultsDistributionService` (Q15) and no second lever of any kind.
 - Every client has connect and read timeouts; the users-groups read keeps the legacy retry rule; the per-message budget (60 s + 25 s + 130 s) is validated at startup.
-- No payload, outbound body or defendant data logged at `info` or above; no real hearing data in the repository.
+- No payload, outbound body or defendant data logged at `info` or above; no production (PRD/PRP) hearing data in the repository (recorded SIT payloads are allowed as test fixtures).
 
 ## Scope Gate — check the story before reporting
 

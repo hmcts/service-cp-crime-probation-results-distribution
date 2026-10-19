@@ -26,8 +26,8 @@ When invoked, generate or update the requested documents by:
 3. Generating accurate documentation that reflects the actual implementation
 4. Flagging any drift between docs and code
 
-Never include internal hostnames, keys, personal data or real hearing data — the repository is
-public.
+Never include internal hostnames, keys, personal data or hearing payload content — the repository is
+public. (Recorded SIT payloads may be committed as test fixtures; docs never quote them.)
 
 ## Output
 

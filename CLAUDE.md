@@ -78,9 +78,9 @@ triggers do, and nothing here is a second lever. Out of scope: the producer incr
 
 ## Public Repository
 This repository is **public**. Never commit internal hostnames, keys, connection strings, personal
-data or real hearing data — environment-specific values are environment-variable placeholders, and
-the recorded parity corpus of real SIT payloads does not live here (where it lives is open, design
-§6.4).
+data or production hearing data — environment-specific values are environment-variable placeholders.
+The recorded parity corpus is **SIT payloads only** and is committed under `src/test/resources/corpus/`
+(SIT holds no production data; decision 2026-10-19). PRD/PRP payloads are never committed.
 
 ## Deployment
 - **CI/CD**: GitHub Actions → **ADO Pipeline 460** → ACR → deployed by **Flux** using the shared

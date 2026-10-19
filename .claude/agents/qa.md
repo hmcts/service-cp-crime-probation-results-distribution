@@ -55,7 +55,7 @@ For the ASB consumer, always cover:
 - Blind spots covered explicitly (design §6.3), including: a youth defendant in an adult-court hearing; an application with no `masterDefendant` under the switch on (P18); a non-boolean `isYouth`; the switch on removing everything (→ nothing sent); a rule that throws (→ `FAILED(rules-exception)`)
 - Every oracle output validated against the interim HMPPS schema; `hearing.id` present in every body (Q13)
 - Every DV row in `doc/DEVIATIONS.md` names a test that exists and passes
-- No real hearing data in the repository — it is public
+- No production (PRD/PRP) hearing data in the repository — it is public; recorded SIT payloads are allowed as test fixtures under `src/test/resources/corpus/`
 
 ### Integration Tests (Testcontainers)
 - **Service Bus emulator** for the consumer — real peek-lock, settlement and DLQ semantics

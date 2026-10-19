@@ -29,7 +29,7 @@ You are a senior Spring Boot developer on the Crime Common Platform (MOJ/HMCTS),
 - **Ports and adapters**: the core depends on `HearingPayloadSource`, `YouthFilterSource`, `HmppsSender`, `OutboundLog`; Redis, results-query, users-groups, gateway and JDBC clients are adapters behind them. Nothing in `application/` or `pipeline/` imports an Azure, Redis, HTTP or JDBC type.
 - **JsonNode-canonical**: the hearing payload stays a `JsonNode` through the pipeline; `HmppsRedaction` deep-copies it once on entry and is pure. The HMPPS body is the redacted tree, validated against the interim closed schema **before** the POST.
 - Java records for the command, decisions and outcomes; enums for every bounded value set
-- **No defendant PII at `info`**, and no payload or outbound body at any level in a deployed profile (DV-09). Never commit real hearing data — the repository is public.
+- **No defendant PII at `info`**, and no payload or outbound body at any level in a deployed profile (DV-09). Never commit production (PRD/PRP) hearing data — the repository is public; recorded SIT payloads are allowed as test fixtures under `src/test/resources/corpus/`.
 - SLF4J only — `System.out`, `System.err`, `printStackTrace()` are forbidden in production **and** test code
 - No wildcard imports; explicit access modifiers everywhere
 - **No AI attribution** in code comments, commit messages, or docs
@@ -78,7 +78,7 @@ run:
 - [ ] Message settled exactly once on every path, after state is written
 - [ ] Every behaviour difference from the legacy has a DV row and a pinning test; carried defects untouched
 - [ ] Outbound body validated against the approved schema before the POST
-- [ ] No defendant PII at `info`; no payload or body logged; no real hearing data committed
+- [ ] No defendant PII at `info`; no payload or body logged; no production hearing data committed
 - [ ] SLF4J logging; no `System.out` / `printStackTrace`
 - [ ] No hardcoded secrets, URLs, queue names, ports
 - [ ] No wildcard imports

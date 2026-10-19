@@ -52,7 +52,7 @@ Consequences to respect:
 
 ### Hygiene
 - `.claude/settings.local.json`, `.claude/projects/`, `.claude/todos/`, `.claude/shell-snapshots/`, `.claude/worktrees/` are gitignored and must stay that way. The **team-shared** `.claude/agents/`, `.claude/rules/`, `.claude/context/`, `.claude/skills/`, `.claude/workflows/` **are** tracked.
-- Never commit `.env`, credentials, kubeconfigs, connection strings, subscription keys or Service Bus SAS keys. Never commit internal hostnames or real hearing data — the repository is public.
+- Never commit `.env`, credentials, kubeconfigs, connection strings, subscription keys or Service Bus SAS keys. Never commit internal hostnames or production (PRD/PRP) hearing data — the repository is public; recorded SIT payloads are allowed as test fixtures.
 - Gradle wrapper stays committed (`gradlew`, `gradle/wrapper/*`) despite the broad `gradle` gitignore entry — check the `!gradle/` exceptions survive any `.gitignore` edit.
 
 ## CI/CD Pipelines (GitHub Actions)
@@ -95,7 +95,7 @@ The Dockerfile is inherited — preserve its shape:
 
 ## Security Checklist
 - [ ] No hardcoded secrets, connection strings, subscription keys or SAS keys in any file
-- [ ] No internal hostnames or real hearing data (public repository)
+- [ ] No internal hostnames or production hearing data (public repository; SIT test fixtures allowed)
 - [ ] No `latest` tag in Dockerfiles (pin versions)
 - [ ] Gradle wrapper committed; `.gitignore` exceptions for `gradle/wrapper/*` intact
 - [ ] Secrets scanning workflow present

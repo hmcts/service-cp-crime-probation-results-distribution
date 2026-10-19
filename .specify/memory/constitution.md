@@ -64,10 +64,10 @@ Follow-up TODOs (open at ratification; each is open in the design, not here):
   - D13 (design §11.1): what is stored about each outbound message; this
     constitution applies the design's recommendation (digest-only) until the
     data owner decides.
-  - Corpus location (design §6.4): the design places the recorded corpus of
-    real SIT hearing payloads in "the private repo"; this repository is
-    public, so where the corpus is held, and how the parity suite reaches it,
-    is open (Principle VII).
+  - Corpus location (design §6.4): RESOLVED before the first push
+    (2026-10-19). SIT holds no production data, so the recorded corpus of SIT
+    payloads is committed to this repository under
+    `src/test/resources/corpus/` (Principle VII).
   - `doc/DEVIATIONS.md` is seeded from design §7.2 by the first feature that
     lands behaviour; it does not exist at ratification.
 -->
@@ -416,11 +416,14 @@ service does neither (DV-09).
   data owner approves a retention policy (D13, open; design §4.6). The shadow
   profile's capture table is the design's one exception, scoped to shadow
   runs (design §6.5).
-- **This repository is public.** Real hearing data — the recorded corpus of
-  SIT payloads included — MUST NOT be committed to it. Fixtures in this
-  repository are synthetic or copied legacy test fixtures. Where the real
-  corpus is held, and how the parity suite reaches it, is open (design §6.4
-  assumed a private repository).
+- **This repository is public.** Hearing data from production environments
+  (PRD, PRP, or any environment holding production data) MUST NOT be
+  committed to it. SIT holds no production data, so the recorded parity
+  corpus of SIT payloads MAY be committed as test fixtures, under
+  `src/test/resources/corpus/` only (decision 2026-10-19; design §6.4). Other
+  fixtures are synthetic or copied legacy test fixtures. Corpus content is
+  never logged in a deployed profile and never quoted in docs, PRs or
+  findings.
 - Secrets, connection strings, subscription keys and tokens MUST NOT appear
   anywhere in output.
 
@@ -631,7 +634,9 @@ Where this document and those files disagree, this document wins; they are
 retained as quick-reference material and MUST be kept in sync.
 
 The design — the Confluence page "Probation Results Distribution Service" in
-the CRA space, rev 3.1 at ratification — is the source of truth for names and
+the CRA space
+(https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service),
+rev 3.1 at ratification — is the source of truth for names and
 behaviour. This constitution states the principles the design's decisions
 imply; it does not take decisions the design leaves open. A later design
 revision that changes a decision cited here is adopted by amendment.

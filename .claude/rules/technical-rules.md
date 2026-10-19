@@ -143,8 +143,9 @@ Names the design marks "proposed" are fixed at build time; keep them unless the 
 - **Parity tests**: legacy Jest fixtures copied byte-identical into `src/test/resources/fixtures/`;
   one JUnit twin per Jest case; the recorded corpus compared semantically after canonicalisation,
   BigDecimal throughout; registered deviations asserted by derivation
-- **No real hearing data in this repository** — it is public. Fixtures are synthetic or copied legacy
-  test fixtures
+- **No production hearing data in this repository** — it is public. Fixtures are synthetic, copied
+  legacy test fixtures, or recorded SIT payloads under `src/test/resources/corpus/` (SIT holds no
+  production data; PRD/PRP payloads are never committed)
 - TDD: write the failing test first, see it fail for the right reason, then implement
 - Logging in tests: SLF4J only
 - Test commands: `./gradlew test` runs the whole suite — unit, integration and `*IT` classes alike,
