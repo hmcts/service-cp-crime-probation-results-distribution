@@ -276,6 +276,19 @@ requirement, its RED is quoted and its GREEN followed in a paired implementation
   `EXECUTED_LEGACY` source ⇒ `legacyCommit`/`runtime` not required, clean case stays clean); an empty
   `formsHeld`/`digests` and a `caseId` that differs from the directory name named.
 
+#### Round-3 remediation addendum to T027
+
+- T027 (provenance completeness, FR-001-029): field *presence* was checked but not *completeness* —
+  an empty or short `captureDates`/`expectationSources` object passed custody unnoticed, and
+  `formsHeld` accepted any string, not just `CACHE`/`FALLBACK`.
+  - RED (`test(corpus): pin provenance completeness per formsHeld and a closed form set`): 4 new
+    cases failed — `captureDates` missing a held form's date or the outcome date, an empty
+    `expectationSources` object, and an unrecognised `formsHeld` value each produced `[]` violations.
+  - GREEN (`feat(corpus): check provenance completeness per formsHeld and a closed form set`): BUILD
+    SUCCESSFUL, 21 tests, 0 failed — `captureDates` now requires an entry per held form plus
+    `outcome`; `expectationSources` must be non-empty; `formsHeld` values are checked against the
+    closed `{CACHE, FALLBACK}` set, reported value-free.
+
 **Checkpoint**: User Story 3 is fully functional and independently testable with zero SIT cases
 committed.
 
