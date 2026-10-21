@@ -93,6 +93,19 @@ class CorpusCustodyTest {
             assertThat(CorpusCustodyChecker.findViolations(tmp))
                     .anyMatch(v -> v.contains("stray.json") && v.contains("belongs to no case"));
         }
+
+        @Test
+        @DisplayName("a pinned file that is no longer on disk fails, naming case + file, value-free")
+        void findViolations_whenAPinnedFileIsMissing_should_name_the_case_and_file() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> digests(meta).put("inputs/extra-missing.json", BOGUS_DIGEST));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR)
+                            && v.contains("extra-missing.json")
+                            && v.contains("is missing"))
+                    .noneMatch(v -> v.contains(BOGUS_DIGEST));
+        }
     }
 
     @Nested
@@ -228,6 +241,21 @@ class CorpusCustodyTest {
 
             assertThat(CorpusCustodyChecker.findViolations(tmp))
                     .anyMatch(v -> v.contains(CASE_DIR) && v.contains("runtime"));
+        }
+
+        @Test
+        @DisplayName("no executed-legacy source means legacyCommit and runtime are not required")
+        void findViolations_whenNoSourceIsExecutedLegacy_should_not_require_legacyCommit_or_runtime()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> {
+                final ObjectNode prov = provenance(meta);
+                prov.remove("legacyCommit");
+                prov.remove("runtime");
+                prov.putObject("expectationSources").put("ACTIVE:CACHE", "SIT_LOGGED");
+            });
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp)).isEmpty();
         }
 
         @Test
