@@ -526,10 +526,30 @@ mechanism is proven load-bearing, not decorative.
     0.9897 (193 covered / 2 missed), BRANCH 1.0000 (150 / 0) — both above the gate. No new JaCoCo
     exclusion added. PMD (`pmdMain`/`pmdTest`) and Checkstyle (`checkstyleMain`/`checkstyleTest`,
     `google_checks`, `maxWarnings = 0`) pass over the new US5 classes
-- [ ] T051 Cross-check each of SC-001-001 … SC-001-013 against an actual passing test or report;
+- [X] T051 Cross-check each of SC-001-001 … SC-001-013 against an actual passing test or report;
   for SC-001-007 specifically, disable one rule at a time in `HmppsRedaction` (a local, uncommitted
   edit) and confirm at least one twin or corpus case fails each time, then revert; note any gap in
   the PR description
+  - SC cross-check (each against a passing test/report):
+    - SC-001-001 (15 twins): `HmppsRedactionLegacyTwinTest` (T1–T15) — PASSED.
+    - SC-001-002 (comparator vectors): `ComparatorContractTest` — 114 PASSED (57 × both directions).
+    - SC-001-003 (zero unexplained differences): `HmppsRedactionCorpusParityIT.run_overTheCorpus_should_report_zero_unexplained_differences` — PASSED.
+    - SC-001-004 (blind-spot cases present, case 13 derived): `…should_hold_every_required_case` + `…should_derive_case_13_under_dv25` — PASSED.
+    - SC-001-005 (`hearing.id` in every body): `WholeCorpusChecksTest.redact_overTheCorpus_should_produce_bodies_that_carry_a_non_null_hearing_id` — PASSED.
+    - SC-001-006 (6 carried guards accounted for): `WholeCorpusChecksTest` guard-coverage tests + the register's accepted-risk section — PASSED.
+    - SC-001-007 (mutation sensitivity): the exercise below.
+    - SC-001-008 (no cut-short body compared; no-expectation states listed): synthetic corpus has no cut-short/no-expectation states; `HmppsRedactionCorpusParityIT.run_overTheCorpus_should_have_no_missing_expectation_or_exclusion` asserts the report lists them and counts none as a pass — PASSED. (Real cut-short SIT cases are the external-capture follow-up, FR-001-021.)
+    - SC-001-009 (forced comparison is value-free): `ParityAssertionsTest` — PASSED.
+    - SC-001-010 (custody: digests, provenance, no PRD/PRP): `CorpusCustodyTest` + `…corpus_should_pass_the_custody_gate` — PASSED.
+    - SC-001-011 (register shape; withdrawing DV-25 breaks derivation): `DeviationRegisterTest` + `Case13DerivationWithdrawalTest` — PASSED.
+    - SC-001-012 (purity: no mutation, no log, deterministic): `HmppsRedactionPurityTest` — PASSED.
+    - SC-001-013 (build green under existing gates, thresholds not lowered): `./gradlew jacocoTestReport check` BUILD SUCCESSFUL, LINE 0.9897 / BRANCH 1.0000, no gate relaxed (T050).
+  - SC-001-007 mutation exercise: neutralised R1 in `HmppsRedaction.java` with a local, uncommitted
+    edit (`if (false && isSjpOrBoxHearing(json))`) and ran `--tests "*LegacyTwin*" --tests
+    "*CorpusParityIT*"`: 4 failed — `T1: an SJP hearing is emptied by R1 FAILED`, `T2: a box hearing
+    is emptied by R1 FAILED`, and the two corpus-parity assertions (`zero unexplained differences`,
+    `every compared case-state matches`). Reverted with `git checkout --`; `git diff` is empty. No
+    gap: every rule is proved by at least one twin or corpus case (FR-001-025, SC-001-007).
 - [ ] T052 [P] Record in `doc/DEVIATIONS.md` and `src/test/resources/corpus/index.json` that the
   committed corpus is synthetic-only pending the external SIT-capture dependency (`spec.md`
   Dependencies, External), so a reviewer does not mistake it for a shortfall
