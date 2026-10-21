@@ -250,13 +250,21 @@ must exist before any case is committed).
 
 ### Tooling (before any case is authored)
 
-- [ ] T028 [US4] Set up the oracle-execution harness: a small Node.js script, run **outside** this
+- [X] T028 [US4] Set up the oracle-execution harness: a small Node.js script, run **outside** this
   Gradle build, that invokes `cpp-context-azure-legalaidagency@122e2152`'s
   `ProbationHearingResultedFilter/functions.js` (`probationFilter`) with the switch forced to a fixed
   value, over a given payload, and writes the result plus provenance (the legacy commit SHA, the
   Node/npm version) in the shape `meta.json` expects. Document its usage in `quickstart.md`. Every
   `ACTIVE`/synthetic expectation authored below is produced by this script, never hand-written
   (FR-001-022, FR-001-029)
+  - RED (`test(oracle-harness): add self-tests for the legacy-filter oracle recorder`): all 26
+    `node --test` cases fail against a throwing stub — parseArgs (incl. `--help`), `wasEmptiedByR1`,
+    `firstLegacyFrame`, `runOne`'s BODY/EMPTIED_BY_R1/EMPTIED_BY_R11/RULES_FAILURE classification,
+    `sha256`, `writeBody`, `resolveLegacyRepo`, `readRuntimeProvenance`, and `main()`'s CLI entry
+    point end to end (stdout privacy, hearingId fallback, non-function-export failure)
+  - GREEN (`feat(oracle-harness): implement the legacy-filter oracle recorder (T028)`): 26/26 pass.
+    Spot-checked against the pinned legacy checkout over the SJP Jest fixture: both switch states
+    classify `EMPTIED_BY_R1`, matching T1's own expectation
 
 ### Tests for User Story 4 (write and run first) ⚠️
 
