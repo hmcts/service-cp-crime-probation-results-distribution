@@ -243,6 +243,39 @@ else.
     malformed `meta.json` is reported value-free, never as a Jackson parse-error snippet, so a bad
     corpus file cannot leak content into a public CI log (FR-001-031)
 
+#### Round-2 remediation addenda to T024/T025/T027
+
+Scenarios added after the original six assertions, each recorded against the task it extends. Where
+a scenario pins behaviour the checker already had, it is a coverage pin (no RED); where it is a new
+requirement, its RED is quoted and its GREEN followed in a paired implementation commit.
+
+- T025 (value-free handling, FR-001-031): a malformed `meta.json` must flag the case's **sibling
+  files** as belonging to no verifiable case, as the missing-`meta.json` path does.
+  - RED (`test(corpus): pin sibling-file flagging …`): `a malformed meta.json is reported value-free
+    … FAILED — AssertionError: [files under an unverifiable case must be flagged …] Expecting any
+    elements of: ["case directory case-custody-demo: meta.json is not valid JSON"] to match given
+    predicate but none did.`
+  - GREEN (`fix(corpus): flag sibling files when a case meta.json is unparseable`): BUILD SUCCESSFUL,
+    14 tests, 0 failed — the parse-failure branch now walks the case directory and names each sibling.
+- T027 (provenance completeness, FR-001-029): an `EXECUTED_LEGACY` expectation source now requires
+  `provenance.legacyCommit` and `provenance.runtime`.
+  - RED (`test(corpus): pin value-free malformed handling … provenance gaps`): the `legacyCommit` and
+    `runtime` scenarios failed with the stub returning no violation; the rest of that commit pins
+    existing behaviour (value-free malformed, invalid-environment rejection, no-`meta.json` orphan,
+    stray-in-case).
+  - GREEN (`feat(corpus): require legacyCommit and runtime for executed-legacy expectations`): both
+    scenarios PASSED once `hasExecutedLegacyExpectation` gates the two `requireField` checks.
+- T027 (provenance completeness, FR-001-029): a `meta.json` with **no `caseId`** field is now
+  reported, rather than masked by the directory-name fallback.
+  - RED (`test(corpus): pin that a missing caseId is itself reported`): `a meta.json with no caseId
+    field fails … FAILED — AssertionError: Expecting any elements of: [] to match given predicate but
+    none did.`
+  - GREEN (`fix(corpus): report a missing caseId instead of masking it`): BUILD SUCCESSFUL, 0 failed.
+- T024/T027 coverage pins (no RED; branches already present): a pinned file absent from disk is
+  reported `pinned file … is missing` value-free; the negative side of the executed-legacy gate (no
+  `EXECUTED_LEGACY` source ⇒ `legacyCommit`/`runtime` not required, clean case stays clean); an empty
+  `formsHeld`/`digests` and a `caseId` that differs from the directory name named.
+
 **Checkpoint**: User Story 3 is fully functional and independently testable with zero SIT cases
 committed.
 
