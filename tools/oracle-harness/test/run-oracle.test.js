@@ -285,11 +285,12 @@ test('readRuntimeProvenance records the pinned commit, clean tree and runtime', 
   }
 });
 
-test('readRuntimeProvenance flags a dirty legacy tree', () => {
+test('readRuntimeProvenance refuses a dirty legacy tree', () => {
   const restore = stubGit({ dirty: true });
   try {
-    const provenance = readRuntimeProvenance('/legacy');
-    assert.equal(provenance.legacyTreeClean, false);
+    const { exitCodes, stderr } = captureExit(() => readRuntimeProvenance('/legacy'));
+    assert.deepEqual(exitCodes, [1]);
+    assert.match(stderr, /uncommitted changes/);
   } finally {
     restore();
   }

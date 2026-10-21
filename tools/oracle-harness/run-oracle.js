@@ -161,6 +161,9 @@ function readRuntimeProvenance(legacyRepo) {
     );
   }
   const legacyTreeClean = gitOutput(legacyRepo, ['status', '--porcelain']) === '';
+  if (!legacyTreeClean) {
+    fail('legacy repo has uncommitted changes; use a clean checkout of the pinned oracle');
+  }
   let npmVersion = null;
   try {
     npmVersion = childProcess.execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim();

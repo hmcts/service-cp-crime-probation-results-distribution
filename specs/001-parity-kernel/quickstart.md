@@ -64,8 +64,8 @@ node run-oracle.js \
   [--form CACHE|FALLBACK] [--hearing-id <id>] [--legacy-repo <path-to-legacy-checkout>]
 ```
 
-The legacy checkout must be at the pinned commit (`122e2152...`) — the harness refuses to run
-otherwise. Output: `expectations/active.json`/`inactive.json` (only for states that produced a
+The legacy checkout must be clean and at the pinned commit (`122e2152...`) — the harness refuses to
+run otherwise. Output: `expectations/active.json`/`inactive.json` (only for states that produced a
 body) and `oracle.json` (provenance + one expectation entry per switch state), which a case's
 `meta.json` incorporates by hand. Nothing from the payload or a produced body is ever written to
 stdout (FR-001-031) — only the classification, file paths, digests and provenance.
