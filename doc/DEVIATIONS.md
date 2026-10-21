@@ -100,8 +100,14 @@ SIT-capture dependency (`spec.md` Dependencies, External; tasks T044, T052). Eve
 synthetic payload whose `ACTIVE`/`INACTIVE` expectations were produced by running the pinned legacy
 oracle at `122e2152` (`tools/oracle-harness/run-oracle.js`), never hand-written. The eleven cases
 and their counts are recorded in `src/test/resources/corpus/index.json`
-(`environment: SYNTHETIC`). This is **not a shortfall**: real SIT hearing payloads require the
-owning team's capture within SIT's retention windows (an out-of-repository activity), and a SIT
-case will be substituted for a synthetic one, where the shape exists, once that capture lands. The
-parity gate (SC-001-003) is already green over the synthetic blind-spot corpus, and the one-week
-SIT → STE replay (slice 006) is the pre-cutover proof, not a build gate.
+(`environment: SYNTHETIC`). Every case holds the `CACHE` form only; no case carries `FALLBACK` or a
+SIT-logged `INACTIVE` outcome. This is **not a code defect of this slice**: real SIT hearing
+payloads, in both forms, require the owning team's capture within SIT's retention windows (an
+out-of-repository activity; `spec.md` Dependencies, External), and a SIT case will be substituted
+for a synthetic one, where the shape exists, once that capture lands. It is, however, **not yet a
+satisfied evidence gate**: FR-001-017 requires real SIT payloads in both the `CACHE` and `FALLBACK`
+forms, with SIT's own logged `INACTIVE` outcomes, and that evidence does not exist until the SIT
+capture lands — this slice MUST NOT be reported as fully meeting the go-live evidence gate (H21)
+until it does. The build-time parity gate (SC-001-003) is green over the synthetic blind-spot
+corpus, which is this slice's own scope; the one-week SIT → STE replay (slice 006) remains the
+pre-cutover proof, not a build gate.

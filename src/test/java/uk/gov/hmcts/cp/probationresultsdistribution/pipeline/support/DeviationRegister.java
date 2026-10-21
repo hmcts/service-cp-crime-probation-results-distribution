@@ -58,7 +58,7 @@ public final class DeviationRegister {
      */
     public boolean isActive(final String dvId) {
         final Row row = rows.get(dvId);
-        return row != null && row.status().toLowerCase(Locale.ROOT).contains("active");
+        return row != null && "active".equalsIgnoreCase(row.status().strip());
     }
 
     /**

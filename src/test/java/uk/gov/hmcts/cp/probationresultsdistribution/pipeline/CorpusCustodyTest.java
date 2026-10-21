@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -346,6 +347,124 @@ class CorpusCustodyTest {
         }
     }
 
+    @Nested
+    @DisplayName("validates index.json (FR-001-029)")
+    class Index {
+
+        @Test
+        @DisplayName("a missing index.json fails, naming it")
+        void findViolations_whenIndexIsMissing_should_report_it() throws Exception {
+            copyWellFormedInto(tmp);
+            Files.delete(tmp.resolve("index.json"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("index.json") && v.contains("missing"));
+        }
+
+        @Test
+        @DisplayName("a malformed index.json is reported value-free, never as a Jackson parse snippet")
+        void findViolations_whenIndexIsNotValidJson_should_name_it_without_leaking_content()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            final String sentinel = "SENTINEL-INDEX-MUST-NOT-LEAK-K1Q";
+            Files.writeString(tmp.resolve("index.json"), "{\"leak\":\"" + sentinel + "\",");
+
+            final List<String> violations = CorpusCustodyChecker.findViolations(tmp);
+
+            assertThat(violations).anyMatch(v -> v.contains("index.json") && v.contains("not valid JSON"));
+            assertThat(violations)
+                    .noneMatch(v -> v.contains(sentinel))
+                    .noneMatch(v -> v.toLowerCase(Locale.ROOT).contains("unexpected")
+                            || v.contains("line:")
+                            || v.contains("column:")
+                            || v.contains("at [Source"));
+        }
+
+        @Test
+        @DisplayName("a false hearingCount fails, naming the field")
+        void findViolations_whenHearingCountIsFalse_should_report_it() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteIndex(tmp, index -> index.put("hearingCount", 99));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("index.json") && v.contains("hearingCount"));
+        }
+
+        @Test
+        @DisplayName("a false syntheticCount fails, naming the field")
+        void findViolations_whenSyntheticCountIsFalse_should_report_it() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteIndex(tmp, index -> index.put("syntheticCount", 0));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("index.json") && v.contains("syntheticCount"));
+        }
+
+        @Test
+        @DisplayName("a false per-switch case count fails, naming the state")
+        void findViolations_whenPerSwitchCountIsFalse_should_report_it() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteIndex(tmp, index ->
+                    ((ObjectNode) index.get("casesPerSwitchState")).put("ACTIVE", 0));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("index.json") && v.contains("ACTIVE"));
+        }
+
+        @Test
+        @DisplayName("an excluded case without a reason fails")
+        void findViolations_whenExcludedCaseHasNoReason_should_report_it() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteIndex(tmp, index -> index.set("excludedCases", MAPPER.readTree(
+                    "[{\"caseId\":\"case-cut-short\"}]".getBytes(StandardCharsets.UTF_8))));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("index.json") && v.contains("excludedCases"));
+        }
+
+        @Test
+        @DisplayName("cases[] listing a case with no directory fails, naming the case")
+        void findViolations_whenIndexListsAnUnknownCase_should_report_it() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteIndex(tmp, index -> index.set("cases", MAPPER.readTree(
+                    ("[{\"caseId\":\"" + CASE_DIR + "\",\"environment\":\"SYNTHETIC\"},"
+                            + "{\"caseId\":\"case-not-on-disk\",\"environment\":\"SYNTHETIC\"}]")
+                            .getBytes(StandardCharsets.UTF_8))));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("index.json") && v.contains("case-not-on-disk"));
+        }
+
+        @Test
+        @DisplayName("a committed case missing from cases[] fails, naming the case")
+        void findViolations_whenACaseIsMissingFromTheIndex_should_report_it() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteIndex(tmp, index -> index.putArray("cases"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("index.json") && v.contains(CASE_DIR));
+        }
+
+        @Test
+        @DisplayName("cases[] disagreeing with a case's own environment fails, naming the case")
+        void findViolations_whenIndexEnvironmentDisagreesWithMeta_should_report_it() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteIndex(tmp, index -> ((ObjectNode) index.get("cases").get(0)).put("environment", "SIT"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("index.json") && v.contains(CASE_DIR)
+                            && v.contains("does not match"));
+        }
+
+        @Test
+        @DisplayName("a well-formed index.json produces no violations")
+        void findViolations_whenIndexIsWellFormed_should_report_nothing() throws Exception {
+            copyWellFormedInto(tmp);
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp)).isEmpty();
+        }
+    }
+
     private static ObjectNode digests(final ObjectNode meta) {
         return (ObjectNode) meta.get("digests");
     }
@@ -360,6 +479,14 @@ class CorpusCustodyTest {
         final ObjectNode meta = (ObjectNode) MAPPER.readTree(Files.readAllBytes(metaPath));
         mutator.accept(meta);
         Files.writeString(metaPath, MAPPER.writeValueAsString(meta));
+    }
+
+    private static void rewriteIndex(final Path corpusRoot, final Consumer<ObjectNode> mutator)
+            throws IOException {
+        final Path indexPath = corpusRoot.resolve("index.json");
+        final ObjectNode index = (ObjectNode) MAPPER.readTree(Files.readAllBytes(indexPath));
+        mutator.accept(index);
+        Files.writeString(indexPath, MAPPER.writeValueAsString(index));
     }
 
     private static void copyWellFormedInto(final Path corpusRoot)

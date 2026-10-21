@@ -8,6 +8,15 @@
     "sharedTimeInstant": "2026-01-01T09:00:00.000Z"
   },
   "payloadSourceRead": "UNKNOWN",
+  "expectations": {
+    "ACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/active.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    }
+  },
   "provenance": {
     "syntheticFrom": "custody-check-seed",
     "change": "hand-built skeleton used only to exercise the custody checks; carries no SIT or production payload",

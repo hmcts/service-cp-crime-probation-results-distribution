@@ -28,7 +28,12 @@ import tools.jackson.databind.ObjectMapper;
  *
  * <p>A corpus directory holds its {@code index.json} at the top level and one sub-directory per case,
  * each with a {@code meta.json} that pins every sibling file's digest and records the case's
- * provenance.
+ * provenance. {@code index.json} itself MUST be present, parse as JSON and carry the required
+ * {@code CorpusMetadata} fields (data-model.md), and its {@code cases[]} list and counts
+ * ({@code hearingCount}, {@code syntheticCount}) are reconciled against the cases actually committed
+ * (FR-001-029) — a missing index, a false count or a case id drift between the index and the
+ * directories is a custody violation, not a silent gap. {@code index.json} is checked for structure
+ * only: unlike a case's own files, it is <strong>not</strong> digest-pinned.
  */
 public final class CorpusCustodyChecker {
 
@@ -58,18 +63,23 @@ public final class CorpusCustodyChecker {
             violations.add("corpus root is not a directory");
             return List.copyOf(violations);
         }
+        final List<CaseSummary> knownCases = new ArrayList<>();
         for (final Path entry : listDirectly(corpusRoot)) {
             final String name = entry.getFileName().toString();
             if (Files.isDirectory(entry)) {
-                checkCase(corpusRoot, entry, violations);
+                final CaseSummary summary = checkCase(corpusRoot, entry, violations);
+                if (summary != null) {
+                    knownCases.add(summary);
+                }
             } else if (!INDEX.equals(name)) {
                 violations.add("file " + name + BELONGS_TO_NO_CASE);
             }
         }
+        checkIndex(corpusRoot, knownCases, violations);
         return List.copyOf(violations);
     }
 
-    private static void checkCase(
+    private static CaseSummary checkCase(
             final Path corpusRoot, final Path caseDir, final List<String> violations) {
 
         final String dirName = caseDir.getFileName().toString();
@@ -79,7 +89,7 @@ public final class CorpusCustodyChecker {
             for (final Path file : regularFilesUnder(caseDir)) {
                 violations.add("file " + rel(corpusRoot, file) + BELONGS_TO_NO_CASE);
             }
-            return;
+            return null;
         }
 
         final JsonNode meta;
@@ -94,7 +104,7 @@ public final class CorpusCustodyChecker {
                     violations.add("file " + rel(corpusRoot, file) + BELONGS_TO_NO_CASE);
                 }
             }
-            return;
+            return null;
         }
 
         final String caseId = text(meta, "caseId", dirName);
@@ -108,6 +118,158 @@ public final class CorpusCustodyChecker {
         }
         checkProvenance(meta, caseId, violations);
         checkDigests(caseDir, caseId, meta.get("digests"), violations);
+        return new CaseSummary(
+                caseId,
+                text(meta, "environment", ""),
+                hasExpectation(meta, "ACTIVE"),
+                hasExpectation(meta, "INACTIVE"));
+    }
+
+    /** A case's id and declared environment, as read from its own {@code meta.json} (not the index). */
+    private record CaseSummary(
+            String caseId, String environment, boolean activeExpectation, boolean inactiveExpectation) {
+    }
+
+    private static boolean hasExpectation(final JsonNode meta, final String state) {
+        final JsonNode expectations = meta.get("expectations");
+        final JsonNode byForm = expectations == null ? null : expectations.get(state);
+        if (byForm == null || !byForm.isObject()) {
+            return false;
+        }
+        for (final String form : byForm.propertyNames()) {
+            final JsonNode entry = byForm.get(form);
+            if (entry != null && !entry.isNull()
+                    && !"NONE".equals(text(entry, "kind", ""))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Validates {@code index.json}'s presence and structure, and reconciles its case ids and counts
+     * against the cases actually committed (FR-001-029). It is not digest-pinned: unlike a case's own
+     * files, nothing pins {@code index.json} itself to a recorded hash.
+     *
+     * @param corpusRoot  the corpus directory
+     * @param knownCases  the cases successfully read from disk (a case whose {@code meta.json} could
+     *                    not be read is already reported by {@link #checkCase} and is excluded here)
+     * @param violations  the violations list to append to
+     */
+    private static void checkIndex(
+            final Path corpusRoot, final List<CaseSummary> knownCases, final List<String> violations) {
+
+        final Path indexPath = corpusRoot.resolve(INDEX);
+        if (!Files.isRegularFile(indexPath)) {
+            violations.add(INDEX + " is missing");
+            return;
+        }
+        final JsonNode index;
+        try {
+            index = MAPPER.readTree(Files.readAllBytes(indexPath));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (JacksonException e) {
+            violations.add(INDEX + " is not valid JSON");
+            return;
+        }
+
+        requireIndexField(index, "environment", violations);
+        requireIndexField(index, "captureDateRange", violations);
+        requireIndexField(index, "casesPerSwitchState", violations);
+        requireIndexField(index, "comparatorVectorCount", violations);
+        final JsonNode excludedCases = index.get("excludedCases");
+        if (present(excludedCases) && excludedCases.isArray()) {
+            for (final JsonNode excluded : excludedCases) {
+                if (!nonBlankString(excluded.get("caseId"))
+                        || !nonBlankString(excluded.get("reason"))) {
+                    violations.add(INDEX + ": an excludedCases[] entry needs caseId and reason");
+                }
+            }
+        } else {
+            violations.add(INDEX + ": missing required field 'excludedCases'");
+        }
+        final JsonNode casesNode = index.get("cases");
+        if (!present(casesNode) || !casesNode.isArray()) {
+            violations.add(INDEX + ": missing required field 'cases'");
+            return;
+        }
+
+        final Map<String, String> indexed = new LinkedHashMap<>();
+        for (final JsonNode entry : casesNode) {
+            final JsonNode idNode = entry.get("caseId");
+            if (!present(idNode) || !idNode.isString()) {
+                violations.add(INDEX + ": a cases[] entry is missing caseId");
+                continue;
+            }
+            indexed.put(idNode.stringValue(), text(entry, "environment", ""));
+        }
+
+        final Map<String, String> actual = new LinkedHashMap<>();
+        for (final CaseSummary summary : knownCases) {
+            actual.put(summary.caseId(), summary.environment());
+        }
+
+        for (final String caseId : actual.keySet()) {
+            if (!indexed.containsKey(caseId)) {
+                violations.add(INDEX + ": case " + caseId + " is not listed in cases[]");
+            }
+        }
+        for (final String caseId : indexed.keySet()) {
+            if (!actual.containsKey(caseId)) {
+                violations.add(INDEX + ": cases[] lists " + caseId + ", which has no case directory");
+            }
+        }
+        for (final Map.Entry<String, String> entry : indexed.entrySet()) {
+            final String actualEnvironment = actual.get(entry.getKey());
+            if (actualEnvironment != null
+                    && !actualEnvironment.isBlank()
+                    && !actualEnvironment.equals(entry.getValue())) {
+                violations.add(INDEX + ": case " + entry.getKey()
+                        + " environment does not match its " + META);
+            }
+        }
+
+        requireIndexCountMatches(index, "hearingCount", actual.size(), violations);
+        requireIndexCountMatches(
+                index,
+                "syntheticCount",
+                actual.values().stream().filter(SYNTHETIC::equals).count(),
+                violations);
+        final JsonNode perSwitch = index.get("casesPerSwitchState");
+        if (perSwitch != null && perSwitch.isObject()) {
+            requireIndexCountMatches(
+                    perSwitch,
+                    "ACTIVE",
+                    knownCases.stream().filter(CaseSummary::activeExpectation).count(),
+                    violations);
+            requireIndexCountMatches(
+                    perSwitch,
+                    "INACTIVE",
+                    knownCases.stream().filter(CaseSummary::inactiveExpectation).count(),
+                    violations);
+        } else {
+            violations.add(INDEX + ": casesPerSwitchState must be an object");
+        }
+    }
+
+    private static boolean nonBlankString(final JsonNode node) {
+        return node != null && node.isString() && !node.stringValue().isBlank();
+    }
+
+    private static void requireIndexField(
+            final JsonNode index, final String name, final List<String> violations) {
+        if (!present(index.get(name))) {
+            violations.add(INDEX + ": missing required field '" + name + "'");
+        }
+    }
+
+    private static void requireIndexCountMatches(
+            final JsonNode index, final String field, final long expected, final List<String> violations) {
+        final JsonNode value = index.get(field);
+        if (!present(value) || !value.isIntegralNumber() || value.longValue() != expected) {
+            violations.add(INDEX + ": " + field + " does not match the committed corpus");
+        }
     }
 
     private static void checkProvenance(

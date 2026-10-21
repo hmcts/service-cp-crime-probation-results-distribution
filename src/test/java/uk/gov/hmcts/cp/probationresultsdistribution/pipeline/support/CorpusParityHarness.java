@@ -1,14 +1,21 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.EffectiveSwitchState;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RedactionResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.HmppsRedaction;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityCase.Expectation;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityCase.Form;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityReport.ComparedState;
+import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityReport.ExcludedCase;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityReport.NoExpectationState;
 
 /**
@@ -28,6 +35,9 @@ import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityRepor
  * which is value-free by construction.
  */
 public final class CorpusParityHarness {
+
+    private static final ObjectMapper MAPPER = CanonicalJsonMapper.create();
+    private static final String INDEX = "index.json";
 
     private final HmppsRedaction redaction = new HmppsRedaction();
 
@@ -49,6 +59,13 @@ public final class CorpusParityHarness {
                 for (final EffectiveSwitchState state : EffectiveSwitchState.values()) {
                     final Expectation expectation = parityCase.expectationFor(form, state);
                     if (expectation == null) {
+                        // Every held form x switch state MUST carry an expectation entry, even if
+                        // that entry is an explicit NONE with a reason (FR-001-018 ... FR-001-021).
+                        // A case-state absent from meta.json entirely is a corpus-authoring defect,
+                        // never a silent gap, so it fails the gate rather than shrinking the run.
+                        differences.add(label(parityCase.caseId(), form, state)
+                                + " has no expectation and no explicit NONE entry recording why "
+                                + "(FR-001-018)");
                         continue;
                     }
                     if (expectation instanceof Expectation.NoneExpectation none) {
@@ -79,9 +96,49 @@ public final class CorpusParityHarness {
                 caseThirteen.derivedStates(),
                 List.copyOf(noExpectation),
                 caseThirteen.withoutSource(),
-                List.of(),
+                readExcludedCases(corpusRoot),
                 differences.size(),
                 List.copyOf(differences));
+    }
+
+    /**
+     * Reads the excluded cases {@code index.json} records, each with its reason (FR-001-029,
+     * FR-001-039). The custody gate ({@link CorpusCustodyChecker}) is authoritative for whether
+     * {@code index.json} is present and well formed; this method is defensive only, so a missing or
+     * malformed index reports no exclusions rather than failing the parity run itself.
+     *
+     * @param corpusRoot the corpus directory
+     * @return the excluded cases the index records, each with its reason
+     */
+    private static List<ExcludedCase> readExcludedCases(final Path corpusRoot) {
+        final Path indexPath = corpusRoot.resolve(INDEX);
+        if (!Files.isRegularFile(indexPath)) {
+            return List.of();
+        }
+        final JsonNode index;
+        try {
+            index = MAPPER.readTree(Files.readAllBytes(indexPath));
+        } catch (final IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (final JacksonException e) {
+            return List.of();
+        }
+        final JsonNode excluded = index.get("excludedCases");
+        if (excluded == null || !excluded.isArray()) {
+            return List.of();
+        }
+        final List<ExcludedCase> result = new ArrayList<>();
+        for (final JsonNode entry : excluded) {
+            final JsonNode caseId = entry.get("caseId");
+            if (caseId == null || !caseId.isString()) {
+                continue;
+            }
+            final JsonNode reason = entry.get("reason");
+            result.add(new ExcludedCase(
+                    caseId.stringValue(),
+                    reason != null && reason.isString() ? reason.stringValue() : "no reason recorded"));
+        }
+        return List.copyOf(result);
     }
 
     /**

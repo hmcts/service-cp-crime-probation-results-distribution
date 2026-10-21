@@ -153,11 +153,14 @@ Postgres, Redis, WireMock).
 
 <!-- SPECKIT START -->
 All six features are specified (design rev 3.6 + H35, constitution v2.0.1). `001-parity-kernel` is
-planned: see `specs/001-parity-kernel/plan.md` (branch `001-parity-kernel`) for the active context —
-research.md, data-model.md, quickstart.md and tasks.md (49 tasks) alongside it; `/speckit-analyze`
-found no CRITICAL issues (2 HIGH findings pending remediation — see tasks.md Phase 6 gaps). Both
-`[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are resolved (spec.md Clarifications). The
-rest are specified but not planned yet. Implement in dependency order:
+implemented (branch `001-parity-kernel`; `specs/001-parity-kernel/tasks.md`, 52/52 tasks): the
+ported HMPPS rules, the legacy-case twins, the reused comparator, the custody-checked corpus
+machinery and the deviation register are built and green. It is **not** yet a satisfied go-live
+evidence gate (H21, FR-001-017): the committed corpus is synthetic-only, holding only the `CACHE`
+form, pending the owning team's SIT capture (`doc/DEVIATIONS.md` "Corpus status"; an external
+dependency, not a code gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are
+resolved (spec.md Clarifications). The rest of the six features are specified but not planned yet.
+Implement in dependency order:
 `001-parity-kernel` → `002-hmpps-distribution` (owns the shared core: Flyway V1, enums, state
 machine, ports, metric registry) → `003-body-retention` and `004-recovery` → `005-operations-api` →
 `006-production-readiness`.
