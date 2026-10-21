@@ -125,11 +125,12 @@ corpus, no comparator vectors, no other story.
   fixture never had) and T15 (`delegatedPowers`, `associatedPersons`, `hearing.judiciary` all gone)
   to the same test class (FR-001-011, FR-001-012)
   - RED: `T15 ... FAILED` (R8/R9/R10 not yet implemented); T13/T14 PASSED (vacuous)
-- [ ] T012 [US1] Write `HmppsRedactionPurityTest` in
+- [X] T012 [US1] Write `HmppsRedactionPurityTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionPurityTest.java`:
   for every corpus-independent fixture, the caller's input is unchanged after `redact(...)`, no log
   line is written, and a second call returns an equal result — this is DV-09's pinning test named in
   `doc/DEVIATIONS.md` (FR-001-001, FR-001-036, SC-001-012)
+  - RED: `leaves the caller's payload unchanged FAILED` (laa under ACTIVE mutated); no-log and determinism PASSED
 - [ ] T013 [US1] Write `HmppsRedactionRulesFailureTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionRulesFailureTest.java`:
   asserts `RulesFailure(ruleId)` for each carried null-guard site (P19 — missing `defendants`,
@@ -152,8 +153,9 @@ corpus, no comparator vectors, no other story.
 - [X] T017 [US1] Implement R8, R9, R10 (`judiciary`, `associatedPersons`, `delegatedPowers`
   removal) in `HmppsRedaction.java` — makes T011 green
   - GREEN: `T13/T14/T15 ... PASSED` (all 15 twins green)
-- [ ] T018 [US1] Implement the single deep-copy-on-entry and confirm no logging call exists
+- [X] T018 [US1] Implement the single deep-copy-on-entry and confirm no logging call exists
   anywhere in `pipeline/` — makes T012 green
+  - GREEN: all three `purity (DV-09)` assertions PASSED
 - [ ] T019 [US1] Implement `RuleFailureSignal` throw sites at the carried null-guard reads (P19)
   and the `subject.masterDefendant` read (P18), caught only at `redact(...)`'s outer boundary and
   mapped to `RedactionResult.RulesFailure(ruleId)` — makes T013 green; update `doc/DEVIATIONS.md`'s

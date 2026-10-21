@@ -56,7 +56,7 @@ public final class HmppsRedaction {
      */
     public RedactionResult redact(final JsonNode hearingPayload,
                                   final EffectiveSwitchState switchState) {
-        final ObjectNode json = (ObjectNode) hearingPayload;
+        final ObjectNode json = (ObjectNode) hearingPayload.deepCopy();
 
         removePoliceCases(json);
         if (isSjpOrBoxHearing(json)) {
