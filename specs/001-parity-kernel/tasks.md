@@ -373,10 +373,16 @@ must exist before any case is committed).
 
 ### Implementation for User Story 4
 
-- [ ] T031 [US4] Implement the corpus case loader `ParityCase` (re-authored for this service's
+- [X] T031 [US4] Implement the corpus case loader `ParityCase` (re-authored for this service's
   two-form/two-switch-state shape per `data-model.md`, not a copy of informant-register's) in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/ParityCase.java`,
   reading `meta.json`/`inputs/`/`expectations/`
+  - Replaces T029's stub `loadAll` with the real loader: reads each case directory's `meta.json`
+    (`caseId`, `environment`, `formsHeld`), the payload per held form from `inputs/`, and the
+    per-(form, switch-state) expectation (`BODY` → the oracle body file, `NO_MESSAGE` → kind + rule,
+    `NONE` → reason). `compileTestJava`, `pmdTest` and `checkstyleTest` green. No corpus case is
+    committed yet, so T029/T030 stay red until T032–T042 land the cases; the loader is exercised
+    green there and at T043
 - [ ] T032 [P] [US4] Author synthetic case 1 (virtual-box hearing; always synthetic, A2-8) under
   `src/test/resources/corpus/case-01-virtual-box-hearing/` with `meta.json`, inputs and both-state
   expectations produced via T028 (FR-001-024)
