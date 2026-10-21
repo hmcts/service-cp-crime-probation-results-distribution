@@ -477,10 +477,20 @@ scenario, needs User Story 4's harness.
 
 ### Implementation for User Story 5
 
-- [ ] T047 [US5] Complete `doc/DEVIATIONS.md`'s full field set (legacy behaviour with `file:line`
+- [X] T047 [US5] Complete `doc/DEVIATIONS.md`'s full field set (legacy behaviour with `file:line`
   citation, new behaviour, reason, approval by role and decision id, whether it changes a message
   body, pinning test, built-yet flag) for this slice's built rows (DV-09, DV-25) and the carried /
   pending-external / accepted-risk entries (FR-001-034, FR-001-035) — makes T045 green
+  - The registered-deviations table now splits legacy from new behaviour and carries dedicated
+    Reason, Approval (role; decision), Changes body?, Derivation, Pinning test and Built? columns.
+    Every active row names an approving decision id. DV-25 carries a machine-readable Derivation cell
+    (`default ACTIVE uses the ACTIVE expectation; default INACTIVE uses the INACTIVE expectation`)
+    that T048 reads. The carried (P17, P18, P19), pending-external (P07, P21, P35, P36) and
+    accepted-risk (`defendants`, `offences`, `courtOrderOffence.offence`) sections added in prior
+    rounds are preserved and correctly justified, not duplicated.
+  - GREEN: `every active row carries the full FR-001-034 field set PASSED` and `holds exactly one row
+    per DV-01 … DV-26 and names DV-27 as the next free id PASSED`; `WholeCorpusChecksTest` stays green
+    (accepted-risk section intact)
 - [ ] T048 [US5] Wire the case-13 derivation (T043) to read its permitted outcome from
   `doc/DEVIATIONS.md`'s DV-25 row so withdrawing the row breaks every derivation — makes T046 green
 

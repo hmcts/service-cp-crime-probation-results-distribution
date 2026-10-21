@@ -17,34 +17,40 @@ with.
 
 ## Registered deviations (DV-01 … DV-26)
 
-| DV | Status | Defects | Legacy → new behaviour | Changes the HMPPS body? | Pinning test | Built? |
-|---|---|---|---|---|---|---|
-| DV-01 | Withdrawn (H5) | P08 | VEP leg not built; no VEP projection, sender, schema or flag | — | — | n/a |
-| DV-02 | Withdrawn | — | An unreadable youth switch sending nothing (P16) is fixed by DV-25, not by a separate deviation | — | see DV-25 | n/a |
-| DV-03 | Withdrawn | — | `permissions[0]` decides the switch (P17 carried); no multi-permission reconciliation | — | see P17 | n/a |
-| DV-04 | Active | P04 | Legacy POST has no timeouts and no retries → the gateway POST has connect 5 s / read 60 s timeouts and bounded in-run retries, in-run **only** for a connection failure and 429, `Retry-After` honoured and capped (H11, H15, H27) | No | `GatewayRetryPolicyTest` / `HmppsPublisherIT` (slice 002) | No |
-| DV-05 | Active | P05 | Legacy reports success even when a send fails → the leg outcome reflects the receiver's real answer (`SENT`, `FAILED(receiver-rejected)`, `PARKED(gateway-transient)`) | No | `HmppsPublisherIT` (slice 002) | No |
-| DV-06 | Active | P06 | Legacy swallows a failed send → failed sends are logged at ERROR and counted | No | `FailureSignalIT` (slice 002) | No |
-| DV-07 | Active | P09 | Legacy treats a Redis outage as fatal → a Redis connection failure is a miss, falls back to the query API, then parks; on a resend it is `FAILED(payload-unavailable)` | No | `PayloadSourceIT` (slice 002); resend half with slice 004 | No |
-| DV-08 | Active | P27 | No duplicate protection in the legacy → a duplicate or republish is never re-sent; the processed-log guard is the **only** duplicate protection, broker duplicate detection off (H14) | No | `DuplicateDeliveryIT` (slice 002) | No |
-| DV-09 | Active | P14, P15 | R12 logs the filtered payload (`PF/functions.js:22`) → R12 is **not ported**; the redaction writes no log line, and no payload or defendant data appears in logs at INFO or above | No | `HmppsRedactionPurityTest` (this slice); `TelemetryPrivacyTest` / `LogStatementSweepTest` (slice 002) | Partly — the redaction's no-log half is built (this slice); the service-wide log privacy sweep lands with slice 002 |
-| DV-10 | Active | P13 | A query-API 2xx with an empty body, `{}` or non-JSON is treated as a miss, not a payload (non-JSON pending §16) | No | `ResultsQueryClientIT` (slice 002) | No |
-| DV-11 | Unallocated | P35 | A payload fix that would need HMPPS's agreement; D10 is "no change". Kept so the id is never reused | — | — | n/a |
-| DV-12 | Unallocated | P21 | A payload fix that would need HMPPS's agreement; D10 is "no change". Kept so the id is never reused | — | — | n/a |
-| DV-13 | Active | P10, P11 | Lettuce client: reconnecting, with timeouts applied | No | `RedisPayloadAdapterIT` (slice 002) | No |
-| DV-14 | Active | P12 | The Redis TLS peer is verified | No | `RedisTlsConfigTest` (slice 002) | No |
-| DV-15 | Withdrawn (H5) | P25 | VEP-only; not built | — | — | n/a |
-| DV-16 | Active | P26 | Closed inbound schema: a wrong `eventType`, a missing or an unknown field dead-letters `validation` at once, with no `processed_request` row | No | `InboundSchemaIT` (slice 002) | No |
-| DV-17 | Active | — | The query-API fallback runs without a command `userId`, as the service's own system user (`CJSCPPUID`, one id, H30); on every resend the system user is used | No | `ResultsFallbackUserIT` (slice 002); resend half with slice 004 | No |
-| DV-18 | Reserved | — | Reserved; never reused | — | — | n/a |
-| DV-19 | Reserved | — | Reserved; never reused | — | — | n/a |
-| DV-20 | Reserved | — | Reserved; never reused | — | — | n/a |
-| DV-21 | Reserved | — | Reserved; never reused | — | — | n/a |
-| DV-22 | Reserved | — | Reserved; never reused | — | — | n/a |
-| DV-23 | Active | — | Results-query read: the legacy's retry block (4 attempts, 500 ms doubling to 20 s, cut by the payload budget). Retries 408, 429, ≥ 500 and connect/read failures; honours `Retry-After`; timeouts 5 s / 30 s (A3-8, A3-13) | No | `ResultsQueryRetryIT` (slice 002) | No |
-| DV-24 | Active | — | Users-groups read: finite timeouts of 2 s / 5 s; everything else as the legacy `LegacyGetRetry` (3 attempts, fixed 1 s, retry only an error with no response or a status above 429) (A3-13) | No | `FeaturePermissionClientIT` (slice 002) | No |
-| DV-25 | Active | P16 | Legacy sends nothing when the switch read fails (`PF/index.js:29-32`) → the leg applies `distribution.youth-switch.default-when-unreadable` (`ACTIVE` unless set to `INACTIVE`), records `UNREADABLE_DEFAULTED_<value>`, redacts and sends (H8). Case 13 derives its expected output from the configured-default output | **Sends where the legacy sent nothing** (the normal redacted body for the default state) | corpus case 13 derivation (this slice); `YouthSwitchUnreadableIT`, per cause (slice 002) | No |
-| DV-26 | Active | — (IR departure) | The processed-log guard admits a same-`messageId` copy of a `FAILED` request as a replay, but only at broker delivery count 1 (predicate `exhausted_message_id IS NULL OR exhausted_message_id <> :messageId OR :deliveryCount = 1`, H9) | No | `DlqResubmissionReplayIT` (slice 004) | No |
+Each active row carries the full FR-001-034 field set: the legacy behaviour (with its
+`file:line` citation at `122e2152` where the design gives one), the new behaviour, the reason, the
+approval (by role and decision id), whether it changes the HMPPS body, a derivation rule for a
+deviation that changes an expected outcome (only DV-25 in this release), the pinning test and
+whether the behaviour is built. Withdrawn, unallocated and reserved ids carry only what applies.
+
+| DV | Status | Defects | Legacy behaviour (@122e2152) | New behaviour | Reason | Approval (role; decision) | Changes body? | Derivation | Pinning test | Built? |
+|---|---|---|---|---|---|---|---|---|---|---|
+| DV-01 | Withdrawn (H5) | P08 | — | VEP leg not built; no VEP projection, sender, schema or flag | — | — | — | — | — | n/a |
+| DV-02 | Withdrawn | — | — | An unreadable youth switch sending nothing (P16) is fixed by DV-25, not by a separate deviation | — | — | — | — | see DV-25 | n/a |
+| DV-03 | Withdrawn | — | — | `permissions[0]` decides the switch (P17 carried); no multi-permission reconciliation | — | — | — | — | see P17 | n/a |
+| DV-04 | Active | P04 | The `PF` publisher POST has no timeouts and no retries, so a hung or dropped connection loses the send | The gateway POST has connect 5 s / read 60 s timeouts and bounded in-run retries, in-run **only** for a connection failure and 429, `Retry-After` honoured and capped | A send can hang forever or be lost to a transient blip | Design owner; D1, H11, H15, H27 | No | — | `GatewayRetryPolicyTest` / `HmppsPublisherIT` (slice 002) | No |
+| DV-05 | Active | P05 | Reports success even when a send fails | The leg outcome reflects the receiver's real answer (`SENT`, `FAILED(receiver-rejected)`, `PARKED(gateway-transient)`) | Success-on-failure hides lost sends from operations | Design owner; D1, H15 | No | — | `HmppsPublisherIT` (slice 002) | No |
+| DV-06 | Active | P06 | Swallows a failed send | Failed sends are logged at ERROR and counted | A swallowed failure cannot be alerted on | Design owner; D1, H34 | No | — | `FailureSignalIT` (slice 002) | No |
+| DV-07 | Active | P09 | Treats a Redis outage as fatal | A Redis connection failure is a miss, falls back to the query API, then parks; on a resend it is `FAILED(payload-unavailable)` | A Redis outage must not fail a send the query API can still serve | Design owner; D1, H2 | No | — | `PayloadSourceIT` (slice 002); resend half with slice 004 | No |
+| DV-08 | Active | P27 | No duplicate protection | A duplicate or republish is never re-sent; the processed-log guard is the **only** duplicate protection, broker duplicate detection off | Without a duplicate guard a redelivery sends twice | Design owner; D1, H14 | No | — | `DuplicateDeliveryIT` (slice 002) | No |
+| DV-09 | Active | P14, P15 | R12 logs the filtered payload (`PF/functions.js:22`) | R12 is **not ported**; the redaction writes no log line, and no payload or defendant data appears in logs at INFO or above | Defendant PII must never reach the logs of a public estate | Design owner; D1, H21 | No | — | `HmppsRedactionPurityTest` (this slice); `TelemetryPrivacyTest` / `LogStatementSweepTest` (slice 002) | Partly — the redaction's no-log half is built (this slice); the service-wide log privacy sweep lands with slice 002 |
+| DV-10 | Active | P13 | An empty, `{}` or non-JSON query-API 2xx is taken as a payload | It is treated as a miss, not a payload (non-JSON pending §16) | An empty or non-JSON 2xx is not a payload and must not be sent as one | Design owner; D1 | No | — | `ResultsQueryClientIT` (slice 002) | No |
+| DV-11 | Unallocated | P35 | — | A payload fix that would need HMPPS's agreement; D10 is "no change". Kept so the id is never reused | — | — | — | — | — | n/a |
+| DV-12 | Unallocated | P21 | — | A payload fix that would need HMPPS's agreement; D10 is "no change". Kept so the id is never reused | — | — | — | — | — | n/a |
+| DV-13 | Active | P10, P11 | The Redis client does not reconnect and applies no timeouts | Lettuce client: reconnecting, with timeouts applied | A non-reconnecting client drops every send after a broker blip | Design owner; D1 | No | — | `RedisPayloadAdapterIT` (slice 002) | No |
+| DV-14 | Active | P12 | The Redis TLS peer is not verified | The Redis TLS peer is verified | An unverified TLS peer is an interception risk | Design owner; D1 | No | — | `RedisTlsConfigTest` (slice 002) | No |
+| DV-15 | Withdrawn (H5) | P25 | — | VEP-only; not built | — | — | — | — | — | n/a |
+| DV-16 | Active | P26 | No inbound schema; a malformed or mis-typed message is part-processed | Closed inbound schema: a wrong `eventType`, a missing or an unknown field dead-letters `validation` at once, with no `processed_request` row | A malformed or mis-typed message must be rejected at once, not part-processed | Design owner; D1, H14 | No | — | `InboundSchemaIT` (slice 002) | No |
+| DV-17 | Active | — | The fallback read uses the command's user and fails when there is none | The query-API fallback runs without a command `userId`, as the service's own system user (`CJSCPPUID`, one id, H30); on every resend the system user is used | The fallback must authenticate as the service when the command carries no user | Design owner; D1, H30 | No | — | `ResultsFallbackUserIT` (slice 002); resend half with slice 004 | No |
+| DV-18 | Reserved | — | — | Reserved; never reused | — | — | — | — | — | n/a |
+| DV-19 | Reserved | — | — | Reserved; never reused | — | — | — | — | — | n/a |
+| DV-20 | Reserved | — | — | Reserved; never reused | — | — | — | — | — | n/a |
+| DV-21 | Reserved | — | — | Reserved; never reused | — | — | — | — | — | n/a |
+| DV-22 | Reserved | — | — | Reserved; never reused | — | — | — | — | — | n/a |
+| DV-23 | Active | — | The results-query read retries 408, 429, ≥ 500 and connect/read failures (4 attempts, 500 ms doubling to 20 s) with no finite timeout | The same retry block, with timeouts 5 s / 30 s, cut by the payload budget, honouring `Retry-After` | The results read must ride out a transient upstream, bounded by the payload budget | Design owner; D1, A3-8, A3-13 | No | — | `ResultsQueryRetryIT` (slice 002) | No |
+| DV-24 | Active | — | The users-groups read uses `LegacyGetRetry` (3 attempts, fixed 1 s, retry only an error with no response or a status above 429) with no finite timeout | The same rule, with finite timeouts of 2 s / 5 s | The users-groups read must time out rather than hang the leg | Design owner; D1, A3-13 | No | — | `FeaturePermissionClientIT` (slice 002) | No |
+| DV-25 | Active | P16 | Sends nothing when the switch read fails (`PF/index.js:29-32`) | The leg applies `distribution.youth-switch.default-when-unreadable` (`ACTIVE` unless set to `INACTIVE`), records `UNREADABLE_DEFAULTED_<value>`, redacts and sends (H8); case 13 derives its expected output from the configured-default output | An unreadable switch must not silently drop a hearing | Design owner; H8, A3-28, DV-25 | No — but sends where the legacy sent nothing (the default-state redacted body) | default ACTIVE uses the ACTIVE expectation; default INACTIVE uses the INACTIVE expectation | corpus case 13 derivation (this slice); `YouthSwitchUnreadableIT`, per cause (slice 002) | No |
+| DV-26 | Active | — (IR departure) | No dead-letter replay path | The processed-log guard admits a same-`messageId` copy of a `FAILED` request as a replay, but only at broker delivery count 1 (predicate `exhausted_message_id IS NULL OR exhausted_message_id <> :messageId OR :deliveryCount = 1`) | A dead-letter resubmission of an exhausted request must replay once, not loop | Design owner; H9, DV-26 | No | — | `DlqResubmissionReplayIT` (slice 004) | No |
 
 The next free id is **DV-27**.
 
