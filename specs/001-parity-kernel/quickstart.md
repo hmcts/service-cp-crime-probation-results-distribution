@@ -7,9 +7,9 @@ database. Everything runs from `./gradlew test`.
 
 ```bash
 ./gradlew test --tests "uk.gov.hmcts.cp.probationresultsdistribution.pipeline.*"
-./gradlew test --tests "*LegacyCaseTwin*"
+./gradlew test --tests "*LegacyTwin*"        # HmppsRedactionLegacyTwinTest
 ./gradlew test --tests "*ComparatorContractTest*"
-./gradlew test --tests "*CorpusParityIT*"   # name proposed; see tasks.md
+./gradlew test --tests "*CorpusParityIT*"    # HmppsRedactionCorpusParityIT
 ```
 
 ## Run everything this slice touches, with full analysis

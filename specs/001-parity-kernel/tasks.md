@@ -510,8 +510,13 @@ mechanism is proven load-bearing, not decorative.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T049 [P] Run every command in `quickstart.md` end-to-end; fix any drift between the doc and
+- [X] T049 [P] Run every command in `quickstart.md` end-to-end; fix any drift between the doc and
   the actual Gradle test filters
+  - Ran every filter. Drift found and fixed: `--tests "*LegacyCaseTwin*"` matched no test (the class
+    is `HmppsRedactionLegacyTwinTest`) and Gradle failed the task with `No tests found for given
+    includes`. Corrected to `--tests "*LegacyTwin*"` and annotated the twin/corpus filters with their
+    class names. The other three filters (`pipeline.*`, `*ComparatorContractTest*`, `*CorpusParityIT*`)
+    and the oracle harness's `npm test` run as documented
 - [ ] T050 [P] Confirm `./gradlew build` passes with this slice's new packages included in PMD,
   Checkstyle (`google_checks`, `maxWarnings=0`) and the JaCoCo gate (LINE ≥ 0.88, BRANCH ≥ 0.85) —
   no new exclusion beyond the existing `Application`/`config/**`
