@@ -37,7 +37,7 @@ mirrored `src/test/java/.../{domain,pipeline}/` tree; fixtures and corpus under
 **Purpose**: Bring in the two external inputs this slice ports/reuses, unmodified, before any new
 code references them.
 
-- [ ] T001 [P] Copy the 9 legacy Jest fixtures byte-identical from
+- [X] T001 [P] Copy the 9 legacy Jest fixtures byte-identical from
   `cpp-context-azure-legalaidagency@122e2152:azure-functions/durable-functions/ProbationHearingResultedFilter/test/`
   into `src/test/resources/fixtures/`: `hearing.sjp.cases.resulted.in.sjp.session.json`,
   `box.hearing.json`, `hearing.prosection.case.with.laa.reference.json`,
