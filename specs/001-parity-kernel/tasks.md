@@ -75,24 +75,26 @@ implementation starts before this phase is green.
   does not exist yet — a compile-safe stub throwing `UnsupportedOperationException` lands with this
   task) (research.md R3)
   - RED: `CanonicalJsonMapper > parses 1, 1.0 and 1.00 ... FAILED` — `java.lang.UnsupportedOperationException: CanonicalJsonMapper.create() lands in T006`
-- [ ] T005 [P] Write `DomainTypesTest` in
+- [X] T005 [P] Write `DomainTypesTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/domain/DomainTypesTest.java`:
   asserts `EffectiveSwitchState` has exactly `ACTIVE`/`INACTIVE`, and each `RedactionResult` variant
   (`Body`, `EmptiedByR1`, `EmptiedByR11`, `RulesFailure`) constructs and exposes its field(s) (red:
   compile-safe stub enum/sealed interface with no working accessors lands with this task)
   (data-model.md)
+  - RED: `EffectiveSwitchState > has exactly ACTIVE and INACTIVE FAILED` (STUB_PENDING present); `RulesFailure exposes its rule id` expected `"R10"` but was `null`
 - [X] T006 [P] Implement `CanonicalJsonMapper` (Jackson 3 `ObjectMapper`, `USE_BIG_DECIMAL_FOR_FLOATS`
   equivalent enabled) in
   `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/CanonicalJsonMapper.java`
   — makes T004 green
   - GREEN: `CanonicalJsonMapper > parses 1, 1.0 and 1.00 ... PASSED`
-- [ ] T007 [P] Implement `EffectiveSwitchState`
+- [X] T007 [P] Implement `EffectiveSwitchState`
   (`src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/domain/EffectiveSwitchState.java`),
   `RedactionResult`
   (`src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/domain/RedactionResult.java`) and
   `RuleFailureSignal`
   (`src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/RuleFailureSignal.java`) —
   makes T005 green
+  - GREEN: all four `domain types` assertions PASSED
 
 **Checkpoint**: domain types and the canonical-JSON test utility exist and are green. User story
 phases can now proceed.
