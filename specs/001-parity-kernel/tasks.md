@@ -359,11 +359,17 @@ must exist before any case is committed).
     (`ParityCase.loadAll` returning empty, `Case13Derivation.derive` returning empty, the real
     `CorpusParityHarness`/`ParityReport`) land with this task; the loader lands in T031, the corpus in
     T032–T042 and the derivation in T043
-- [ ] T030 [P] [US4] Write `WholeCorpusChecksTest` in
+- [X] T030 [P] [US4] Write `WholeCorpusChecksTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/WholeCorpusChecksTest.java`:
   every body produced over the corpus carries a non-null `hearing.id`; every carried guard (P19's
   five sites, P18's `masterDefendant`) is reached by a case or has an accepted-risk entry in
   `doc/DEVIATIONS.md` (FR-001-027)
+  - RED: `the judicialResults guard (P19) is reached by case 4 ... FAILED`, `... case 5 ... FAILED`,
+    `the masterDefendant guard (P18) is reached by case 3 ... FAILED` (each `corpus case not found`,
+    pending T034/T035/T036) and `every carried guard with no corpus case is an accepted risk ...
+    FAILED` (`` `defendants` `` not yet an accepted risk, pending the register entries in T032–T042).
+    The non-null-`hearing.id` check PASSES vacuously over the empty corpus. Reuses T029's
+    `ParityCase` seam; made green once the corpus and the register's accepted-risk entries land
 
 ### Implementation for User Story 4
 
