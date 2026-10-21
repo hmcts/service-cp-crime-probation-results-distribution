@@ -152,8 +152,15 @@ Postgres, Redis, WireMock).
 ## Setup
 
 <!-- SPECKIT START -->
-No active feature yet. The constitution (`.specify/memory/constitution.md`, v2.0.0, design rev 3.6)
-is in force; the first feature starts with `/speckit-specify`, and its plan
-(`specs/<NNN-slug>/plan.md`, with `spec.md` and `tasks.md` alongside it) becomes the current context
-here. Specs are written against `doc/design/DIGEST.md` and the design it cites.
+All six features are specified (design rev 3.6, constitution v2.0.0); none is planned yet.
+Implement in dependency order: `001-parity-kernel` → `002-hmpps-distribution` (owns the shared core:
+Flyway V1, enums, state machine, ports, metric registry) → `003-body-retention` and `004-recovery`
+→ `005-operations-api` → `006-production-readiness`.
+
+To start a feature: branch from `main` with the spec's folder name (e.g. `git switch -c
+002-hmpps-distribution`) — the Spec Kit scripts resolve `specs/<NNN>-*` from the branch prefix —
+then run `/speckit-clarify` for any remaining `[NEEDS CLARIFICATION]` (answers come from the design
+owner), `/speckit-plan`, `/speckit-tasks`, `/speckit-analyze`, `/speckit-implement`. The plan
+(`specs/<NNN-slug>/plan.md`, with `spec.md` and `tasks.md` alongside it) then becomes the current
+context here. Specs are written against `doc/design/DIGEST.md` and the design it cites.
 <!-- SPECKIT END -->
