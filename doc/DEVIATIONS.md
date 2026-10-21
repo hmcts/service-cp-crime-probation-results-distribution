@@ -74,5 +74,15 @@ Carried until HMPPS agrees a change (D10). Disposition is not re-decided here.
 ## Accepted risks (carried guards with no corpus case)
 
 An accepted-risk entry is recorded here for each carried P18/P19 guard that no corpus case reaches
-(design §5.3, §6.3; FR-001-027(b), FR-001-035). These entries are maintained alongside the corpus
-and the whole-corpus guard-coverage check in slice 001 User Stories 4 and 5; none is recorded yet.
+(design §5.3, §6.3; FR-001-027(b), FR-001-035). The `judicialResults` (R10), `courtOrderOffences`
+(R7) and `subject.masterDefendant` (R4, P18) guards are reached by corpus cases 4, 5 and 3; the
+three P19 guards below are the ones the synthetic blind-spot corpus does not reach where the member
+is missing, and are accepted as risks until a corpus case exercises each. They remain pinned as unit
+twins by `HmppsRedactionRulesFailureTest`. These entries are maintained alongside the corpus and the
+whole-corpus guard-coverage check (`WholeCorpusChecksTest`) in slice 001 User Stories 4 and 5.
+
+| Carried guard | Where the legacy reads it without a guard | Why no corpus case reaches it |
+|---|---|---|
+| `defendants` | R3, R5, R9, R10 read `prosecutionCase.defendants` (P19) | every corpus prosecution case carries `defendants`; a missing-`defendants` shape is pinned by `HmppsRedactionRulesFailureTest`, not by a corpus case |
+| `offences` | R5 and R10 read `defendant.offences` (P19) | every corpus defendant carries `offences`; a missing-`offences` shape is pinned by `HmppsRedactionRulesFailureTest` |
+| `courtOrderOffence.offence` | R7 reads each `courtOrderOffence.offence` (P19) | corpus case 5 reaches `courtOrderOffences`; the per-offence `offence` read beyond it is pinned by `HmppsRedactionRulesFailureTest` |

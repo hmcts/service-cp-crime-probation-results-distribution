@@ -383,32 +383,42 @@ must exist before any case is committed).
     `NONE` → reason). `compileTestJava`, `pmdTest` and `checkstyleTest` green. No corpus case is
     committed yet, so T029/T030 stay red until T032–T042 land the cases; the loader is exercised
     green there and at T043
-- [ ] T032 [P] [US4] Author synthetic case 1 (virtual-box hearing; always synthetic, A2-8) under
+- [X] T032 [P] [US4] Author synthetic case 1 (virtual-box hearing; always synthetic, A2-8) under
   `src/test/resources/corpus/case-01-virtual-box-hearing/` with `meta.json`, inputs and both-state
   expectations produced via T028 (FR-001-024)
-- [ ] T033 [P] [US4] Author case 2 (top-level `judiciary` and `associatedPersons`) under
+- [X] T033 [P] [US4] Author case 2 (top-level `judiciary` and `associatedPersons`) under
   `src/test/resources/corpus/case-02-top-level-members/` (FR-001-024)
-- [ ] T034 [P] [US4] Author case 3 (court application with no `masterDefendant`, both switch
+- [X] T034 [P] [US4] Author case 3 (court application with no `masterDefendant`, both switch
   states) under `src/test/resources/corpus/case-03-no-masterdefendant/` (FR-001-024)
-- [ ] T035 [P] [US4] Author case 4 (prosecution-case offence without `judicialResults`) under
+- [X] T035 [P] [US4] Author case 4 (prosecution-case offence without `judicialResults`) under
   `src/test/resources/corpus/case-04-no-judicial-results/` (FR-001-024)
-- [ ] T036 [P] [US4] Author case 5 (`courtOrder` without `courtOrderOffences`) under
+- [X] T036 [P] [US4] Author case 5 (`courtOrder` without `courtOrderOffences`) under
   `src/test/resources/corpus/case-05-no-court-order-offences/` (FR-001-024)
-- [ ] T037 [P] [US4] Author case 8 (`plea.delegatedPowers` present, pins P21/P35 as carried) under
+- [X] T037 [P] [US4] Author case 8 (`plea.delegatedPowers` present, pins P21/P35 as carried) under
   `src/test/resources/corpus/case-08-delegated-powers/` (FR-001-024)
-- [ ] T038 [P] [US4] Author case 9 (non-boolean `isYouth`, e.g. `"false"` is truthy) under
+- [X] T038 [P] [US4] Author case 9 (non-boolean `isYouth`, e.g. `"false"` is truthy) under
   `src/test/resources/corpus/case-09-non-boolean-isyouth/` (FR-001-024)
-- [ ] T039 [P] [US4] Author case 11 (youth defendant beside adult defendants, adult-court hearing)
+- [X] T039 [P] [US4] Author case 11 (youth defendant beside adult defendants, adult-court hearing)
   under `src/test/resources/corpus/case-11-youth-among-adults/` (FR-001-024)
-- [ ] T040 [P] [US4] Author case 12 (every case and application removed under `ACTIVE`) under
+- [X] T040 [P] [US4] Author case 12 (every case and application removed under `ACTIVE`) under
   `src/test/resources/corpus/case-12-everything-removed/` (FR-001-024)
-- [ ] T041 [P] [US4] Author the R0-proving case (a payload carrying `policeCases`, truthy) under
+- [X] T041 [P] [US4] Author the R0-proving case (a payload carrying `policeCases`, truthy) under
   `src/test/resources/corpus/case-r0-policecases/` — without this, R0 has no twin and no corpus
   case, leaving FR-001-025 unmet (FR-001-024, FR-001-025; found in `/speckit-analyze`, finding C1)
-- [ ] T042 [P] [US4] Author the P21-proving case (a court application that keeps
+- [X] T042 [P] [US4] Author the P21-proving case (a court application that keeps
   `associatedPersons`/`delegatedPowers`, both switch states) under
   `src/test/resources/corpus/case-p21-application-keeps-associated/` (FR-001-024; found in
   `/speckit-analyze`, finding C1)
+  - T032–T042 authored together in one commit (homogeneous oracle-produced data, no per-case test).
+    Every `ACTIVE`/synthetic expectation was produced by running the pinned legacy oracle
+    (`tools/oracle-harness/run-oracle.js` against `122e2152`), never hand-written (FR-001-022). Oracle
+    classifications: case-01 `EMPTIED_BY_R1` both states; case-02/08/09/11/r0/p21 `BODY` both states;
+    case-03/12 `EMPTIED_BY_R11` under ACTIVE / `BODY` under INACTIVE; case-04 `RULES_FAILURE(R10)` and
+    case-05 `RULES_FAILURE(R7)` both states. GREEN: `WholeCorpusChecksTest` all five PASSED (the
+    `judicialResults`/`courtOrderOffences`/`masterDefendant` guards reached by cases 4/5/3, the three
+    unreached P19 guards recorded as accepted risks in `doc/DEVIATIONS.md`, every produced body
+    carries `hearing.id`); the parity run reports zero unexplained differences and every required
+    case present (`HmppsRedactionCorpusParityIT`, except the case-13 derivation, pending T043)
 - [ ] T043 [US4] Implement the case-13 derivation: for every corpus payload and form, derive the
   switch-read-failure expectation from that case's `ACTIVE` (or configured-default) expectation
   under DV-25, never recorded as its own fixture (FR-001-038)

@@ -1,0 +1,47 @@
+{
+  "caseId": "case-03-no-masterdefendant",
+  "environment": "SYNTHETIC",
+  "formsHeld": [
+    "CACHE"
+  ],
+  "share": {
+    "hearingId": "00000000-0000-0000-0000-000000000003",
+    "hearingDay": "2026-01-01",
+    "sharedTimeInstant": "2026-01-01T09:00:00.000Z"
+  },
+  "payloadSourceRead": "UNKNOWN",
+  "expectations": {
+    "ACTIVE": {
+      "CACHE": {
+        "kind": "NO_MESSAGE",
+        "noMessageKind": "EMPTIED_BY_R11",
+        "source": "EXECUTED_LEGACY"
+      }
+    },
+    "INACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/inactive.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    }
+  },
+  "provenance": {
+    "syntheticFrom": "hand-built from the legacy Jest fixture shapes; carries no SIT or production payload",
+    "change": "a court application whose subject has no masterDefendant: removed under ACTIVE (P18), kept under INACTIVE",
+    "captureDates": {
+      "cache": "2026-10-21",
+      "outcome": "2026-10-21"
+    },
+    "expectationSources": {
+      "ACTIVE:CACHE": "EXECUTED_LEGACY",
+      "INACTIVE:CACHE": "EXECUTED_LEGACY"
+    },
+    "legacyCommit": "122e215250f6f7c7e646d36cbbaa3a50fd60779a",
+    "runtime": "node v20.9.0"
+  },
+  "digests": {
+    "inputs/cache.json": "f7a5a4a2615edb490d727742e3fe4d3eedb5c32485d8437ffd97ace9f8cbbe15",
+    "expectations/inactive.json": "f7a5a4a2615edb490d727742e3fe4d3eedb5c32485d8437ffd97ace9f8cbbe15"
+  }
+}
