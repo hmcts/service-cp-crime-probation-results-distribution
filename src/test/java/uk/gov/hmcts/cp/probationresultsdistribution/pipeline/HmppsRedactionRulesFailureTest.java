@@ -55,6 +55,24 @@ class HmppsRedactionRulesFailureTest {
         }
 
         @Test
+        @DisplayName("a courtOrderOffence with a missing offence fails in R7 under INACTIVE")
+        void missing_offence_in_court_order_offence_should_fail_in_r7() {
+            final JsonNode payload = parse("{\"hearing\":{\"courtApplications\":"
+                    + "[{\"courtOrder\":{\"courtOrderOffences\":[{}]}}]}}");
+
+            assertRulesFailure(payload, EffectiveSwitchState.INACTIVE, "R7");
+        }
+
+        @Test
+        @DisplayName("a courtOrderOffence with a null offence fails in R7 under INACTIVE")
+        void null_offence_in_court_order_offence_should_fail_in_r7() {
+            final JsonNode payload = parse("{\"hearing\":{\"courtApplications\":"
+                    + "[{\"courtOrder\":{\"courtOrderOffences\":[{\"offence\":null}]}}]}}");
+
+            assertRulesFailure(payload, EffectiveSwitchState.INACTIVE, "R7");
+        }
+
+        @Test
         @DisplayName("missing judicialResults fails in R10 under INACTIVE")
         void missing_judicial_results_should_fail_in_r10() {
             final JsonNode payload = parse(

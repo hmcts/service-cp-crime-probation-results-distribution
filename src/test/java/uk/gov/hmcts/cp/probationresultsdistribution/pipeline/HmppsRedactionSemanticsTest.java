@@ -243,6 +243,13 @@ class HmppsRedactionSemanticsTest {
             assertRulesFailure(parse("{\"hearing\":{\"courtApplications\":[{}]}}"),
                     EffectiveSwitchState.ACTIVE, "R4");
         }
+
+        @Test
+        @DisplayName("a null subject fails in R4 under ACTIVE")
+        void null_subject_should_fail_in_r4() {
+            assertRulesFailure(parse("{\"hearing\":{\"courtApplications\":[{\"subject\":null}]}}"),
+                    EffectiveSwitchState.ACTIVE, "R4");
+        }
     }
 
     private void assertRulesFailure(
