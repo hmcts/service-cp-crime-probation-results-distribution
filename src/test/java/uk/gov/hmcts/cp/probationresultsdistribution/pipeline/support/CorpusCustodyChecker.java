@@ -37,6 +37,8 @@ public final class CorpusCustodyChecker {
     private static final String BELONGS_TO_NO_CASE = " belongs to no case";
     private static final String SIT = "SIT";
     private static final String SYNTHETIC = "SYNTHETIC";
+    private static final String EXECUTED_LEGACY = "EXECUTED_LEGACY";
+    private static final String PROVENANCE_PREFIX = "provenance.";
 
     private CorpusCustodyChecker() {
     }
@@ -109,19 +111,36 @@ public final class CorpusCustodyChecker {
             violations.add(missing(caseId, "provenance"));
             return;
         }
-        requireField(provenance, "captureDates", caseId, violations, "provenance.");
-        requireField(provenance, "expectationSources", caseId, violations, "provenance.");
+        requireField(provenance, "captureDates", caseId, violations, PROVENANCE_PREFIX);
+        requireField(provenance, "expectationSources", caseId, violations, PROVENANCE_PREFIX);
+        if (hasExecutedLegacyExpectation(provenance.get("expectationSources"))) {
+            requireField(provenance, "legacyCommit", caseId, violations, PROVENANCE_PREFIX);
+            requireField(provenance, "runtime", caseId, violations, PROVENANCE_PREFIX);
+        }
 
         final String environment = text(meta, "environment", "");
         if (SYNTHETIC.equals(environment)) {
-            requireField(provenance, "syntheticFrom", caseId, violations, "provenance.");
-            requireField(provenance, "change", caseId, violations, "provenance.");
+            requireField(provenance, "syntheticFrom", caseId, violations, PROVENANCE_PREFIX);
+            requireField(provenance, "change", caseId, violations, PROVENANCE_PREFIX);
         } else if (SIT.equals(environment)) {
             requireField(meta, "payloadSourceRead", caseId, violations);
         } else if (present(meta.get("environment"))) {
             violations.add("case " + caseId
                     + ": environment must be " + SIT + " or " + SYNTHETIC + " built from " + SIT);
         }
+    }
+
+    private static boolean hasExecutedLegacyExpectation(final JsonNode expectationSources) {
+        if (!present(expectationSources) || !expectationSources.isObject()) {
+            return false;
+        }
+        for (final String key : expectationSources.propertyNames()) {
+            final JsonNode value = expectationSources.get(key);
+            if (present(value) && value.isString() && EXECUTED_LEGACY.equals(value.stringValue())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void checkDigests(
