@@ -96,11 +96,13 @@ public final class CorpusCustodyChecker {
         }
 
         final String caseId = text(meta, "caseId", dirName);
-        if (!present(meta.get("caseId"))) {
+        if (present(meta.get("caseId"))) {
+            if (!caseId.equals(dirName)) {
+                violations.add("case directory " + dirName
+                        + ": meta.json caseId does not match the directory name");
+            }
+        } else {
             violations.add(missing(dirName, "caseId"));
-        } else if (!caseId.equals(dirName)) {
-            violations.add("case directory " + dirName
-                    + ": meta.json caseId does not match the directory name");
         }
         checkProvenance(meta, caseId, violations);
         checkDigests(caseDir, caseId, meta.get("digests"), violations);
