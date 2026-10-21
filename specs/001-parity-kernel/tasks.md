@@ -177,24 +177,44 @@ inspect its message. Needs nothing from User Story 1.
 
 ### Tests for User Story 2 (write and run first) ⚠️
 
-- [ ] T020 [P] [US2] Run the copied `ComparatorContractTest` (T002) as-is against all 57 vectors,
+- [X] T020 [P] [US2] Run the copied `ComparatorContractTest` (T002) as-is against all 57 vectors,
   both directions; confirm 100% pass with no `UNSPECIFIED` verdict left unhandled (FR-001-014,
   SC-001-002)
-- [ ] T021 [US2] Write `ParityAssertionsTest` in
+  - GREEN: `ComparatorContractTest$DecidedVectors` 114 tests, 0 failures, 0 skipped (57 vectors ×
+    both directions); `$VectorPack` 2 PASSED; `$UndecidedVectors` 0 invocations (no `UNSPECIFIED`
+    verdict left; the pack holds 42 `DIFFERENT` + 15 `EQUAL` = 57 decided). Copied test, already
+    green — a run-and-confirm task, no RED
+- [X] T021 [US2] Write `ParityAssertionsTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/ParityAssertionsTest.java`:
   forces a mismatch between two labelled bodies and asserts the failure message names the case, the
   form, the switch state and each differing JSON path, and contains no value from either side (red:
   `ParityAssertions` does not exist yet) (FR-001-015, SC-001-009)
+  - RED: `assertSameBody_mismatch_should_name_case_form_switch_and_paths FAILED` and
+    `..._should_carry_no_value_from_either_side FAILED` — "Expecting actual throwable to be an
+    instance of AssertionError" but the stub threw `UnsupportedOperationException:
+    ParityAssertions.assertSameBody lands in T023"; `assertSameBody_equalBodies_should_not_throw
+    FAILED` — "Expecting code not to raise a throwable but caught UnsupportedOperationException".
+    Compile-safe seam (`ParityAssertions` stub) lands with this task
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] If `ComparatorContractTest`'s binding point needs adjustment to call the copied
+- [X] T022 [US2] If `ComparatorContractTest`'s binding point needs adjustment to call the copied
   `JsonParity` in this package, make it — confirms T020
-- [ ] T023 [US2] Implement `ParityAssertions.assertSameBody(caseId, form, switchState, expected,
+  - No adjustment needed: the binding point (`comparatorSaysEqual`) already calls
+    `JsonParity.assertMatches` in the same `pipeline.support` package (no import), and T020's run is
+    green against it
+- [X] T023 [US2] Implement `ParityAssertions.assertSameBody(caseId, form, switchState, expected,
   actual)` in
   `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/ParityAssertions.java`
   (test-only utility; lives under `src/test/java/...` if no production caller exists yet),
   delegating to `JsonParity.assertMatches` with a formatted, value-free label — makes T021 green
+  - Lives under `src/test/java/.../pipeline/support/ParityAssertions.java` — no production caller in
+    this slice. Delegates to `JsonParity.assertMatches` with a value-free label, then catches the
+    value-carrying `AssertionError` and rethrows one naming the label and the differing JSON paths
+    only (cause dropped so no value leaks via the stack trace)
+  - GREEN: `assertSameBody_mismatch_should_name_case_form_switch_and_paths PASSED`,
+    `..._should_carry_no_value_from_either_side PASSED`, `assertSameBody_equalBodies_should_not_throw
+    PASSED`
 
 **Checkpoint**: User Story 2 is fully functional and independently testable via the vectors and one
 forced mismatch alone.
