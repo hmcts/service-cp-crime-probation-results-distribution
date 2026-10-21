@@ -131,11 +131,12 @@ corpus, no comparator vectors, no other story.
   line is written, and a second call returns an equal result — this is DV-09's pinning test named in
   `doc/DEVIATIONS.md` (FR-001-001, FR-001-036, SC-001-012)
   - RED: `leaves the caller's payload unchanged FAILED` (laa under ACTIVE mutated); no-log and determinism PASSED
-- [ ] T013 [US1] Write `HmppsRedactionRulesFailureTest` in
+- [X] T013 [US1] Write `HmppsRedactionRulesFailureTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionRulesFailureTest.java`:
   asserts `RulesFailure(ruleId)` for each carried null-guard site (P19 — missing `defendants`,
   `offences`, `courtOrderOffences`/`offence`, `judicialResults`) and for a court application with no
   `masterDefendant` under `ACTIVE` vs kept under `INACTIVE` (P18) (FR-001-007(d), FR-001-008)
+  - RED: R3/R5/R7/R10 cases threw uncaught `RuleFailureSignal` (not yet mapped); P18 cases PASSED
 
 ### Implementation for User Story 1
 
@@ -156,10 +157,11 @@ corpus, no comparator vectors, no other story.
 - [X] T018 [US1] Implement the single deep-copy-on-entry and confirm no logging call exists
   anywhere in `pipeline/` — makes T012 green
   - GREEN: all three `purity (DV-09)` assertions PASSED
-- [ ] T019 [US1] Implement `RuleFailureSignal` throw sites at the carried null-guard reads (P19)
+- [X] T019 [US1] Implement `RuleFailureSignal` throw sites at the carried null-guard reads (P19)
   and the `subject.masterDefendant` read (P18), caught only at `redact(...)`'s outer boundary and
   mapped to `RedactionResult.RulesFailure(ruleId)` — makes T013 green; update `doc/DEVIATIONS.md`'s
   DV-09 row to "built: yes"
+  - GREEN: R3/R5/R7/R10 cases map to `RulesFailure(<rule>)`; P18 removed/kept PASSED. DV-09 built column set to "Partly" (the no-log half is built this slice; the slice-002 log sweep is not, so per FR-001-034 not all named pinning tests exist yet)
 
 **Checkpoint**: User Story 1 is fully functional and independently testable via the 15 twins alone.
 

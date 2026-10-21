@@ -58,24 +58,28 @@ public final class HmppsRedaction {
                                   final EffectiveSwitchState switchState) {
         final ObjectNode json = (ObjectNode) hearingPayload.deepCopy();
 
-        removePoliceCases(json);
-        if (isSjpOrBoxHearing(json)) {
-            return new RedactionResult.EmptiedByR1();
+        try {
+            removePoliceCases(json);
+            if (isSjpOrBoxHearing(json)) {
+                return new RedactionResult.EmptiedByR1();
+            }
+            if (switchState == EffectiveSwitchState.ACTIVE) {
+                removeYouthProsecutionCaseDefendants(json);
+                removeYouthCourtApplications(json);
+            }
+            removeLaaReferenceFromProsecutionCase(json);
+            removeLaaReferenceFromApplication(json);
+            removeLaaReferenceFromCourtOrder(json);
+            removeJudiciary(json);
+            removeAssociatedPersons(json);
+            removeDelegatedPowers(json);
+            if (nothingSurvives(json)) {
+                return new RedactionResult.EmptiedByR11();
+            }
+            return new RedactionResult.Body(json);
+        } catch (final RuleFailureSignal signal) {
+            return new RedactionResult.RulesFailure(signal.ruleId());
         }
-        if (switchState == EffectiveSwitchState.ACTIVE) {
-            removeYouthProsecutionCaseDefendants(json);
-            removeYouthCourtApplications(json);
-        }
-        removeLaaReferenceFromProsecutionCase(json);
-        removeLaaReferenceFromApplication(json);
-        removeLaaReferenceFromCourtOrder(json);
-        removeJudiciary(json);
-        removeAssociatedPersons(json);
-        removeDelegatedPowers(json);
-        if (nothingSurvives(json)) {
-            return new RedactionResult.EmptiedByR11();
-        }
-        return new RedactionResult.Body(json);
     }
 
     /**
