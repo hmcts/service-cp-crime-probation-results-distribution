@@ -550,9 +550,16 @@ mechanism is proven load-bearing, not decorative.
     is emptied by R1 FAILED`, and the two corpus-parity assertions (`zero unexplained differences`,
     `every compared case-state matches`). Reverted with `git checkout --`; `git diff` is empty. No
     gap: every rule is proved by at least one twin or corpus case (FR-001-025, SC-001-007).
-- [ ] T052 [P] Record in `doc/DEVIATIONS.md` and `src/test/resources/corpus/index.json` that the
+- [X] T052 [P] Record in `doc/DEVIATIONS.md` and `src/test/resources/corpus/index.json` that the
   committed corpus is synthetic-only pending the external SIT-capture dependency (`spec.md`
   Dependencies, External), so a reviewer does not mistake it for a shortfall
+  - `index.json` already carries the synthetic-only note (added in T044, referencing T044/T052:
+    `environment: SYNTHETIC`, oracle-produced expectations, SIT-substitution flag) — left as is.
+    Added a matching `## Corpus status` section to `doc/DEVIATIONS.md` stating the corpus is
+    synthetic-only pending SIT capture, that this is not a shortfall, and that the parity gate is
+    green over the synthetic corpus while the slice-006 SIT → STE replay is the pre-cutover proof.
+    The addition sits after the accepted-risks table, leaving the registered-deviations table (and
+    `DeviationRegister`/`DeviationRegisterTest` parsing) unaffected
 
 ---
 

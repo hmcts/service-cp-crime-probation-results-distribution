@@ -92,3 +92,16 @@ whole-corpus guard-coverage check (`WholeCorpusChecksTest`) in slice 001 User St
 | `defendants` | R3, R5, R9, R10 read `prosecutionCase.defendants` (P19) | every corpus prosecution case carries `defendants`; a missing-`defendants` shape is pinned by `HmppsRedactionRulesFailureTest`, not by a corpus case |
 | `offences` | R5 and R10 read `defendant.offences` (P19) | every corpus defendant carries `offences`; a missing-`offences` shape is pinned by `HmppsRedactionRulesFailureTest` |
 | `courtOrderOffence.offence` | R7 reads each `courtOrderOffence.offence` (P19) | corpus case 5 reaches `courtOrderOffences`; the per-offence `offence` read beyond it is pinned by `HmppsRedactionRulesFailureTest` |
+
+## Corpus status
+
+The committed parity corpus is **synthetic-only** at this slice (slice 001), pending the external
+SIT-capture dependency (`spec.md` Dependencies, External; tasks T044, T052). Every corpus case is a
+synthetic payload whose `ACTIVE`/`INACTIVE` expectations were produced by running the pinned legacy
+oracle at `122e2152` (`tools/oracle-harness/run-oracle.js`), never hand-written. The eleven cases
+and their counts are recorded in `src/test/resources/corpus/index.json`
+(`environment: SYNTHETIC`). This is **not a shortfall**: real SIT hearing payloads require the
+owning team's capture within SIT's retention windows (an out-of-repository activity), and a SIT
+case will be substituted for a synthetic one, where the shape exists, once that capture lands. The
+parity gate (SC-001-003) is already green over the synthetic blind-spot corpus, and the one-week
+SIT → STE replay (slice 006) is the pre-cutover proof, not a build gate.
