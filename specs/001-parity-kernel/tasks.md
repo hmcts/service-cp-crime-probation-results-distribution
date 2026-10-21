@@ -491,8 +491,17 @@ scenario, needs User Story 4's harness.
   - GREEN: `every active row carries the full FR-001-034 field set PASSED` and `holds exactly one row
     per DV-01 … DV-26 and names DV-27 as the next free id PASSED`; `WholeCorpusChecksTest` stays green
     (accepted-risk section intact)
-- [ ] T048 [US5] Wire the case-13 derivation (T043) to read its permitted outcome from
+- [X] T048 [US5] Wire the case-13 derivation (T043) to read its permitted outcome from
   `doc/DEVIATIONS.md`'s DV-25 row so withdrawing the row breaks every derivation — makes T046 green
+  - A new read-only `DeviationRegister` parses the register and answers `isActive(dvId)` and
+    `sourceStateForDefault(dvId, default)` (from DV-25's machine-readable Derivation cell).
+    `Case13Derivation.derive(cases, redaction, registerPath)` now reads it: when DV-25 is not an
+    active row every derivation is refused, quoting DV-25; when active it derives the configured
+    default's expectation as the register's rule states. The real-register path is `doc/DEVIATIONS.md`
+    (the two-arg `derive` delegates to it).
+  - GREEN: `withdrawing DV-25 makes every case-13 derivation fail, quoting DV-25 PASSED`; the corpus
+    parity IT is unchanged — `case 13 is derived under DV-25 for the corpus PASSED` and `the parity
+    run reports zero unexplained differences PASSED`
 
 **Checkpoint**: User Story 5 is fully functional — the register is complete and the derivation
 mechanism is proven load-bearing, not decorative.

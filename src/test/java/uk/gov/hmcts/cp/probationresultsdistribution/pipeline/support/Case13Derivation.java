@@ -65,12 +65,10 @@ public final class Case13Derivation {
 
     /**
      * Derives case 13 for every case, form and configured-default value, reading DV-25's permitted
-     * outcome from the given deviation register (FR-001-037, FR-001-038). Withdrawing DV-25's row
-     * breaks every derivation, which then quotes DV-25 — the load-bearing wiring User Story 5 proves
-     * (T046, T048).
-     *
-     * <p>Compile-safe seam (T046): the register path is validated but not yet read; T048 replaces
-     * this body with the register-driven derivation.
+     * outcome from the given deviation register (FR-001-037, FR-001-038). The register states, per
+     * configured default, which switch-state expectation the port must produce; withdrawing DV-25's
+     * row (its status no longer {@code Active}) leaves nothing to derive against, so every derivation
+     * fails quoting DV-25 — the load-bearing wiring User Story 5 proves (T046, T048).
      *
      * @param cases        the loaded corpus cases
      * @param redaction    the port under test
@@ -82,6 +80,8 @@ public final class Case13Derivation {
             final HmppsRedaction redaction,
             final Path registerPath) {
         Objects.requireNonNull(registerPath, "registerPath");
+        final DeviationRegister register = DeviationRegister.load(registerPath);
+        final boolean active = register.isActive(DV_ID);
         final List<DerivedState> derived = new ArrayList<>();
         final List<DerivedState> withoutSource = new ArrayList<>();
         final List<String> differences = new ArrayList<>();
@@ -89,7 +89,12 @@ public final class Case13Derivation {
         for (final ParityCase parityCase : cases) {
             for (final Form form : parityCase.formsHeld()) {
                 for (final EffectiveSwitchState defaultState : EffectiveSwitchState.values()) {
-                    deriveOne(parityCase, form, defaultState, redaction,
+                    if (!active) {
+                        differences.add("case 13 (" + DV_ID + "): derivation refused — " + DV_ID
+                                + " is not an active row of the deviation register");
+                        continue;
+                    }
+                    deriveOne(register, parityCase, form, defaultState, redaction,
                             derived, withoutSource, differences);
                 }
             }
@@ -99,6 +104,7 @@ public final class Case13Derivation {
     }
 
     private static void deriveOne(
+            final DeviationRegister register,
             final ParityCase parityCase,
             final Form form,
             final EffectiveSwitchState defaultState,
@@ -107,7 +113,14 @@ public final class Case13Derivation {
             final List<DerivedState> withoutSource,
             final List<String> differences) {
 
-        final Expectation source = parityCase.expectationFor(form, defaultState);
+        final EffectiveSwitchState sourceState = register.sourceStateForDefault(DV_ID, defaultState);
+        if (sourceState == null) {
+            differences.add("case 13 (" + DV_ID + "): derivation refused — " + DV_ID
+                    + " does not describe the configured default " + defaultState.name());
+            return;
+        }
+
+        final Expectation source = parityCase.expectationFor(form, sourceState);
         if (source == null || source instanceof Expectation.NoneExpectation) {
             final String reason = source instanceof Expectation.NoneExpectation none
                     ? none.reason() : "the case holds no expectation for the configured default";
