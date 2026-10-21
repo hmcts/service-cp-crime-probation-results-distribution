@@ -447,6 +447,7 @@ Flyway `V1__create_processed_log.sql` creates three tables and one view. The dat
 | Any 2xx | `SENT`, status recorded. A non-200 is logged at WARN and counted in `probation_gateway_non200_success_total{status}` | Same |
 | 4xx except 408 and 429 | `FAILED(receiver-rejected)`, no retry | Same |
 | 5xx; 408; read timeout after the write; I/O failure once writing started (outcome unknown) | `PARKED(gateway-transient)`, abandon. On the final delivery, `FAILED(gateway-transient)` | `FAILED(gateway-transient)` at once |
+| 3xx or another answer outside 2xx, 4xx and 5xx (slice 002 clarification, 2026-10-21) | Do not follow the redirect or retry in-run; `PARKED(gateway-transient)`, abandon. On the final delivery, `FAILED(gateway-transient)`; `http=other` | `FAILED(gateway-transient)` at once; `http=other` |
 | Connection failure or 429 still failing after the in-run retries or the stage deadline | `PARKED(gateway-transient)`, then as above | `FAILED(gateway-transient)` |
 
 - The publisher returns `SENT(status)`, `FAILED_NON_TRANSIENT(status)` or `TRANSIENT_EXHAUSTED`. It never throws past the outcome, and it hands the runner the exact bytes sent.
@@ -487,7 +488,7 @@ Flyway `V1__create_processed_log.sql` creates three tables and one view. The dat
   - an empty or missing list;
   - a `null` `permissions[0]`;
   - an unparseable body.
-- **Causes** (`YouthSwitchUnreadableCause`, proposed): `HTTP_FAILURE`, `TIMEOUT`, `EMPTY_PERMISSIONS`, `UNPARSEABLE` (mapping gap, §16).
+- **Causes** (`YouthSwitchUnreadableCause`, proposed): `HTTP_FAILURE`, `TIMEOUT`, `EMPTY_PERMISSIONS`, `UNPARSEABLE`. A 2xx with `permissions[0] = null` uses `EMPTY_PERMISSIONS` (slice 002 clarification, 2026-10-21).
 - **Only `permissions[0]` decides** (P17 carried). More than one permission → `probation_youth_switch_ambiguous_total`, with no change in behaviour.
 - **Retry** (legacy, `LegacyGetRetry`): at most 3 attempts with a fixed 1 s wait. Retry only an error with no response, or a status above 429; no `Retry-After`. A 2xx with an unusable body is not retried; it is `UNREADABLE` at once. Timeouts 2 s / 5 s (DV-24).
 
@@ -607,7 +608,7 @@ Label values come only from the closed sets below. A label never carries a heari
 | Metric | Type | Labels (closed values) |
 |---|---|---|
 | `probation_processed_total` | counter | `status` (final request status) |
-| `probation_leg_outcomes_total` | counter | `leg`=`HMPPS`; `status`; `reason`; `origin` ∈ queue / replay / resend (= `runOrigin`); `forced` ∈ false / true (true only with `resend`); `shape` ∈ application-only / case *(proposed)*; `http` ∈ 200 / 2xx-other / 400 / 401 / 408 / 429 / 4xx-other / 5xx / none *(proposed)* |
+| `probation_leg_outcomes_total` | counter | `leg`=`HMPPS`; `status`; `reason`; `origin` ∈ queue / replay / resend (= `runOrigin`); `forced` ∈ false / true (true only with `resend`); `shape` ∈ application-only / case *(proposed)*; `http` ∈ 200 / 2xx-other / 400 / 401 / 408 / 429 / 4xx-other / 5xx / other / none *(proposed; other added by slice 002 clarification, 2026-10-21)* |
 | `probation_parked_total` | counter | `leg`, `reason` |
 | `probation_deadlettered_total` | counter | `reason` ∈ validation / collision / exhausted / leg-exhausted |
 | `probation_gateway_request_duration` | timer | `leg` |
@@ -625,7 +626,7 @@ Label values come only from the closed sets below. A label never carries a heari
 | `probation_body_default_partition_rows` | gauge | — |
 | `probation_gateway_non200_success_total` | counter | `status` ∈ 201 / 202 / 204 / other |
 | `probation_gateway_recovered_total` *(proposed)* | counter | `after` ∈ 429-in-run / 5xx-redelivery; counted when it happens |
-| `probation_crash_reruns_total` *(proposed)* | counter | `leg`; a redelivery that re-runs a `PENDING` attempt-1 row with an expired request claim |
+| `probation_crash_reruns_total` *(proposed)* | counter | `leg`; a redelivery that re-runs a `PENDING` attempt-1 row with an expired request claim; a `PARKED` re-run is not counted (slice 002 clarification, 2026-10-21) |
 | `probation_intake_suspended` | gauge 0/1 | `cause` ∈ database / operator |
 | `probation_{processing_failures, settlement_failures, lock_loss, stale_runner_rejections, intake_suspensions}_total` | counter | — (inherited) |
 | `probation_flag_read_failures_total` *(proposed; results side)* | counter | — |
@@ -736,12 +737,11 @@ Operations only: rows 2, 8 and 22. G1 is parked; the other rows are closed or an
 |---|---|---|
 | O-1 | HTTP exposure of list, pause/resume, submit-hearing, purge-queue, the flag check and `dlq-completed` is undecided; the CLI runners are the fallback | Ops-API slice |
 | §4.4 (c) vs A3-56 | **Design conflict:** an expired `PENDING` resend row is "reclaimed in place" (claim contract (c), §4.5, A2-72) but also refused `resend-in-progress` "live or expired" (A3-56, §4.4 Selects) | Resend slice |
-| §4.4 / A2-28 | **Design gap:** H8 lists a `null` `permissions[0]` as `UNREADABLE`, but none of the four causes is mapped to it | Switch metric label |
 | Q28 | Whether `FAILED(payload-changed)` and `FAILED(rolled-back)` page; until decided they stay on the leg-failed alert | Alert rules |
 | Q20 / D9 | The landing order of the two results branch chains, and a shared or forked `requestId` helper; re-take the vector when it lands | Producer increment; `RequestIdRecipe` vector |
 | A3-78 | STE replay mechanics (what is injected; where STE gets SIT `EXT_` payloads). Export the chosen week's logged bodies and payloads at once | Readiness slice (row 5) |
 | §10.4 | The source of results' daily share count for reconciliation is not established (results team) | Reconciliation, dashboard |
-| A3-115 | How to count a crash during a `PARKED` re-run or a replay's `FAILED` re-run (only `PENDING` attempt-1 re-runs are counted) | `probation_crash_reruns_total` |
+| A3-115 | How to count a replay's `FAILED` re-run remains open in slice 004. Slice 002 clarified that a `PARKED` re-run is not counted; only expired-claim `PENDING` attempt-1 re-runs count | Recovery slice |
 | §9.4 step 4 | **Design gap:** the close-in-flight-rows statement is specified and pinned (`RollbackFencingIT`), but no §4.8 action or runner executes it | Recovery / ops slice |
 | §6.1 / A3-67 | **Design gap:** the switch-`INACTIVE` expected output of a fallback-form corpus case is undefined. SIT's logged body is the body of the form the legacy read at the time, normally the cache form (a fallback body has no `cpsProsecutorIds` and a different `hearing` field set, §10), and A3-67 executes the legacy only for `ACTIVE` and synthetic cases | Parity kernel (fallback-form cases) |
 

@@ -246,6 +246,7 @@ checks it over the corpus.
 | Any other 2xx | Not retried; logged at WARN and counted as an anomaly | `SENT(status)` |
 | Connection failure (the request was never sent; a connect timeout included), 429 | Retried in-run with bounded attempts and backoff; `Retry-After` is honoured in delta-seconds up to a cap | Still failing at the end: `PARKED(gateway-transient)` and the message is abandoned for redelivery. On the final delivery or a resend it is `FAILED(gateway-transient)` |
 | 5xx (after the gateway's own retries), 408, a read timeout or I/O failure after the request was written | **Not retried in-run.** The outcome is unknown: HMPPS may have accepted the hearing | `PARKED(gateway-transient)` at once and the message is abandoned for broker redelivery. On the final delivery `FAILED(gateway-transient)`; on a resend `FAILED(gateway-transient)` at once |
+| 3xx or another answer outside 2xx, 4xx and 5xx | Redirect is not followed; no in-run retry. Keep the actual HTTP status and count it in `http="other"` (slice 002 clarification, 2026-10-21) | `PARKED(gateway-transient)` at once; `FAILED(gateway-transient)` on the final delivery or a resend |
 | Any other 4xx, 401 included | Not retried | `FAILED(receiver-rejected)`. The receiver's status is recorded |
 
 Each broker redelivery is a new POST, which the gateway may itself retry, and the POST is not
