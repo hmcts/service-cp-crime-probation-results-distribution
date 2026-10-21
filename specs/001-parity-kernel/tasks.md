@@ -64,7 +64,7 @@ code references them.
 **Purpose**: Shared types and infrastructure every user story phase below needs. No user story
 implementation starts before this phase is green.
 
-- [ ] T003 Create `doc/DEVIATIONS.md` seeded from `doc/design/DIGEST.md` §4 and design §7.2: one
+- [X] T003 Create `doc/DEVIATIONS.md` seeded from `doc/design/DIGEST.md` §4 and design §7.2: one
   row for each of DV-01 … DV-26 (withdrawn DV-01/02/03/15, unallocated DV-11/12, reserved
   DV-18…DV-22, active rows included), `DV-27` named as the next free id, and entries for the carried
   defects (P17, P18, P19) and pending-external defects (P07, P21, P35, P36) per FR-001-035. Update
