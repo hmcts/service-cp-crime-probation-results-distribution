@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.pipeline;
 
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.EffectiveSwitchState;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RedactionResult;
@@ -27,6 +28,18 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.RedactionResult;
 @SuppressWarnings("PMD.OnlyOneReturn")
 public final class HmppsRedaction {
 
+    private static final String HEARING = "hearing";
+    private static final String POLICE_CASES = "policeCases";
+    private static final String PROSECUTION_CASES = "prosecutionCases";
+    private static final String COURT_APPLICATIONS = "courtApplications";
+    private static final String DEFENDANTS = "defendants";
+    private static final String OFFENCES = "offences";
+    private static final String OFFENCE = "offence";
+    private static final String LAA_APPLN_REFERENCE = "laaApplnReference";
+    private static final String COURT_APPLICATION_CASES = "courtApplicationCases";
+    private static final String COURT_ORDER = "courtOrder";
+    private static final String COURT_ORDER_OFFENCES = "courtOrderOffences";
+
     /**
      * Redacts a hearing payload for HMPPS.
      *
@@ -42,13 +55,104 @@ public final class HmppsRedaction {
         if (isSjpOrBoxHearing(json)) {
             return new RedactionResult.EmptiedByR1();
         }
+        removeLaaReferenceFromProsecutionCase(json);
+        removeLaaReferenceFromApplication(json);
+        removeLaaReferenceFromCourtOrder(json);
         return new RedactionResult.Body(json);
     }
 
     /** R0 (`PF/functions.js:5-7`): remove {@code policeCases} if it is truthy. */
     private static void removePoliceCases(final ObjectNode json) {
-        if (truthy(json.get("policeCases"))) {
-            json.remove("policeCases");
+        if (truthy(json.get(POLICE_CASES))) {
+            json.remove(POLICE_CASES);
+        }
+    }
+
+    /**
+     * R5 (`PF/functions.js:15, 54-64`): remove {@code laaApplnReference} from every offence of every
+     * prosecution-case defendant. {@code defendants} and {@code offences} are read without a guard
+     * (P19).
+     *
+     * @param json the payload
+     */
+    private static void removeLaaReferenceFromProsecutionCase(final JsonNode json) {
+        if (!hasAnyTruthyTopLevelMember(json)) {
+            return;
+        }
+        final JsonNode prosecutionCases = json.get(HEARING).get(PROSECUTION_CASES);
+        if (!truthy(prosecutionCases)) {
+            return;
+        }
+        for (final JsonNode prosecutionCase : asArrayOrFail(prosecutionCases, "R5")) {
+            for (final JsonNode defendant
+                    : asArrayOrFail(prosecutionCase.get(DEFENDANTS), "R5")) {
+                for (final JsonNode offence : asArrayOrFail(defendant.get(OFFENCES), "R5")) {
+                    removeField(offence, LAA_APPLN_REFERENCE);
+                }
+            }
+        }
+    }
+
+    /**
+     * R6 (`PF/functions.js:16, 66-80`): remove {@code laaApplnReference} from each application case's
+     * offences, where they are present. Guarded in the legacy.
+     *
+     * @param json the payload
+     */
+    private static void removeLaaReferenceFromApplication(final JsonNode json) {
+        if (!hasAnyTruthyTopLevelMember(json)) {
+            return;
+        }
+        final JsonNode courtApplications = json.get(HEARING).get(COURT_APPLICATIONS);
+        if (!truthy(courtApplications)) {
+            return;
+        }
+        for (final JsonNode courtApplication : asArrayOrFail(courtApplications, "R6")) {
+            final JsonNode courtApplicationCases = courtApplication.get(COURT_APPLICATION_CASES);
+            if (!truthy(courtApplicationCases)) {
+                continue;
+            }
+            for (final JsonNode courtApplicationCase
+                    : asArrayOrFail(courtApplicationCases, "R6")) {
+                final JsonNode offences = courtApplicationCase.get(OFFENCES);
+                if (!truthy(offences)) {
+                    continue;
+                }
+                for (final JsonNode offence : asArrayOrFail(offences, "R6")) {
+                    removeField(offence, LAA_APPLN_REFERENCE);
+                }
+            }
+        }
+    }
+
+    /**
+     * R7 (`PF/functions.js:17, 83-93`): for each application whose {@code courtOrder} is truthy,
+     * remove {@code laaApplnReference} from each court-order offence's {@code offence}.
+     * {@code courtOrderOffences} and {@code offence} are read without a guard (P19).
+     *
+     * @param json the payload
+     */
+    private static void removeLaaReferenceFromCourtOrder(final JsonNode json) {
+        if (!hasAnyTruthyTopLevelMember(json)) {
+            return;
+        }
+        final JsonNode courtApplications = json.get(HEARING).get(COURT_APPLICATIONS);
+        if (!truthy(courtApplications)) {
+            return;
+        }
+        for (final JsonNode courtApplication : asArrayOrFail(courtApplications, "R7")) {
+            final JsonNode courtOrder = courtApplication.get(COURT_ORDER);
+            if (!truthy(courtOrder)) {
+                continue;
+            }
+            for (final JsonNode courtOrderOffence
+                    : asArrayOrFail(courtOrder.get(COURT_ORDER_OFFENCES), "R7")) {
+                final JsonNode offence = courtOrderOffence.get(OFFENCE);
+                if (offence == null || offence.isNull()) {
+                    throw new RuleFailureSignal("R7");
+                }
+                removeField(offence, LAA_APPLN_REFERENCE);
+            }
         }
     }
 
@@ -74,7 +178,7 @@ public final class HmppsRedaction {
      * @return the hearing node
      */
     private static JsonNode requireHearing(final JsonNode json, final String ruleId) {
-        final JsonNode hearing = json.get("hearing");
+        final JsonNode hearing = json.get(HEARING);
         if (hearing == null || hearing.isNull()) {
             throw new RuleFailureSignal(ruleId);
         }
@@ -105,5 +209,50 @@ public final class HmppsRedaction {
             return !node.stringValue().isEmpty();
         }
         return true;
+    }
+
+    /**
+     * The payload-level guard the legacy tests before R3–R11 (lodash {@code _.some} over the
+     * payload's top-level values): true if and only if at least one top-level member's value is
+     * truthy (FR-001-005 (b)).
+     *
+     * @param json the payload
+     * @return whether any top-level member is truthy
+     */
+    private static boolean hasAnyTruthyTopLevelMember(final JsonNode json) {
+        for (final JsonNode value : json) {
+            if (truthy(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The node as an array, or a rules failure where the legacy iterates, filters or reads the
+     * length of an absent, null or non-array value and throws (P19, FR-001-008).
+     *
+     * @param node   the node to read as an array, or {@code null} for an absent member
+     * @param ruleId the rule making the read
+     * @return the array node
+     */
+    private static ArrayNode asArrayOrFail(final JsonNode node, final String ruleId) {
+        if (node == null || !node.isArray()) {
+            throw new RuleFailureSignal(ruleId);
+        }
+        return (ArrayNode) node;
+    }
+
+    /**
+     * Removes a member, mirroring the legacy's {@code delete}: a {@code delete} off a non-object is
+     * a silent no-op in the legacy, so a non-object node is left untouched.
+     *
+     * @param node the node to remove the member from
+     * @param name the member name
+     */
+    private static void removeField(final JsonNode node, final String name) {
+        if (node instanceof ObjectNode objectNode) {
+            objectNode.remove(name);
+        }
     }
 }

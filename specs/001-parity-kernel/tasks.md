@@ -115,8 +115,9 @@ corpus, no comparator vectors, no other story.
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionLegacyTwinTest.java`:
   asserts `redact(...)` returns `RedactionResult.EmptiedByR1` for both (FR-001-011)
   - RED: `T1 ... emptied by R1 FAILED`, `T2 ... emptied by R1 FAILED` (stub returned Body)
-- [ ] T009 [P] [US1] Add twin tests for T3, T4, T5 (`laaApplnReference` removed from
+- [X] T009 [P] [US1] Add twin tests for T3, T4, T5 (`laaApplnReference` removed from
   prosecution-case, application and court-order offences) to the same test class (FR-001-011)
+  - RED: `T3/T4/T5 ... FAILED` (laaApplnReference still present)
 - [ ] T010 [P] [US1] Add twin tests for T6–T12 (youth rules under both switch states, including
   `EmptiedByR11` for T10 and T12) to the same test class (FR-001-011)
 - [ ] T011 [P] [US1] Add twin tests for T13, T14 (vacuous per P34 — assert absence of members the
@@ -139,8 +140,9 @@ corpus, no comparator vectors, no other story.
   `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedaction.java` —
   makes T008 green
   - GREEN: `T1 ... emptied by R1 PASSED`, `T2 ... emptied by R1 PASSED`
-- [ ] T015 [US1] Implement R5, R6, R7 (`laaApplnReference` removal from the three offence
+- [X] T015 [US1] Implement R5, R6, R7 (`laaApplnReference` removal from the three offence
   locations) in `HmppsRedaction.java` — makes T009 green
+  - GREEN: `T3/T4/T5 ... PASSED`
 - [ ] T016 [US1] Implement R3, R4 (youth rules, gated on `EffectiveSwitchState.ACTIVE`, including
   the shared `hasAnyTruthyTopLevelMember` payload-level guard) and R11 (final collapse) in
   `HmppsRedaction.java` — makes T010 green

@@ -50,6 +50,57 @@ class HmppsRedactionLegacyTwinTest {
         }
     }
 
+    @Nested
+    @DisplayName("laaApplnReference removal (R5, R6, R7)")
+    class LaaReferenceRemoval {
+
+        @Test
+        @DisplayName("T3: the reference is removed from a prosecution-case offence")
+        void t3_prosecution_case_offence_should_lose_its_laa_reference() {
+            final RedactionResult result = redaction.redact(
+                    fixture("hearing.prosection.case.with.laa.reference.json"),
+                    EffectiveSwitchState.ACTIVE);
+
+            assertThat(result).isInstanceOf(RedactionResult.Body.class);
+            final JsonNode offence = body(result)
+                    .get("hearing").get("prosecutionCases").get(0)
+                    .get("defendants").get(0).get("offences").get(0);
+            assertThat(offence.has("laaApplnReference")).isFalse();
+        }
+
+        @Test
+        @DisplayName("T4: the reference is removed from a court-application-case offence")
+        void t4_application_case_offence_should_lose_its_laa_reference() {
+            final RedactionResult result = redaction.redact(
+                    fixture("hearing.only.court.application.json"),
+                    EffectiveSwitchState.ACTIVE);
+
+            assertThat(result).isInstanceOf(RedactionResult.Body.class);
+            final JsonNode offence = body(result)
+                    .get("hearing").get("courtApplications").get(0)
+                    .get("courtApplicationCases").get(0).get("offences").get(0);
+            assertThat(offence.has("laaApplnReference")).isFalse();
+        }
+
+        @Test
+        @DisplayName("T5: the reference is removed from a court-order offence")
+        void t5_court_order_offence_should_lose_its_laa_reference() {
+            final RedactionResult result = redaction.redact(
+                    fixture("hearing.multiple.court.applications.courtorder.json"),
+                    EffectiveSwitchState.ACTIVE);
+
+            assertThat(result).isInstanceOf(RedactionResult.Body.class);
+            final JsonNode offence = body(result)
+                    .get("hearing").get("courtApplications").get(0)
+                    .get("courtOrder").get("courtOrderOffences").get(0).get("offence");
+            assertThat(offence.has("laaApplnReference")).isFalse();
+        }
+    }
+
+    private static JsonNode body(final RedactionResult result) {
+        return ((RedactionResult.Body) result).payload();
+    }
+
     private static JsonNode fixture(final String name) {
         try (InputStream in =
                      HmppsRedactionLegacyTwinTest.class.getResourceAsStream("/fixtures/" + name)) {
