@@ -111,9 +111,10 @@ corpus, no comparator vectors, no other story.
 
 ### Tests for User Story 1 (write and run first; record the failing assertion) ⚠️
 
-- [ ] T008 [P] [US1] Write twin tests for T1 (SJP fixture) and T2 (box-hearing fixture) in
+- [X] T008 [P] [US1] Write twin tests for T1 (SJP fixture) and T2 (box-hearing fixture) in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionLegacyTwinTest.java`:
   asserts `redact(...)` returns `RedactionResult.EmptiedByR1` for both (FR-001-011)
+  - RED: `T1 ... emptied by R1 FAILED`, `T2 ... emptied by R1 FAILED` (stub returned Body)
 - [ ] T009 [P] [US1] Add twin tests for T3, T4, T5 (`laaApplnReference` removed from
   prosecution-case, application and court-order offences) to the same test class (FR-001-011)
 - [ ] T010 [P] [US1] Add twin tests for T6–T12 (youth rules under both switch states, including
@@ -134,9 +135,10 @@ corpus, no comparator vectors, no other story.
 
 ### Implementation for User Story 1
 
-- [ ] T014 [US1] Implement R0 (`policeCases` drop) and R1 (SJP/box-hearing collapse) in
+- [X] T014 [US1] Implement R0 (`policeCases` drop) and R1 (SJP/box-hearing collapse) in
   `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedaction.java` —
   makes T008 green
+  - GREEN: `T1 ... emptied by R1 PASSED`, `T2 ... emptied by R1 PASSED`
 - [ ] T015 [US1] Implement R5, R6, R7 (`laaApplnReference` removal from the three offence
   locations) in `HmppsRedaction.java` — makes T009 green
 - [ ] T016 [US1] Implement R3, R4 (youth rules, gated on `EffectiveSwitchState.ACTIVE`, including
