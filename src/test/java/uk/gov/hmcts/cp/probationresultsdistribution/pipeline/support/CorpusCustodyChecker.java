@@ -87,6 +87,11 @@ public final class CorpusCustodyChecker {
             throw new UncheckedIOException(e);
         } catch (JacksonException e) {
             violations.add("case directory " + dirName + ": " + META + " is not valid JSON");
+            for (final Path file : regularFilesUnder(caseDir)) {
+                if (!META.equals(rel(caseDir, file))) {
+                    violations.add("file " + rel(corpusRoot, file) + BELONGS_TO_NO_CASE);
+                }
+            }
             return;
         }
 
