@@ -241,6 +241,16 @@ class CorpusCustodyTest {
         }
 
         @Test
+        @DisplayName("a meta.json with no caseId field fails, naming the case and field")
+        void findViolations_whenCaseIdIsAbsent_should_name_the_case_and_field() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> meta.remove("caseId"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("caseId"));
+        }
+
+        @Test
         @DisplayName("an empty formsHeld array fails, naming the case and field")
         void findViolations_whenFormsHeldIsEmpty_should_name_the_case_and_field() throws Exception {
             copyWellFormedInto(tmp);
