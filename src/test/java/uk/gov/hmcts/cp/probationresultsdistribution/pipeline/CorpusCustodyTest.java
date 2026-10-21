@@ -297,6 +297,53 @@ class CorpusCustodyTest {
             assertThat(CorpusCustodyChecker.findViolations(tmp))
                     .anyMatch(v -> v.contains(CASE_DIR) && v.contains("digests"));
         }
+
+        @Test
+        @DisplayName("captureDates missing an entry for a form in formsHeld fails, naming the field")
+        void findViolations_whenCaptureDatesMissingAHeldForm_should_name_the_case_and_field()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> meta.putArray("formsHeld").add("CACHE").add("FALLBACK"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("captureDates.fallback"));
+        }
+
+        @Test
+        @DisplayName("captureDates missing its outcome date fails, naming the case and field")
+        void findViolations_whenCaptureDatesMissingOutcome_should_name_the_case_and_field()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> provenance(meta).putObject("captureDates").put("cache", "2026-01-01"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("captureDates.outcome"));
+        }
+
+        @Test
+        @DisplayName("an empty expectationSources object fails, naming the case and field")
+        void findViolations_whenExpectationSourcesIsEmpty_should_name_the_case_and_field()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> provenance(meta).putObject("expectationSources"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("expectationSources"));
+        }
+
+        @Test
+        @DisplayName("formsHeld containing a value outside CACHE/FALLBACK fails, value-free")
+        void findViolations_whenFormsHeldHasAnUnrecognisedValue_should_name_the_case_only()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> meta.putArray("formsHeld").add("BOGUS-FORM"));
+
+            final List<String> violations = CorpusCustodyChecker.findViolations(tmp);
+
+            assertThat(violations)
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("formsHeld"));
+            assertThat(violations).noneMatch(v -> v.contains("BOGUS-FORM"));
+        }
     }
 
     private static ObjectNode digests(final ObjectNode meta) {
