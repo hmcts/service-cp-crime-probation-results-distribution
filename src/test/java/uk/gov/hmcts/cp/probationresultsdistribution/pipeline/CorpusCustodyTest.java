@@ -1,0 +1,167 @@
+package uk.gov.hmcts.cp.probationresultsdistribution.pipeline;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import java.io.IOException;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
+import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.CanonicalJsonMapper;
+import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.CorpusCustodyChecker;
+
+/**
+ * The custody gate (FR-001-030, FR-001-032, FR-001-031; spec user story 3) exercised over a scratch
+ * corpus, so it is proven to fail the build on a tampered file, a missing provenance field and a
+ * file belonging to no case — and proven never to print a corpus value — <em>before</em> any SIT
+ * case is committed.
+ *
+ * <p>Each scenario starts from the well-formed fixture committed under
+ * {@code src/test/resources/corpus-custody-fixtures/well-formed/}, copies it into a temporary
+ * directory and breaks exactly one thing, so the scenarios are independent and the committed
+ * fixtures stay valid.
+ */
+@DisplayName("CorpusCustodyChecker")
+class CorpusCustodyTest {
+
+    private static final String WELL_FORMED = "/corpus-custody-fixtures/well-formed";
+    private static final String CASE_DIR = "case-custody-demo";
+    private static final String CACHE_FILE = "inputs/cache.json";
+    private static final String PAYLOAD_SENTINEL = "SENTINEL-VALUE-MUST-NOT-LEAK-7Q2";
+    private static final String EXPECTATION_SENTINEL = "SENTINEL-EXPECTATION-MUST-NOT-LEAK-9F4";
+    private static final String BOGUS_DIGEST = "0".repeat(64);
+    private static final ObjectMapper MAPPER = CanonicalJsonMapper.create();
+
+    @TempDir
+    private Path tmp;
+
+    @Nested
+    @DisplayName("fails a broken corpus, naming the file or case (T024)")
+    class Failures {
+
+        @Test
+        @DisplayName("a well-formed corpus produces no violations")
+        void findViolations_whenEveryFileIsPinnedAndProvenanced_should_report_nothing()
+                throws Exception {
+            copyWellFormedInto(tmp);
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("a file whose bytes no longer match its pinned digest fails, naming case + file")
+        void findViolations_whenPinnedDigestNoLongerMatches_should_name_the_case_and_file()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> digests(meta).put(CACHE_FILE, BOGUS_DIGEST));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains(CACHE_FILE));
+        }
+
+        @Test
+        @DisplayName("a case missing a required provenance field fails, naming the case and field")
+        void findViolations_whenAProvenanceFieldIsMissing_should_name_the_case_and_field()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> provenance(meta).remove("captureDates"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("captureDates"));
+        }
+
+        @Test
+        @DisplayName("a file belonging to no case fails, naming the file")
+        void findViolations_whenAFileBelongsToNoCase_should_name_the_file() throws Exception {
+            copyWellFormedInto(tmp);
+            Files.writeString(tmp.resolve("stray.json"), "{\"x\":1}");
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("stray.json") && v.contains("belongs to no case"));
+        }
+    }
+
+    @Nested
+    @DisplayName("never prints a corpus value (T025)")
+    class Privacy {
+
+        @Test
+        @DisplayName("no custody message contains a corpus value, passing or failing (FR-001-031)")
+        void findViolations_overBrokenCorpora_should_name_files_and_cases_but_never_a_value()
+                throws Exception {
+            final List<String> all = new ArrayList<>();
+
+            final Path mismatch = Files.createDirectories(tmp.resolve("mismatch"));
+            copyWellFormedInto(mismatch);
+            rewriteMeta(mismatch, meta -> digests(meta).put(CACHE_FILE, BOGUS_DIGEST));
+            all.addAll(CorpusCustodyChecker.findViolations(mismatch));
+
+            final Path missing = Files.createDirectories(tmp.resolve("missing"));
+            copyWellFormedInto(missing);
+            rewriteMeta(missing, meta -> provenance(meta).remove("captureDates"));
+            all.addAll(CorpusCustodyChecker.findViolations(missing));
+
+            final Path orphan = Files.createDirectories(tmp.resolve("orphan"));
+            copyWellFormedInto(orphan);
+            Files.writeString(orphan.resolve("stray.json"), "{\"x\":1}");
+            all.addAll(CorpusCustodyChecker.findViolations(orphan));
+
+            assertThat(all)
+                    .as("the broken corpora must actually produce violations to prove the point")
+                    .isNotEmpty();
+            assertThat(all)
+                    .as("no corpus value may appear in any custody message")
+                    .noneMatch(v -> v.contains(PAYLOAD_SENTINEL) || v.contains(EXPECTATION_SENTINEL));
+        }
+    }
+
+    private static ObjectNode digests(final ObjectNode meta) {
+        return (ObjectNode) meta.get("digests");
+    }
+
+    private static ObjectNode provenance(final ObjectNode meta) {
+        return (ObjectNode) meta.get("provenance");
+    }
+
+    private static void rewriteMeta(final Path corpusRoot, final Consumer<ObjectNode> mutator)
+            throws IOException {
+        final Path metaPath = corpusRoot.resolve(CASE_DIR).resolve("meta.json");
+        final ObjectNode meta = (ObjectNode) MAPPER.readTree(Files.readAllBytes(metaPath));
+        mutator.accept(meta);
+        Files.writeString(metaPath, MAPPER.writeValueAsString(meta));
+    }
+
+    private static void copyWellFormedInto(final Path corpusRoot)
+            throws IOException, URISyntaxException {
+        final URL url = CorpusCustodyTest.class.getResource(WELL_FORMED);
+        if (url == null) {
+            throw new IllegalStateException(
+                    "custody fixture not on the test classpath: " + WELL_FORMED);
+        }
+        final Path srcRoot = Path.of(url.toURI());
+        final List<Path> entries;
+        try (Stream<Path> walk = Files.walk(srcRoot)) {
+            entries = walk.toList();
+        }
+        for (final Path entry : entries) {
+            final Path target = corpusRoot.resolve(srcRoot.relativize(entry).toString());
+            if (Files.isDirectory(entry)) {
+                Files.createDirectories(target);
+            } else {
+                Files.createDirectories(target.getParent());
+                Files.copy(entry, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+    }
+}

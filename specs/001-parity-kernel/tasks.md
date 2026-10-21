@@ -213,13 +213,19 @@ else.
 
 ### Tests for User Story 3 (write and run first) ⚠️
 
-- [ ] T024 [P] [US3] Write `CorpusCustodyTest` in
+- [X] T024 [P] [US3] Write `CorpusCustodyTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/CorpusCustodyTest.java`
   using a scratch corpus fixture under `src/test/resources/corpus-custody-fixtures/`: a digest
   mismatch, a case missing a required provenance field, and a file belonging to no case each fail
   with a message naming the file/case (FR-001-030, FR-001-032)
-- [ ] T025 [US3] Add a case to `CorpusCustodyTest` asserting custody-check output never contains a
+  - RED: `digest mismatch ... FAILED`, `missing provenance field ... FAILED`, `file belonging to no
+    case ... FAILED` — each `AssertionError: Expecting any elements of: [] to match ...` (the stub
+    `CorpusCustodyChecker.findViolations` returns no violation); the well-formed case PASSED
+- [X] T025 [US3] Add a case to `CorpusCustodyTest` asserting custody-check output never contains a
   corpus value, passing or failing (FR-001-031)
+  - RED: `no custody message contains a corpus value ... FAILED` —
+    `AssertionError: [the broken corpora must actually produce violations to prove the point]
+    Expecting actual not to be empty` (stub returns no violations)
 
 ### Implementation for User Story 3
 
