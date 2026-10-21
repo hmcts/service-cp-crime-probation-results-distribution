@@ -430,9 +430,14 @@ must exist before any case is committed).
   - GREEN: `case 13 is derived under DV-25 for the corpus ... PASSED` (every derived state keyed on
     DV-25), and all six `HmppsRedactionCorpusParityIT` assertions PASSED — zero unexplained
     differences over the corpus
-- [ ] T044 [US4] Update `src/test/resources/corpus/index.json` counts and `excludedCases` to match
+- [X] T044 [US4] Update `src/test/resources/corpus/index.json` counts and `excludedCases` to match
   the committed corpus (all synthetic at this point; flag for SIT-case substitution once the
   external capture dependency is met)
+  - `environment: SYNTHETIC`, `hearingCount: 11`, `casesPerSwitchState {ACTIVE: 11, INACTIVE: 11}`,
+    `syntheticCount: 11`, `excludedCases: []`, the eleven case ids listed, `comparatorVectorCount`
+    held at 57, and a note flagging the synthetic-only corpus pending SIT capture. GREEN: the corpus
+    suites stay green (`HmppsRedactionCorpusParityIT`, `WholeCorpusChecksTest`); custody still passes
+    (`index.json` is the one allowed top-level file)
 
 **Checkpoint**: User Story 4 is fully functional — the parity run reports zero unexplained
 differences over the synthetic blind-spot corpus, and every rule R0, R1, R3–R11 is proved by at
