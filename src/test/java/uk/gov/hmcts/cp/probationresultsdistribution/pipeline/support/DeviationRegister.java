@@ -94,10 +94,14 @@ public final class DeviationRegister {
             if (!DV_ID.matcher(first).matches()) {
                 continue;
             }
-            final String status = cell(cells, statusCol);
-            rows.put(first, new Row(status, parseDefaultMapping(cell(cells, derivationCol))));
+            rows.put(first, rowFrom(cells, statusCol, derivationCol));
         }
         return new DeviationRegister(Map.copyOf(rows));
+    }
+
+    private static Row rowFrom(
+            final List<String> cells, final int statusCol, final int derivationCol) {
+        return new Row(cell(cells, statusCol), parseDefaultMapping(cell(cells, derivationCol)));
     }
 
     private static Map<EffectiveSwitchState, EffectiveSwitchState> parseDefaultMapping(

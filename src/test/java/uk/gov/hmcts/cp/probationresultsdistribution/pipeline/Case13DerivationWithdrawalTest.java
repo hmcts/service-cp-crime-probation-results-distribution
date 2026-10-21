@@ -27,6 +27,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityCase;
 @DisplayName("Case 13 derivation — withdrawing DV-25 breaks every derivation")
 class Case13DerivationWithdrawalTest {
 
+    private static final int STATUS_CELL = 2;
+
     private final HmppsRedaction redaction = new HmppsRedaction();
 
     @Test
@@ -67,8 +69,8 @@ class Case13DerivationWithdrawalTest {
             return line;
         }
         final String[] cells = line.split("\\|", -1);
-        if (cells.length > 2) {
-            cells[2] = " Withdrawn ";
+        if (cells.length > STATUS_CELL) {
+            cells[STATUS_CELL] = " Withdrawn ";
         }
         return String.join("|", cells);
     }
