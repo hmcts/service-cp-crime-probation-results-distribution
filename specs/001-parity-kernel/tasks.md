@@ -456,10 +456,15 @@ scenario, needs User Story 4's harness.
 
 ### Tests for User Story 5 (write and run first) ⚠️
 
-- [ ] T045 [P] [US5] Write `DeviationRegisterTest` in
+- [X] T045 [P] [US5] Write `DeviationRegisterTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/DeviationRegisterTest.java`:
   asserts `doc/DEVIATIONS.md` has exactly one row per DV-01…DV-26 (withdrawn/unallocated/reserved
   included) and names DV-27 as the next free id (FR-001-033, SC-001-011)
+  - RED: `every active row carries the full FR-001-034 field set FAILED` —
+    `AssertionError: [the table must have a 'Legacy behaviour' column] Expecting actual: -1 to be
+    greater than or equal to: 0` (the seeded table merges legacy and new behaviour into one column
+    and carries neither a Reason nor an Approval column; T047 completes the field set). The
+    one-row-per-DV / DV-27 assertion already PASSED against the seeded table
 - [ ] T046 [US5] Write `Case13DerivationWithdrawalTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/Case13DerivationWithdrawalTest.java`:
   withdrawing DV-25's row in a scratch copy of the register makes every case-13 derivation fail,
