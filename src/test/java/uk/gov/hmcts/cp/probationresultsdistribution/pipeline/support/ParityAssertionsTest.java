@@ -10,6 +10,7 @@ import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.EffectiveSwitchState;
 
 /**
@@ -65,6 +66,39 @@ class ParityAssertionsTest {
                     .hasMessageNotContaining("rightonly")
                     .hasMessageNotContaining("keptleft")
                     .hasMessageNotContaining("keptright");
+        }
+
+        @Test
+        @DisplayName("assertSameBody reports every path when more than 25 fields differ")
+        void assertSameBody_reports_every_differing_path() {
+            final ObjectNode expected = mapper.createObjectNode();
+            final ObjectNode actual = mapper.createObjectNode();
+            for (int index = 0; index < 30; index++) {
+                expected.put("field-" + index, "left");
+                actual.put("field-" + index, "right");
+            }
+
+            assertThatThrownBy(() -> ParityAssertions.assertSameBody(
+                    "case-30", "cache", EffectiveSwitchState.ACTIVE, expected, actual))
+                    .isInstanceOf(AssertionError.class)
+                    .hasMessageContaining("30 differing path(s)")
+                    .hasMessageContaining("/field-29")
+                    .hasMessageNotContaining("left")
+                    .hasMessageNotContaining("right");
+        }
+
+        @Test
+        @DisplayName("assertSameBody preserves punctuation in a JSON pointer")
+        void assertSameBody_reports_an_escaped_property_path() {
+            final JsonNode expected = tree("{\"a: b/c~d\":\"left\"}");
+            final JsonNode actual = tree("{\"a: b/c~d\":\"right\"}");
+
+            assertThatThrownBy(() -> ParityAssertions.assertSameBody(
+                    "case-path", "cache", EffectiveSwitchState.ACTIVE, expected, actual))
+                    .isInstanceOf(AssertionError.class)
+                    .hasMessageContaining("/a: b~1c~0d")
+                    .hasMessageNotContaining("left")
+                    .hasMessageNotContaining("right");
         }
     }
 

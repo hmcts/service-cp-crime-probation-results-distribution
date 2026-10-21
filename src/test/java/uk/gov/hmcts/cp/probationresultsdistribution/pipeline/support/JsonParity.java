@@ -39,9 +39,6 @@ import tools.jackson.databind.JsonNode;
  */
 public final class JsonParity {
 
-    /** The number of differences to report before truncating. */
-    private static final int MAX_REPORTED = 25;
-
     private JsonParity() {
     }
 
@@ -56,8 +53,7 @@ public final class JsonParity {
     public static void assertMatches(
             final JsonNode expected, final JsonNode actual, final String what) {
 
-        final List<String> differences = new ArrayList<>();
-        compare(expected, actual, "", differences);
+        final List<Difference> differences = differences(expected, actual);
         if (differences.isEmpty()) {
             return;
         }
@@ -67,14 +63,25 @@ public final class JsonParity {
                 .append(" does not match the golden captured from the legacy function app — ")
                 .append(differences.size())
                 .append(" difference(s):");
-        differences.stream().limit(MAX_REPORTED)
-                .forEach(difference -> message.append("\n  ").append(difference));
-        if (differences.size() > MAX_REPORTED) {
-            message.append("\n  ... and ")
-                    .append(differences.size() - MAX_REPORTED)
-                    .append(" more");
-        }
+        differences.forEach(difference -> message.append("\n  ").append(difference.render()));
         throw new AssertionError(message.toString());
+    }
+
+    /** Returns every differing JSON pointer for value-free parity reporting. */
+    public static List<String> differencePaths(final JsonNode expected, final JsonNode actual) {
+        return differences(expected, actual).stream().map(Difference::path).toList();
+    }
+
+    private static List<Difference> differences(final JsonNode expected, final JsonNode actual) {
+        final List<Difference> found = new ArrayList<>();
+        compare(expected, actual, "", found);
+        return found;
+    }
+
+    private record Difference(String path, String detail) {
+        private String render() {
+            return path + ": " + detail;
+        }
     }
 
     /**
@@ -89,7 +96,7 @@ public final class JsonParity {
             final JsonNode expected,
             final JsonNode actual,
             final String path,
-            final List<String> differences) {
+            final List<Difference> differences) {
 
         if (expected.isObject() && actual.isObject()) {
             compareObjects(expected, actual, path, differences);
@@ -101,13 +108,14 @@ public final class JsonParity {
         }
         if (expected.isNumber() && actual.isNumber()) {
             if (expected.decimalValue().compareTo(actual.decimalValue()) != 0) {
-                differences.add(at(path) + ": expected " + expected + " but was " + actual);
+                differences.add(new Difference(at(path),
+                        "expected " + expected + " but was " + actual));
             }
             return;
         }
         if (!expected.equals(actual)) {
-            differences.add(at(path) + ": expected " + describe(expected)
-                    + " but was " + describe(actual));
+            differences.add(new Difference(at(path),
+                    "expected " + describe(expected) + " but was " + describe(actual)));
         }
     }
 
@@ -123,7 +131,7 @@ public final class JsonParity {
             final JsonNode expected,
             final JsonNode actual,
             final String path,
-            final List<String> differences) {
+            final List<Difference> differences) {
 
         final Set<String> names = new LinkedHashSet<>();
         expected.propertyNames().forEach(names::add);
@@ -132,14 +140,14 @@ public final class JsonParity {
         for (final String name : names) {
             final JsonNode expectedValue = expected.get(name);
             final JsonNode actualValue = actual.get(name);
-            final String childPath = path + "/" + name;
+            final String childPath = path + "/" + name.replace("~", "~0").replace("/", "~1");
 
             if (expectedValue == null) {
-                differences.add(at(childPath) + ": unexpected field, was "
-                        + describe(actualValue));
+                differences.add(new Difference(at(childPath),
+                        "unexpected field, was " + describe(actualValue)));
             } else if (actualValue == null) {
-                differences.add(at(childPath) + ": missing field, expected "
-                        + describe(expectedValue));
+                differences.add(new Difference(at(childPath),
+                        "missing field, expected " + describe(expectedValue)));
             } else {
                 final RegisteredFieldDeviations.Deviation deviation =
                         RegisteredFieldDeviations.forProperty(name);
@@ -173,24 +181,26 @@ public final class JsonParity {
             final JsonNode expected,
             final JsonNode actual,
             final String path,
-            final List<String> differences) {
+            final List<Difference> differences) {
 
         final List<String> permitted = expected.isString()
                 ? deviation.permittedFor(expected.stringValue())
                 : List.of();
 
         if (permitted.isEmpty()) {
-            differences.add(at(path) + ": registered deviation " + deviation.reference()
-                    + " cannot derive the required rendering from the golden value "
-                    + describe(expected)
-                    + " — the golden is not a value this deviation describes, so the component is "
-                    + "no longer covered by it and the difference stands");
+            differences.add(new Difference(at(path),
+                    "registered deviation " + deviation.reference()
+                            + " cannot derive the required rendering from the golden value "
+                            + describe(expected)
+                            + " — the golden is not a value this deviation describes, so the component is "
+                            + "no longer covered by it and the difference stands"));
             return;
         }
         if (!actual.isString() || !permitted.contains(actual.stringValue())) {
-            differences.add(at(path) + ": registered deviation " + deviation.reference()
-                    + " requires the golden " + describe(expected) + " to be re-rendered as "
-                    + String.join(" or ", permitted) + " but was " + describe(actual));
+            differences.add(new Difference(at(path),
+                    "registered deviation " + deviation.reference()
+                            + " requires the golden " + describe(expected) + " to be re-rendered as "
+                            + String.join(" or ", permitted) + " but was " + describe(actual)));
         }
     }
 
@@ -206,11 +216,11 @@ public final class JsonParity {
             final JsonNode expected,
             final JsonNode actual,
             final String path,
-            final List<String> differences) {
+            final List<Difference> differences) {
 
         if (expected.size() != actual.size()) {
-            differences.add(at(path) + ": expected " + expected.size()
-                    + " element(s) but was " + actual.size());
+            differences.add(new Difference(at(path),
+                    "expected " + expected.size() + " element(s) but was " + actual.size()));
         }
         final int shared = Math.min(expected.size(), actual.size());
         for (int index = 0; index < shared; index++) {
