@@ -419,9 +419,17 @@ must exist before any case is committed).
     unreached P19 guards recorded as accepted risks in `doc/DEVIATIONS.md`, every produced body
     carries `hearing.id`); the parity run reports zero unexplained differences and every required
     case present (`HmppsRedactionCorpusParityIT`, except the case-13 derivation, pending T043)
-- [ ] T043 [US4] Implement the case-13 derivation: for every corpus payload and form, derive the
+- [X] T043 [US4] Implement the case-13 derivation: for every corpus payload and form, derive the
   switch-read-failure expectation from that case's `ACTIVE` (or configured-default) expectation
   under DV-25, never recorded as its own fixture (FR-001-038)
+  - Replaces T029's `Case13Derivation.derive` stub: for every case, form and configured-default
+    value (`ACTIVE`, `INACTIVE`) it derives the expectation from the case's expectation for that
+    default under DV-25, runs `redact(payload, default)` and compares with the shared
+    `CorpusParityHarness.compareOutcome`; a derivation with no source expectation is listed, never a
+    pass. The register-driven wiring of DV-25's permitted outcome is T048 (US5).
+  - GREEN: `case 13 is derived under DV-25 for the corpus ... PASSED` (every derived state keyed on
+    DV-25), and all six `HmppsRedactionCorpusParityIT` assertions PASSED — zero unexplained
+    differences over the corpus
 - [ ] T044 [US4] Update `src/test/resources/corpus/index.json` counts and `excludedCases` to match
   the committed corpus (all synthetic at this point; flag for SIT-case substitution once the
   external capture dependency is met)

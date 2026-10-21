@@ -1,7 +1,12 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support;
 
+import java.util.ArrayList;
 import java.util.List;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.EffectiveSwitchState;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.RedactionResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.HmppsRedaction;
+import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityCase.Expectation;
+import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityCase.Form;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityReport.DerivedState;
 
 /**
@@ -10,14 +15,22 @@ import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityRepor
  * (P16, {@code PF/index.js:29-32}); under DV-25 the leg instead applies
  * {@code distribution.youth-switch.default-when-unreadable} and sends the body for that default
  * state. Case 13's expectation is therefore derived — never recorded as its own fixture — from the
- * case's expectation for the configured default (its {@code ACTIVE} expectation unless the default
- * is set to {@code INACTIVE}).
+ * case's expectation for the configured default: its {@code ACTIVE} expectation when the default is
+ * {@code ACTIVE} (the default unless configured otherwise), and its {@code INACTIVE} expectation when
+ * the default is {@code INACTIVE}.
  *
- * <p>Compile-safe seam for T029: it derives nothing until the derivation lands in T043. The causes
- * of an unreadable read and the run that records {@code UNREADABLE_DEFAULTED_&lt;value&gt;} belong
- * to slice 002; this is only the build-time derivation of the expected output.
+ * <p>The derivation is run for both default values the switch can resolve to, so withdrawing DV-25
+ * will break every case-13 derivation (the withdrawal test lands in user story 5, T046/T048; the
+ * register-driven wiring of the permitted outcome is T048). A derivation whose source expectation
+ * does not exist (FR-001-019 … FR-001-021) is listed with no source and never counted as a pass.
+ *
+ * <p>The causes of an unreadable read and the run that records
+ * {@code UNREADABLE_DEFAULTED_&lt;value&gt;} belong to slice 002; this is only the build-time
+ * derivation of the expected output.
  */
 public final class Case13Derivation {
+
+    private static final String DV_ID = "DV-25";
 
     private Case13Derivation() {
     }
@@ -36,13 +49,55 @@ public final class Case13Derivation {
     }
 
     /**
-     * Derives case 13 for every case, form and configured-default value.
+     * Derives case 13 for every case, form and configured-default value, and checks the port's
+     * result for the defaulted state against the derived expectation.
      *
      * @param cases     the loaded corpus cases
      * @param redaction the port under test
      * @return the derivation outcome
      */
     public static Result derive(final List<ParityCase> cases, final HmppsRedaction redaction) {
-        return new Result(List.of(), List.of(), List.of());
+        final List<DerivedState> derived = new ArrayList<>();
+        final List<DerivedState> withoutSource = new ArrayList<>();
+        final List<String> differences = new ArrayList<>();
+
+        for (final ParityCase parityCase : cases) {
+            for (final Form form : parityCase.formsHeld()) {
+                for (final EffectiveSwitchState defaultState : EffectiveSwitchState.values()) {
+                    deriveOne(parityCase, form, defaultState, redaction,
+                            derived, withoutSource, differences);
+                }
+            }
+        }
+        return new Result(
+                List.copyOf(derived), List.copyOf(withoutSource), List.copyOf(differences));
+    }
+
+    private static void deriveOne(
+            final ParityCase parityCase,
+            final Form form,
+            final EffectiveSwitchState defaultState,
+            final HmppsRedaction redaction,
+            final List<DerivedState> derived,
+            final List<DerivedState> withoutSource,
+            final List<String> differences) {
+
+        final Expectation source = parityCase.expectationFor(form, defaultState);
+        if (source == null || source instanceof Expectation.NoneExpectation) {
+            final String reason = source instanceof Expectation.NoneExpectation none
+                    ? none.reason() : "the case holds no expectation for the configured default";
+            withoutSource.add(new DerivedState(
+                    parityCase.caseId(), form.name(), defaultState.name(), DV_ID, reason));
+            return;
+        }
+
+        derived.add(new DerivedState(
+                parityCase.caseId(), form.name(), defaultState.name(), DV_ID, null));
+        final RedactionResult result = redaction.redact(parityCase.inputs().get(form), defaultState);
+        final String difference = CorpusParityHarness.compareOutcome(
+                parityCase.caseId(), form, defaultState, source, result);
+        if (difference != null) {
+            differences.add("case 13 (" + DV_ID + "): " + difference);
+        }
     }
 }

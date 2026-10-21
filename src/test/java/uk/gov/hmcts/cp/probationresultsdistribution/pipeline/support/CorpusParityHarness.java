@@ -85,7 +85,9 @@ public final class CorpusParityHarness {
     }
 
     /**
-     * Compares one case-state's port result with its expectation, value-free.
+     * Compares one case-state's port result with its expectation, value-free. Package-visible so the
+     * case-13 derivation ({@link Case13Derivation}) compares the same way against the configured
+     * default's expectation.
      *
      * @param caseId      the corpus case id
      * @param form        the payload form
@@ -94,7 +96,7 @@ public final class CorpusParityHarness {
      * @param result      the port's result
      * @return {@code null} on a match, or a value-free difference line
      */
-    private static String compareOutcome(
+    static String compareOutcome(
             final String caseId,
             final Form form,
             final EffectiveSwitchState state,
