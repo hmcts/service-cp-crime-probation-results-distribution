@@ -1,0 +1,15 @@
+{
+  "name": "probation-oracle-harness",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Records the legacy HMPPS redaction filter's output as corpus expectations, outside the Gradle build (parity kernel task T028).",
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "oracle": "node run-oracle.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=17"
+  }
+}

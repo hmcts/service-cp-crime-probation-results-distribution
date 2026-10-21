@@ -45,3 +45,27 @@ No `integrationTest` task exists in this repo; `./gradlew test` is the whole sui
 `azure-functions/durable-functions/ProbationHearingResultedFilter/` (`functions.js`, `index.js`,
 `index.test.js`). Run outside this build; its Jest fixtures are copied byte-identical, never
 regenerated to make a test pass (constitution Principle I, II).
+
+## Recording an `ACTIVE`/synthetic expectation from the oracle (T028)
+
+`tools/oracle-harness/run-oracle.js` runs the pinned legacy filter over a payload and writes the
+redacted body(ies) plus provenance, ready to merge into a corpus case's `meta.json`
+(FR-001-022, FR-001-029). It is plain Node (18+), has no npm dependencies of its own (it resolves
+`lodash` from the legacy checkout's own `node_modules`), and never runs inside the Gradle build.
+
+```bash
+cd tools/oracle-harness
+npm test                      # node --test; no legacy checkout needed, everything is stubbed
+
+node run-oracle.js \
+  --payload /path/to/hearing-payload.json \
+  --out-dir ../../src/test/resources/corpus/<caseId> \
+  --switch BOTH \
+  [--form CACHE|FALLBACK] [--hearing-id <id>] [--legacy-repo <path-to-legacy-checkout>]
+```
+
+The legacy checkout must be at the pinned commit (`122e2152...`) — the harness refuses to run
+otherwise. Output: `expectations/active.json`/`inactive.json` (only for states that produced a
+body) and `oracle.json` (provenance + one expectation entry per switch state), which a case's
+`meta.json` incorporates by hand. Nothing from the payload or a produced body is ever written to
+stdout (FR-001-031) — only the classification, file paths, digests and provenance.
