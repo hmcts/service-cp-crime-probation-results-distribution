@@ -2,9 +2,13 @@ package uk.gov.hmcts.cp.probationresultsdistribution.pipeline;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.EffectiveSwitchState;
@@ -23,6 +27,31 @@ class HmppsRedactionRulesFailureTest {
     private static final ObjectMapper MAPPER = CanonicalJsonMapper.create();
 
     private final HmppsRedaction redaction = new HmppsRedaction();
+
+    @ParameterizedTest(name = "null array element fails in {2}")
+    @MethodSource("nullElementCases")
+    @DisplayName("a null nested entry follows the legacy rule failure")
+    void null_nested_entry_should_fail_in_its_rule(
+            final String payload, final EffectiveSwitchState state, final String ruleId) {
+        assertRulesFailure(parse(payload), state, ruleId);
+    }
+
+    private static Stream<Arguments> nullElementCases() {
+        return Stream.of(
+                Arguments.of("{\"hearing\":{\"prosecutionCases\":[null]}}",
+                        EffectiveSwitchState.ACTIVE, "R3"),
+                Arguments.of("{\"hearing\":{\"courtApplications\":[null]}}",
+                        EffectiveSwitchState.ACTIVE, "R4"),
+                Arguments.of("{\"hearing\":{\"prosecutionCases\":[{\"defendants\":["
+                        + "{\"offences\":[null]}]}]}}", EffectiveSwitchState.INACTIVE, "R5"),
+                Arguments.of("{\"hearing\":{\"courtApplications\":[{\"courtApplicationCases\":["
+                        + "{\"offences\":[null]}]}]}}", EffectiveSwitchState.INACTIVE, "R6"),
+                Arguments.of("{\"hearing\":{\"courtApplications\":[{\"courtOrder\":{"
+                        + "\"courtOrderOffences\":[null]}}]}}", EffectiveSwitchState.INACTIVE, "R7"),
+                Arguments.of("{\"hearing\":{\"prosecutionCases\":[{\"defendants\":[{"
+                        + "\"offences\":[{\"judicialResults\":[null]}]}]}]}}",
+                        EffectiveSwitchState.INACTIVE, "R10"));
+    }
 
     @Nested
     @DisplayName("P19: a read through a missing list is a rules failure naming its rule")

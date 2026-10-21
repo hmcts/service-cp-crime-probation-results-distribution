@@ -99,10 +99,10 @@ public final class HmppsRedaction {
         }
         final ArrayNode cases = asArrayOrFail(prosecutionCases, "R3");
         for (int caseIndex = cases.size() - 1; caseIndex >= 0; caseIndex--) {
-            final ArrayNode defendants =
-                    asArrayOrFail(cases.get(caseIndex).get(DEFENDANTS), "R3");
+            final ArrayNode defendants = asArrayOrFail(
+                    memberOf(cases.get(caseIndex), DEFENDANTS, "R3"), "R3");
             for (int defendantIndex = defendants.size() - 1; defendantIndex >= 0; defendantIndex--) {
-                if (truthy(defendants.get(defendantIndex).get(IS_YOUTH))) {
+                if (truthy(memberOf(defendants.get(defendantIndex), IS_YOUTH, "R3"))) {
                     defendants.remove(defendantIndex);
                 }
             }
@@ -129,13 +129,13 @@ public final class HmppsRedaction {
         }
         final ArrayNode apps = asArrayOrFail(courtApplications, "R4");
         for (int appIndex = apps.size() - 1; appIndex >= 0; appIndex--) {
-            final JsonNode subject = apps.get(appIndex).get(SUBJECT);
+            final JsonNode subject = memberOf(apps.get(appIndex), SUBJECT, "R4");
             if (subject == null || subject.isNull()) {
                 throw new RuleFailureSignal("R4");
             }
             final JsonNode masterDefendant = subject.get(MASTER_DEFENDANT);
             final boolean keep =
-                    truthy(masterDefendant) && !truthy(masterDefendant.get(IS_YOUTH));
+                    truthy(masterDefendant) && !truthy(memberOf(masterDefendant, IS_YOUTH, "R4"));
             if (!keep) {
                 apps.remove(appIndex);
             }
@@ -166,9 +166,10 @@ public final class HmppsRedaction {
         }
         for (final JsonNode prosecutionCase : asArrayOrFail(prosecutionCases, "R5")) {
             for (final JsonNode defendant
-                    : asArrayOrFail(prosecutionCase.get(DEFENDANTS), "R5")) {
-                for (final JsonNode offence : asArrayOrFail(defendant.get(OFFENCES), "R5")) {
-                    removeField(offence, LAA_APPLN_REFERENCE);
+                    : asArrayOrFail(memberOf(prosecutionCase, DEFENDANTS, "R5"), "R5")) {
+                for (final JsonNode offence
+                        : asArrayOrFail(memberOf(defendant, OFFENCES, "R5"), "R5")) {
+                    removeFieldOrFail(offence, LAA_APPLN_REFERENCE, "R5");
                 }
             }
         }
@@ -189,18 +190,19 @@ public final class HmppsRedaction {
             return;
         }
         for (final JsonNode courtApplication : asArrayOrFail(courtApplications, "R6")) {
-            final JsonNode courtApplicationCases = courtApplication.get(COURT_APPLICATION_CASES);
+            final JsonNode courtApplicationCases =
+                    memberOf(courtApplication, COURT_APPLICATION_CASES, "R6");
             if (!truthy(courtApplicationCases)) {
                 continue;
             }
             for (final JsonNode courtApplicationCase
                     : asArrayOrFail(courtApplicationCases, "R6")) {
-                final JsonNode offences = courtApplicationCase.get(OFFENCES);
+                final JsonNode offences = memberOf(courtApplicationCase, OFFENCES, "R6");
                 if (!truthy(offences)) {
                     continue;
                 }
                 for (final JsonNode offence : asArrayOrFail(offences, "R6")) {
-                    removeField(offence, LAA_APPLN_REFERENCE);
+                    removeFieldOrFail(offence, LAA_APPLN_REFERENCE, "R6");
                 }
             }
         }
@@ -222,13 +224,13 @@ public final class HmppsRedaction {
             return;
         }
         for (final JsonNode courtApplication : asArrayOrFail(courtApplications, "R7")) {
-            final JsonNode courtOrder = courtApplication.get(COURT_ORDER);
+            final JsonNode courtOrder = memberOf(courtApplication, COURT_ORDER, "R7");
             if (!truthy(courtOrder)) {
                 continue;
             }
             for (final JsonNode courtOrderOffence
-                    : asArrayOrFail(courtOrder.get(COURT_ORDER_OFFENCES), "R7")) {
-                final JsonNode offence = courtOrderOffence.get(OFFENCE);
+                    : asArrayOrFail(memberOf(courtOrder, COURT_ORDER_OFFENCES, "R7"), "R7")) {
+                final JsonNode offence = memberOf(courtOrderOffence, OFFENCE, "R7");
                 if (offence == null || offence.isNull()) {
                     throw new RuleFailureSignal("R7");
                 }
@@ -360,8 +362,8 @@ public final class HmppsRedaction {
         }
         for (final JsonNode prosecutionCase : asArrayOrFail(prosecutionCases, "R9")) {
             for (final JsonNode defendant
-                    : asArrayOrFail(prosecutionCase.get(DEFENDANTS), "R9")) {
-                removeField(defendant, ASSOCIATED_PERSONS);
+                    : asArrayOrFail(memberOf(prosecutionCase, DEFENDANTS, "R9"), "R9")) {
+                removeFieldOrFail(defendant, ASSOCIATED_PERSONS, "R9");
             }
         }
     }
@@ -384,11 +386,13 @@ public final class HmppsRedaction {
         }
         final String rule = "R10";
         for (final JsonNode prosecutionCase : asArrayOrFail(prosecutionCases, rule)) {
-            for (final JsonNode defendant : asArrayOrFail(prosecutionCase.get(DEFENDANTS), rule)) {
-                for (final JsonNode offence : asArrayOrFail(defendant.get(OFFENCES), rule)) {
+            for (final JsonNode defendant
+                    : asArrayOrFail(memberOf(prosecutionCase, DEFENDANTS, rule), rule)) {
+                for (final JsonNode offence
+                        : asArrayOrFail(memberOf(defendant, OFFENCES, rule), rule)) {
                     for (final JsonNode judicialResult
-                            : asArrayOrFail(offence.get(JUDICIAL_RESULTS), rule)) {
-                        removeField(judicialResult, DELEGATED_POWERS);
+                            : asArrayOrFail(memberOf(offence, JUDICIAL_RESULTS, rule), rule)) {
+                        removeFieldOrFail(judicialResult, DELEGATED_POWERS, rule);
                     }
                 }
             }
@@ -406,6 +410,23 @@ public final class HmppsRedaction {
         if (node instanceof ObjectNode objectNode) {
             objectNode.remove(name);
         }
+    }
+
+    /** A JavaScript property read: only absent or null receivers throw. */
+    private static JsonNode memberOf(final JsonNode node, final String name, final String ruleId) {
+        if (node == null || node.isNull()) {
+            throw new RuleFailureSignal(ruleId);
+        }
+        return node.get(name);
+    }
+
+    /** A JavaScript delete: deleting a member of an absent or null receiver throws. */
+    private static void removeFieldOrFail(
+            final JsonNode node, final String name, final String ruleId) {
+        if (node == null || node.isNull()) {
+            throw new RuleFailureSignal(ruleId);
+        }
+        removeField(node, name);
     }
 
     /**
