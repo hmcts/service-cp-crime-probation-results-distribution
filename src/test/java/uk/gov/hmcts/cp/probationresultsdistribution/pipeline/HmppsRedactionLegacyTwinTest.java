@@ -179,6 +179,46 @@ class HmppsRedactionLegacyTwinTest {
         }
     }
 
+    @Nested
+    @DisplayName("sensitive-data removal R8, R9, R10")
+    class SensitiveDataRemoval {
+
+        private static final String LAA = "hearing.prosection.case.with.laa.reference.json";
+
+        @Test
+        @DisplayName("T13: a top-level judiciary is absent (the fixture never carried one — P34)")
+        void t13_top_level_judiciary_should_be_absent() {
+            final RedactionResult result = redaction.redact(fixture(LAA), EffectiveSwitchState.INACTIVE);
+
+            assertThat(result).isInstanceOf(RedactionResult.Body.class);
+            assertThat(body(result).has("judiciary")).isFalse();
+        }
+
+        @Test
+        @DisplayName("T14: a top-level associatedPersons is absent (the fixture never carried one — P34)")
+        void t14_top_level_associated_persons_should_be_absent() {
+            final RedactionResult result = redaction.redact(fixture(LAA), EffectiveSwitchState.INACTIVE);
+
+            assertThat(result).isInstanceOf(RedactionResult.Body.class);
+            assertThat(body(result).has("associatedPersons")).isFalse();
+        }
+
+        @Test
+        @DisplayName("T15: hearing.judiciary, a defendant's associatedPersons and a judicial result's delegatedPowers are gone")
+        void t15_sensitive_members_should_be_removed() {
+            final RedactionResult result = redaction.redact(fixture(LAA), EffectiveSwitchState.ACTIVE);
+
+            assertThat(result).isInstanceOf(RedactionResult.Body.class);
+            final JsonNode hearing = body(result).get("hearing");
+            final JsonNode defendant = hearing.get("prosecutionCases").get(0).get("defendants").get(0);
+            final JsonNode judicialResult = defendant.get("offences").get(0).get("judicialResults").get(0);
+
+            assertThat(hearing.has("judiciary")).isFalse();
+            assertThat(defendant.has("associatedPersons")).isFalse();
+            assertThat(judicialResult.has("delegatedPowers")).isFalse();
+        }
+    }
+
     private static JsonNode body(final RedactionResult result) {
         return ((RedactionResult.Body) result).payload();
     }

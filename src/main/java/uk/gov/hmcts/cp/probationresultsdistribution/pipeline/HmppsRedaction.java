@@ -42,6 +42,10 @@ public final class HmppsRedaction {
     private static final String IS_YOUTH = "isYouth";
     private static final String SUBJECT = "subject";
     private static final String MASTER_DEFENDANT = "masterDefendant";
+    private static final String JUDICIARY = "judiciary";
+    private static final String ASSOCIATED_PERSONS = "associatedPersons";
+    private static final String JUDICIAL_RESULTS = "judicialResults";
+    private static final String DELEGATED_POWERS = "delegatedPowers";
 
     /**
      * Redacts a hearing payload for HMPPS.
@@ -65,6 +69,9 @@ public final class HmppsRedaction {
         removeLaaReferenceFromProsecutionCase(json);
         removeLaaReferenceFromApplication(json);
         removeLaaReferenceFromCourtOrder(json);
+        removeJudiciary(json);
+        removeAssociatedPersons(json);
+        removeDelegatedPowers(json);
         if (nothingSurvives(json)) {
             return new RedactionResult.EmptiedByR11();
         }
@@ -311,6 +318,77 @@ public final class HmppsRedaction {
             throw new RuleFailureSignal(ruleId);
         }
         return (ArrayNode) node;
+    }
+
+    /**
+     * R8 (`PF/functions.js:18, 95-102`): remove a top-level {@code judiciary} if the key is present
+     * (key presence, whatever the value), and {@code hearing.judiciary} if it is truthy.
+     *
+     * @param json the payload
+     */
+    private static void removeJudiciary(final JsonNode json) {
+        if (hasAnyTruthyTopLevelMember(json)) {
+            removeField(json, JUDICIARY);
+        }
+        final JsonNode hearing = json.get(HEARING);
+        if (hasAnyTruthyTopLevelMember(json) && truthy(hearing.get(JUDICIARY))) {
+            removeField(hearing, JUDICIARY);
+        }
+    }
+
+    /**
+     * R9 (`PF/functions.js:19, 104-115`): remove a top-level {@code associatedPersons} if the key is
+     * present, and {@code associatedPersons} from every prosecution-case defendant. {@code defendants}
+     * is read without a guard (P19); court applications are not touched (P21).
+     *
+     * @param json the payload
+     */
+    private static void removeAssociatedPersons(final JsonNode json) {
+        if (hasAnyTruthyTopLevelMember(json)) {
+            removeField(json, ASSOCIATED_PERSONS);
+        }
+        if (!hasAnyTruthyTopLevelMember(json)) {
+            return;
+        }
+        final JsonNode prosecutionCases = json.get(HEARING).get(PROSECUTION_CASES);
+        if (!truthy(prosecutionCases)) {
+            return;
+        }
+        for (final JsonNode prosecutionCase : asArrayOrFail(prosecutionCases, "R9")) {
+            for (final JsonNode defendant
+                    : asArrayOrFail(prosecutionCase.get(DEFENDANTS), "R9")) {
+                removeField(defendant, ASSOCIATED_PERSONS);
+            }
+        }
+    }
+
+    /**
+     * R10 (`PF/functions.js:20, 117-131`): remove {@code delegatedPowers}, if the key is present,
+     * from every judicial result of every prosecution-case offence. {@code defendants},
+     * {@code offences} and {@code judicialResults} are read without a guard (P19);
+     * {@code plea.delegatedPowers} and application offences are untouched (P35, P21).
+     *
+     * @param json the payload
+     */
+    private static void removeDelegatedPowers(final JsonNode json) {
+        if (!hasAnyTruthyTopLevelMember(json)) {
+            return;
+        }
+        final JsonNode prosecutionCases = json.get(HEARING).get(PROSECUTION_CASES);
+        if (!truthy(prosecutionCases)) {
+            return;
+        }
+        final String rule = "R10";
+        for (final JsonNode prosecutionCase : asArrayOrFail(prosecutionCases, rule)) {
+            for (final JsonNode defendant : asArrayOrFail(prosecutionCase.get(DEFENDANTS), rule)) {
+                for (final JsonNode offence : asArrayOrFail(defendant.get(OFFENCES), rule)) {
+                    for (final JsonNode judicialResult
+                            : asArrayOrFail(offence.get(JUDICIAL_RESULTS), rule)) {
+                        removeField(judicialResult, DELEGATED_POWERS);
+                    }
+                }
+            }
+        }
     }
 
     /**

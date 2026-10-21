@@ -121,9 +121,10 @@ corpus, no comparator vectors, no other story.
 - [X] T010 [P] [US1] Add twin tests for T6–T12 (youth rules under both switch states, including
   `EmptiedByR11` for T10 and T12) to the same test class (FR-001-011)
   - RED: `T7/T8/T10/T12 ... FAILED` (R3/R4/R11 not yet implemented); T6/T9/T11 already PASSED (INACTIVE)
-- [ ] T011 [P] [US1] Add twin tests for T13, T14 (vacuous per P34 — assert absence of members the
+- [X] T011 [P] [US1] Add twin tests for T13, T14 (vacuous per P34 — assert absence of members the
   fixture never had) and T15 (`delegatedPowers`, `associatedPersons`, `hearing.judiciary` all gone)
   to the same test class (FR-001-011, FR-001-012)
+  - RED: `T15 ... FAILED` (R8/R9/R10 not yet implemented); T13/T14 PASSED (vacuous)
 - [ ] T012 [US1] Write `HmppsRedactionPurityTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionPurityTest.java`:
   for every corpus-independent fixture, the caller's input is unchanged after `redact(...)`, no log
@@ -148,8 +149,9 @@ corpus, no comparator vectors, no other story.
   the shared `hasAnyTruthyTopLevelMember` payload-level guard) and R11 (final collapse) in
   `HmppsRedaction.java` — makes T010 green
   - GREEN: `T6..T12 ... PASSED` (all seven)
-- [ ] T017 [US1] Implement R8, R9, R10 (`judiciary`, `associatedPersons`, `delegatedPowers`
+- [X] T017 [US1] Implement R8, R9, R10 (`judiciary`, `associatedPersons`, `delegatedPowers`
   removal) in `HmppsRedaction.java` — makes T011 green
+  - GREEN: `T13/T14/T15 ... PASSED` (all 15 twins green)
 - [ ] T018 [US1] Implement the single deep-copy-on-entry and confirm no logging call exists
   anywhere in `pipeline/` — makes T012 green
 - [ ] T019 [US1] Implement `RuleFailureSignal` throw sites at the carried null-guard reads (P19)
