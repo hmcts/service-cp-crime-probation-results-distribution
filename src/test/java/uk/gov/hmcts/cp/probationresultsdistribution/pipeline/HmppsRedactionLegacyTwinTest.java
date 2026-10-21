@@ -97,6 +97,88 @@ class HmppsRedactionLegacyTwinTest {
         }
     }
 
+    @Nested
+    @DisplayName("youth rules R3, R4 and the R11 collapse")
+    class YouthRules {
+
+        private static final String YOUTH_DEFENDANTS = "hearing.prosection.case.with.youth.defendant.json";
+        private static final String ALL_YOUTH = "hearing.prosection.case.with.all.youth.defendant.json";
+        private static final String SINGLE_ALL_YOUTH = "hearing.single.prosection.case.with.all.youth.defendant.json";
+        private static final String APPLICATION_YOUTH = "hearing.only.court.application.with.youth.defendant.json";
+
+        @Test
+        @DisplayName("T6: INACTIVE keeps every youth defendant and every case")
+        void t6_inactive_should_keep_every_defendant() {
+            final JsonNode cases = redactedProsecutionCases(YOUTH_DEFENDANTS, EffectiveSwitchState.INACTIVE);
+
+            assertThat(cases.size()).isEqualTo(2);
+            assertThat(cases.get(0).get("defendants").size()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("T7: ACTIVE removes the youth defendant and keeps both cases")
+        void t7_active_should_remove_the_youth_defendant() {
+            final JsonNode cases = redactedProsecutionCases(YOUTH_DEFENDANTS, EffectiveSwitchState.ACTIVE);
+
+            assertThat(cases.size()).isEqualTo(2);
+            assertThat(cases.get(0).get("defendants").size()).isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("T8: ACTIVE removes the all-youth case and keeps the adult case")
+        void t8_active_should_remove_the_all_youth_case() {
+            final JsonNode cases = redactedProsecutionCases(ALL_YOUTH, EffectiveSwitchState.ACTIVE);
+
+            assertThat(cases.size()).isEqualTo(1);
+            assertThat(cases.get(0).get("id").stringValue())
+                    .isEqualTo("c10e3b71-6a6d-45ef-9b62-34df4d54971b");
+            assertThat(cases.get(0).get("defendants").size()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("T9: INACTIVE sends the single all-youth case")
+        void t9_inactive_should_keep_the_single_all_youth_case() {
+            final JsonNode cases = redactedProsecutionCases(SINGLE_ALL_YOUTH, EffectiveSwitchState.INACTIVE);
+
+            assertThat(cases.size()).isEqualTo(1);
+            assertThat(cases.get(0).get("defendants").size()).isEqualTo(3);
+        }
+
+        @Test
+        @DisplayName("T10: ACTIVE empties the single all-youth case by R11")
+        void t10_active_should_be_emptied_by_r11() {
+            final RedactionResult result = redaction.redact(
+                    fixture(SINGLE_ALL_YOUTH), EffectiveSwitchState.ACTIVE);
+
+            assertThat(result).isInstanceOf(RedactionResult.EmptiedByR11.class);
+        }
+
+        @Test
+        @DisplayName("T11: INACTIVE sends the youth court application")
+        void t11_inactive_should_keep_the_court_application() {
+            final RedactionResult result = redaction.redact(
+                    fixture(APPLICATION_YOUTH), EffectiveSwitchState.INACTIVE);
+
+            assertThat(result).isInstanceOf(RedactionResult.Body.class);
+            assertThat(body(result).get("hearing").get("courtApplications").size()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("T12: ACTIVE empties the youth court application by R11")
+        void t12_active_should_be_emptied_by_r11() {
+            final RedactionResult result = redaction.redact(
+                    fixture(APPLICATION_YOUTH), EffectiveSwitchState.ACTIVE);
+
+            assertThat(result).isInstanceOf(RedactionResult.EmptiedByR11.class);
+        }
+
+        private JsonNode redactedProsecutionCases(final String name, final EffectiveSwitchState state) {
+            final RedactionResult result = redaction.redact(fixture(name), state);
+            assertThat(result).isInstanceOf(RedactionResult.Body.class);
+            return body(result).get("hearing").get("prosecutionCases");
+        }
+    }
+
     private static JsonNode body(final RedactionResult result) {
         return ((RedactionResult.Body) result).payload();
     }

@@ -39,6 +39,9 @@ public final class HmppsRedaction {
     private static final String COURT_APPLICATION_CASES = "courtApplicationCases";
     private static final String COURT_ORDER = "courtOrder";
     private static final String COURT_ORDER_OFFENCES = "courtOrderOffences";
+    private static final String IS_YOUTH = "isYouth";
+    private static final String SUBJECT = "subject";
+    private static final String MASTER_DEFENDANT = "masterDefendant";
 
     /**
      * Redacts a hearing payload for HMPPS.
@@ -55,10 +58,77 @@ public final class HmppsRedaction {
         if (isSjpOrBoxHearing(json)) {
             return new RedactionResult.EmptiedByR1();
         }
+        if (switchState == EffectiveSwitchState.ACTIVE) {
+            removeYouthProsecutionCaseDefendants(json);
+            removeYouthCourtApplications(json);
+        }
         removeLaaReferenceFromProsecutionCase(json);
         removeLaaReferenceFromApplication(json);
         removeLaaReferenceFromCourtOrder(json);
+        if (nothingSurvives(json)) {
+            return new RedactionResult.EmptiedByR11();
+        }
         return new RedactionResult.Body(json);
+    }
+
+    /**
+     * R3 (`PF/functions.js:11-13, 30-39`, {@code ACTIVE} only): remove every prosecution-case
+     * defendant whose {@code isYouth} is truthy, then every case left with no defendant.
+     * {@code defendants} is read without a guard (P19).
+     *
+     * @param json the payload
+     */
+    private static void removeYouthProsecutionCaseDefendants(final JsonNode json) {
+        if (!hasAnyTruthyTopLevelMember(json)) {
+            return;
+        }
+        final JsonNode prosecutionCases = json.get(HEARING).get(PROSECUTION_CASES);
+        if (!truthy(prosecutionCases)) {
+            return;
+        }
+        final ArrayNode cases = asArrayOrFail(prosecutionCases, "R3");
+        for (int caseIndex = cases.size() - 1; caseIndex >= 0; caseIndex--) {
+            final ArrayNode defendants =
+                    asArrayOrFail(cases.get(caseIndex).get(DEFENDANTS), "R3");
+            for (int defendantIndex = defendants.size() - 1; defendantIndex >= 0; defendantIndex--) {
+                if (truthy(defendants.get(defendantIndex).get(IS_YOUTH))) {
+                    defendants.remove(defendantIndex);
+                }
+            }
+            if (defendants.isEmpty()) {
+                cases.remove(caseIndex);
+            }
+        }
+    }
+
+    /**
+     * R4 (`PF/functions.js:11-14, 41-47`, {@code ACTIVE} only): keep a court application only if its
+     * {@code subject.masterDefendant} is truthy and not a youth. An application with no truthy
+     * {@code masterDefendant} is removed (P18); a missing or null {@code subject} throws (P19).
+     *
+     * @param json the payload
+     */
+    private static void removeYouthCourtApplications(final JsonNode json) {
+        if (!hasAnyTruthyTopLevelMember(json)) {
+            return;
+        }
+        final JsonNode courtApplications = json.get(HEARING).get(COURT_APPLICATIONS);
+        if (!truthy(courtApplications)) {
+            return;
+        }
+        final ArrayNode apps = asArrayOrFail(courtApplications, "R4");
+        for (int appIndex = apps.size() - 1; appIndex >= 0; appIndex--) {
+            final JsonNode subject = apps.get(appIndex).get(SUBJECT);
+            if (subject == null || subject.isNull()) {
+                throw new RuleFailureSignal("R4");
+            }
+            final JsonNode masterDefendant = subject.get(MASTER_DEFENDANT);
+            final boolean keep =
+                    truthy(masterDefendant) && !truthy(masterDefendant.get(IS_YOUTH));
+            if (!keep) {
+                apps.remove(appIndex);
+            }
+        }
     }
 
     /** R0 (`PF/functions.js:5-7`): remove {@code policeCases} if it is truthy. */
@@ -254,5 +324,56 @@ public final class HmppsRedaction {
         if (node instanceof ObjectNode objectNode) {
             objectNode.remove(name);
         }
+    }
+
+    /**
+     * R11 (`PF/functions.js:21, 49-52`): the payload survives only if a prosecution case or a court
+     * application is left. A present-but-null {@code prosecutionCases} or {@code courtApplications}
+     * fails here, because the legacy reads its {@code .length}.
+     *
+     * @param json the payload
+     * @return whether nothing survives, so the payload becomes {@code {}}
+     */
+    private static boolean nothingSurvives(final JsonNode json) {
+        if (!hasAnyTruthyTopLevelMember(json)) {
+            return true;
+        }
+        final JsonNode hearing = json.get(HEARING);
+        return !(definedAndNonEmpty(hearing.get(PROSECUTION_CASES), "R11")
+                || definedAndNonEmpty(hearing.get(COURT_APPLICATIONS), "R11"));
+    }
+
+    /**
+     * Mirrors the legacy's {@code list !== undefined && list.length > 0}: an absent member is
+     * {@code false} without reading a length; a present member has its length read, which throws on
+     * a null (P19).
+     *
+     * @param node   the member, or {@code null} for an absent member
+     * @param ruleId the rule making the read
+     * @return whether the member is present and has a positive length
+     */
+    private static boolean definedAndNonEmpty(final JsonNode node, final String ruleId) {
+        if (node == null) {
+            return false;
+        }
+        return lengthOf(node, ruleId) > 0;
+    }
+
+    /**
+     * The length the legacy reads off a value: an array's size; a throw on a null (JS
+     * {@code null.length}); zero for anything else present, which the survival test treats as empty.
+     *
+     * @param node   the present node
+     * @param ruleId the rule making the read
+     * @return the length
+     */
+    private static int lengthOf(final JsonNode node, final String ruleId) {
+        if (node.isArray()) {
+            return node.size();
+        }
+        if (node.isNull()) {
+            throw new RuleFailureSignal(ruleId);
+        }
+        return 0;
     }
 }

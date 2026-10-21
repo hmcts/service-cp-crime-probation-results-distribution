@@ -118,8 +118,9 @@ corpus, no comparator vectors, no other story.
 - [X] T009 [P] [US1] Add twin tests for T3, T4, T5 (`laaApplnReference` removed from
   prosecution-case, application and court-order offences) to the same test class (FR-001-011)
   - RED: `T3/T4/T5 ... FAILED` (laaApplnReference still present)
-- [ ] T010 [P] [US1] Add twin tests for T6–T12 (youth rules under both switch states, including
+- [X] T010 [P] [US1] Add twin tests for T6–T12 (youth rules under both switch states, including
   `EmptiedByR11` for T10 and T12) to the same test class (FR-001-011)
+  - RED: `T7/T8/T10/T12 ... FAILED` (R3/R4/R11 not yet implemented); T6/T9/T11 already PASSED (INACTIVE)
 - [ ] T011 [P] [US1] Add twin tests for T13, T14 (vacuous per P34 — assert absence of members the
   fixture never had) and T15 (`delegatedPowers`, `associatedPersons`, `hearing.judiciary` all gone)
   to the same test class (FR-001-011, FR-001-012)
@@ -143,9 +144,10 @@ corpus, no comparator vectors, no other story.
 - [X] T015 [US1] Implement R5, R6, R7 (`laaApplnReference` removal from the three offence
   locations) in `HmppsRedaction.java` — makes T009 green
   - GREEN: `T3/T4/T5 ... PASSED`
-- [ ] T016 [US1] Implement R3, R4 (youth rules, gated on `EffectiveSwitchState.ACTIVE`, including
+- [X] T016 [US1] Implement R3, R4 (youth rules, gated on `EffectiveSwitchState.ACTIVE`, including
   the shared `hasAnyTruthyTopLevelMember` payload-level guard) and R11 (final collapse) in
   `HmppsRedaction.java` — makes T010 green
+  - GREEN: `T6..T12 ... PASSED` (all seven)
 - [ ] T017 [US1] Implement R8, R9, R10 (`judiciary`, `associatedPersons`, `delegatedPowers`
   removal) in `HmppsRedaction.java` — makes T011 green
 - [ ] T018 [US1] Implement the single deep-copy-on-entry and confirm no logging call exists
