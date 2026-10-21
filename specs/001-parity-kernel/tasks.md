@@ -46,7 +46,7 @@ code references them.
   `hearing.prosection.case.with.all.youth.defendant.json`,
   `hearing.single.prosection.case.with.all.youth.defendant.json`,
   `hearing.only.court.application.with.youth.defendant.json` (FR-001-011)
-- [ ] T002 [P] Copy `JsonParity.java`, `JsonParityTest.java`, `RegisteredFieldDeviations.java`,
+- [X] T002 [P] Copy `JsonParity.java`, `JsonParityTest.java`, `RegisteredFieldDeviations.java`,
   `ComparatorContractTest.java` from
   `service-cp-crime-informant-register:src/test/java/uk/gov/hmcts/cp/informantregister/support/`
   into `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/` (package
