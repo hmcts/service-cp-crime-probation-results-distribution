@@ -229,7 +229,7 @@ else.
 
 ### Implementation for User Story 3
 
-- [ ] T026 [US3] Create `src/test/resources/corpus/index.json` with the `CorpusMetadata` shape from
+- [X] T026 [US3] Create `src/test/resources/corpus/index.json` with the `CorpusMetadata` shape from
   `data-model.md` (`environment`, `captureDateRange`, `hearingCount`, `casesPerSwitchState`,
   `syntheticCount`, `excludedCases`, `comparatorVectorCount: 57`), empty case list initially
   (FR-001-029)

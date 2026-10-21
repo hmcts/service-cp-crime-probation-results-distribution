@@ -1,0 +1,14 @@
+{
+  "environment": "SIT",
+  "captureDateRange": null,
+  "hearingCount": 0,
+  "casesPerSwitchState": {
+    "ACTIVE": 0,
+    "INACTIVE": 0
+  },
+  "syntheticCount": 0,
+  "excludedCases": [],
+  "comparatorVectorCount": 57,
+  "cases": [],
+  "note": "No corpus cases are committed yet. The blind-spot cases (1, 2, 3, 4, 5, 8, 9, 11, 12), the R0 case and the P21 case are authored in user story 4 (tasks T032-T042), and these counts and excludedCases are reconciled in T044. The committed corpus will be synthetic-only pending the external SIT-capture dependency (spec.md Dependencies, External). comparatorVectorCount is pinned at 57 (FR-001-014) so a future addition shows as a diff, never a silent drop."
+}
