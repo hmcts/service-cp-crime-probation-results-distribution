@@ -465,10 +465,15 @@ scenario, needs User Story 4's harness.
     greater than or equal to: 0` (the seeded table merges legacy and new behaviour into one column
     and carries neither a Reason nor an Approval column; T047 completes the field set). The
     one-row-per-DV / DV-27 assertion already PASSED against the seeded table
-- [ ] T046 [US5] Write `Case13DerivationWithdrawalTest` in
+- [X] T046 [US5] Write `Case13DerivationWithdrawalTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/Case13DerivationWithdrawalTest.java`:
   withdrawing DV-25's row in a scratch copy of the register makes every case-13 derivation fail,
   quoting DV-25 (Acceptance Scenario 4, User Story 5)
+  - RED: `withdrawing DV-25 makes every case-13 derivation fail, quoting DV-25 FAILED` —
+    `AssertionError: [withdrawing DV-25 must make every case-13 derivation fail] Expecting actual not
+    to be empty`. The compile-safe seam (`Case13Derivation.derive(cases, redaction, registerPath)`,
+    the register path validated but not yet read) lands with this task; T048 wires the register read
+    so the withdrawal breaks the derivation
 
 ### Implementation for User Story 5
 

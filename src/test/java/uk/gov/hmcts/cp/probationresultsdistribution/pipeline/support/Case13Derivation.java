@@ -1,7 +1,9 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.EffectiveSwitchState;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RedactionResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.HmppsRedaction;
@@ -31,6 +33,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.ParityRepor
 public final class Case13Derivation {
 
     private static final String DV_ID = "DV-25";
+    private static final Path DEFAULT_REGISTER = Path.of("doc", "DEVIATIONS.md");
 
     private Case13Derivation() {
     }
@@ -49,14 +52,36 @@ public final class Case13Derivation {
     }
 
     /**
-     * Derives case 13 for every case, form and configured-default value, and checks the port's
-     * result for the defaulted state against the derived expectation.
+     * Derives case 13 for every case, form and configured-default value against the service's own
+     * deviation register at {@code doc/DEVIATIONS.md}.
      *
      * @param cases     the loaded corpus cases
      * @param redaction the port under test
      * @return the derivation outcome
      */
     public static Result derive(final List<ParityCase> cases, final HmppsRedaction redaction) {
+        return derive(cases, redaction, DEFAULT_REGISTER);
+    }
+
+    /**
+     * Derives case 13 for every case, form and configured-default value, reading DV-25's permitted
+     * outcome from the given deviation register (FR-001-037, FR-001-038). Withdrawing DV-25's row
+     * breaks every derivation, which then quotes DV-25 — the load-bearing wiring User Story 5 proves
+     * (T046, T048).
+     *
+     * <p>Compile-safe seam (T046): the register path is validated but not yet read; T048 replaces
+     * this body with the register-driven derivation.
+     *
+     * @param cases        the loaded corpus cases
+     * @param redaction    the port under test
+     * @param registerPath the deviation register to read DV-25's permitted outcome from
+     * @return the derivation outcome
+     */
+    public static Result derive(
+            final List<ParityCase> cases,
+            final HmppsRedaction redaction,
+            final Path registerPath) {
+        Objects.requireNonNull(registerPath, "registerPath");
         final List<DerivedState> derived = new ArrayList<>();
         final List<DerivedState> withoutSource = new ArrayList<>();
         final List<String> differences = new ArrayList<>();
