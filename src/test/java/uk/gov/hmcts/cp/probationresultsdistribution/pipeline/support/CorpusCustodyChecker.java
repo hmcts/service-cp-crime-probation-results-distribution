@@ -9,6 +9,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
 import tools.jackson.core.JacksonException;
@@ -39,6 +40,7 @@ public final class CorpusCustodyChecker {
     private static final String SYNTHETIC = "SYNTHETIC";
     private static final String EXECUTED_LEGACY = "EXECUTED_LEGACY";
     private static final String PROVENANCE_PREFIX = "provenance.";
+    private static final List<String> VALID_FORMS = List.of("CACHE", "FALLBACK");
 
     private CorpusCustodyChecker() {
     }
@@ -114,14 +116,16 @@ public final class CorpusCustodyChecker {
         requireField(meta, "environment", caseId, violations);
         requireNonEmptyArray(meta, "formsHeld", caseId, violations);
         requireObject(meta, "digests", caseId, violations);
+        final JsonNode formsHeld = meta.get("formsHeld");
+        requireRecognisedForms(formsHeld, caseId, violations);
 
         final JsonNode provenance = meta.get("provenance");
         if (!present(provenance) || !provenance.isObject()) {
             violations.add(missing(caseId, "provenance"));
             return;
         }
-        requireField(provenance, "captureDates", caseId, violations, PROVENANCE_PREFIX);
-        requireField(provenance, "expectationSources", caseId, violations, PROVENANCE_PREFIX);
+        requireCompleteCaptureDates(provenance, formsHeld, caseId, violations);
+        requireObject(provenance, "expectationSources", caseId, violations, PROVENANCE_PREFIX);
         if (hasExecutedLegacyExpectation(provenance.get("expectationSources"))) {
             requireField(provenance, "legacyCommit", caseId, violations, PROVENANCE_PREFIX);
             requireField(provenance, "runtime", caseId, violations, PROVENANCE_PREFIX);
@@ -210,9 +214,58 @@ public final class CorpusCustodyChecker {
             final String name,
             final String caseId,
             final List<String> violations) {
+        requireObject(parent, name, caseId, violations, "");
+    }
+
+    private static void requireObject(
+            final JsonNode parent,
+            final String name,
+            final String caseId,
+            final List<String> violations,
+            final String prefix) {
         final JsonNode value = parent.get(name);
         if (!present(value) || !value.isObject() || value.isEmpty()) {
-            violations.add(missing(caseId, name));
+            violations.add(missing(caseId, prefix + name));
+        }
+    }
+
+    private static void requireRecognisedForms(
+            final JsonNode formsHeld, final String caseId, final List<String> violations) {
+        if (!present(formsHeld) || !formsHeld.isArray()) {
+            return;
+        }
+        for (final JsonNode form : formsHeld) {
+            if (!form.isString() || !VALID_FORMS.contains(form.stringValue())) {
+                violations.add("case " + caseId + ": formsHeld contains an unrecognised value");
+                return;
+            }
+        }
+    }
+
+    private static void requireCompleteCaptureDates(
+            final JsonNode provenance,
+            final JsonNode formsHeld,
+            final String caseId,
+            final List<String> violations) {
+        final JsonNode captureDates = provenance.get("captureDates");
+        if (!present(captureDates) || !captureDates.isObject() || captureDates.isEmpty()) {
+            violations.add(missing(caseId, PROVENANCE_PREFIX + "captureDates"));
+            return;
+        }
+        if (!present(captureDates.get("outcome"))) {
+            violations.add(missing(caseId, PROVENANCE_PREFIX + "captureDates.outcome"));
+        }
+        if (!present(formsHeld) || !formsHeld.isArray()) {
+            return;
+        }
+        for (final JsonNode form : formsHeld) {
+            if (!form.isString()) {
+                continue;
+            }
+            final String key = form.stringValue().toLowerCase(Locale.ROOT);
+            if (!present(captureDates.get(key))) {
+                violations.add(missing(caseId, PROVENANCE_PREFIX + "captureDates." + key));
+            }
         }
     }
 
