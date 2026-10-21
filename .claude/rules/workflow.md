@@ -11,19 +11,20 @@ Contract → Failing test → Write → Code Review (agent) → QA (agent) → C
   1. the **inbound ASB message schema** — `src/main/resources/contracts/distribution-command.schema.json`,
      closed (`additionalProperties: false`), the informant contract with only `$id`, title and
      descriptions changed (design Appendix B.1);
-  2. the **outbound HMPPS body** — validated before every POST against the interim closed schema
-     under `src/main/resources/contracts/outbound/`, derived from the recorded corpus by the design
-     §6.6 rule and approved at pre-build gate **G1**; replaced by the HMPPS ICD when it arrives (Q6);
+  2. the **outbound HMPPS body** — the legacy-identical redacted body. There is **no outbound schema
+     in this release** (H13): no validation before the POST and no pre-build gate G1. The HMPPS ICD
+     v0.8 is information only — its schema is stale (H12);
   3. consumed, never redefined: the Redis `EXT_` claim-check payload, the results query API
      `hearingDetails` fallback, the users-groups permission read, and the APIM gateway's HMPPS route
      with the existing subscription key (D4a).
 
-  Update the contract documentation BEFORE writing code that changes any of these shapes. A change
-  to what is sent to HMPPS is a change to decision D10 (no payload change in this delivery) and is a
-  cross-team event, not a spec. Adding any HTTP endpoint is a **constitution amendment** until the
-  operations API (design §4.8, O-1) is decided.
+  The operations API's OpenAPI document becomes an owned contract once built (H9). Update the
+  contract documentation BEFORE writing code that changes any of these shapes. A change to what is
+  sent to HMPPS is a change to decision D10 (no payload change in this delivery) and is a cross-team
+  event, not a spec. The operations API's **replay** and **resend-leg** endpoints are in scope (H9);
+  exposing any other operator action over HTTP is a **constitution amendment** while O-1 is open.
 - **Contract Validate:** run the `spec-validator` agent to check the code against the message
-  contract, the outbound schema, the deviation register and the gates below.
+  contract, the legacy-parity body and the deviation register, and the gates below.
 
 Loop repeats until ALL agents return PASS / COMPLIANT.
 
@@ -33,7 +34,7 @@ Loop repeats until ALL agents return PASS / COMPLIANT.
 |-------------------------------------------------|--------------------------------|
 | New / modified Java class                       | Markdown / docs only           |
 | New / modified test class or golden fixture     | Whitespace / import only       |
-| Message-contract or outbound-schema change      | CLAUDE.md and rule updates     |
+| Message-contract or operations-API change       | CLAUDE.md and rule updates     |
 | `doc/DEVIATIONS.md` row added or changed        |                                |
 | Flyway migration                                | README changes                 |
 | ASB consumer / settlement configuration         |                                |
@@ -65,23 +66,34 @@ A change ships only when all applicable gates are green:
    (H8).
    A path that can return unsettled fails review.
 3. **Idempotency gate.** A redelivery or republish of the same `(source, requestId)` never sends a
-   second time; a terminal-success leg is never touched again. Proven by test, not by inspection.
+   terminal-success leg a second time; a terminal-success leg is never touched again. The
+   processed-log guard is the **only** duplicate protection — broker duplicate detection is off
+   (H14) — so every copy must reach it and be handled (`DuplicateDeliveryIT`: a republish of a
+   completed share is a no-op; two concurrent copies give one run). Proven by test, not by
+   inspection.
 4. **Parity gate.** Every ported rule R0–R12 has its JUnit twin of the legacy Jest case where one
-   exists, and the recorded corpus (both switch states) passes the comparator. A registered
-   deviation that changes output is asserted by derivation; a golden changes only in the same commit
-   as a `doc/DEVIATIONS.md` entry; **any unregistered difference fails the build**.
+   exists, and the SIT corpus passes the comparator against SIT's own logged HMPPS bodies (switch
+   off) and the executed legacy (switch on, synthetic cases) (H21). A registered deviation that
+   changes output is asserted by derivation; a golden changes only in the same commit as a
+   `doc/DEVIATIONS.md` entry; **any unregistered difference fails the build**. The one-week SIT → STE
+   replay is the pre-cutover proof, not a build gate.
 5. **Deviation gate.** Every intended difference from the legacy has a DV row naming its pinning
-   test, and every carried defect (P17, P18, P35, ...) stays carried — "it looked wrong so I fixed
+   test, and every carried defect stays carried — P17, P18 and P19 (no null guard added inside a
+   rule), and P21 and P35 while pending external (D10); design §7.1. "It looked wrong so I fixed
    it" is a failed gate. P16 is fixed under DV-25 (H8), not carried. DV ids are never reused; the
-   next free one is DV-26.
-6. **Outbound-contract gate.** No HMPPS POST without validation against the approved interim schema;
-   a body that fails is `FAILED(contract-invalid)`, not sent, and alerted. Nothing VEP-shaped is
-   added (H5).
-7. **No-swallowed-exception gate.** No empty catch, no catch-and-continue, no success returned from
+   next free one is DV-27.
+6. **Outbound-send gate.** No outbound schema validator and no `contract-invalid` write in this
+   release (H13). The gateway retries in-run only a connection failure and 429; a 5xx, a 408 and a
+   read timeout park with no in-run retry (H11, H15). Nothing VEP-shaped is added (H5).
+7. **Stored-body gate.** The exact bytes POSTed go to `outbound_body` after the outcome UPDATE, in
+   the same transaction, and the digest trigger accepts them (H20); the body is never logged at any
+   level and never a metric label (row A3-60).
+8. **No-swallowed-exception gate.** No empty catch, no catch-and-continue, no success returned from
    a catch block. Reviewers reject on sight.
-8. **No-PII gate.** No defendant PII (names, addresses, DOB, ASN, URN) at `info` level or above, no
-   payload or outbound body at any level in a deployed environment (DV-09), and no production hearing data
-   (PRD/PRP) committed to this public repository; recorded SIT payloads are allowed as test fixtures.
+9. **No-PII gate.** No defendant PII (names, addresses, DOB, ASN, URN) at `info` level or above, no
+   payload at any level in a deployed environment (DV-09), no outbound body at any level, and no
+   production hearing data (PRD/PRP) committed to this public repository; recorded SIT payloads and
+   SIT's logged HMPPS bodies are allowed as test fixtures.
 
 ## Agent Definitions
 
@@ -116,13 +128,15 @@ A change ships only when all applicable gates are green:
 - Spawned as sub-agent with Read-only tools
 - Checks:
   - the inbound message record and its validation against the closed JSON schema
-  - the outbound HMPPS body validated against the approved interim schema before every POST
+  - the outbound HMPPS body sent as the legacy sends it — no schema validation in this release
+    (H13) — with its digest recorded and its bytes stored (H20)
   - the deviation register consistent with the code (every DV row's pinning test exists and passes;
     no behaviour change without a row; carried defects still carried)
   - settlement discipline: one explicit settlement on every listener path
   - state-machine completeness: every admitted share ends with a recorded outcome per leg, persisted
     before settling
-  - the absence of any business REST endpoint, any VEP code path and any second cutover lever
+  - the absence of any business REST endpoint, any VEP code path and any second cutover lever;
+    the `/operations/**` replay and resend-leg endpoints are allowed (H9)
 - Returns: **COMPLIANT** or **DRIFT DETECTED** with severity-rated findings
 - NEVER modifies code — reports only
 

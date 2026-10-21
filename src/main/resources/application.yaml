@@ -2,10 +2,11 @@ spring:
   application:
     name: service-cp-crime-probation-results-distribution
 
-  # The processed_request / outbound_message store. Every value here is a LOCAL development default
-  # matching the `postgres` service in docker-compose.yml; deployed environments override them from
-  # Key Vault through the Secrets Store CSI driver, which reaches these keys by the usual
-  # relaxed-binding environment variables (SPRING_DATASOURCE_URL and friends).
+  # The processed_request / outbound_message / outbound_body store. Every value here is a LOCAL
+  # development default matching the `postgres` service in docker-compose.yml; deployed
+  # environments override them from Key Vault through the Secrets Store CSI driver, which reaches
+  # these keys by the usual relaxed-binding environment variables (SPRING_DATASOURCE_URL and
+  # friends).
   datasource:
     url: jdbc:postgresql://localhost:5432/probationresultsdistribution
     username: probationresultsdistribution
@@ -86,6 +87,9 @@ distribution:
     # The per-message time budget (design §4.7): payload + youth-switch + leg must stay under the
     # processing deadline (60s + 25s + 130s = 215s < 240s). Each client's connect + read timeout
     # must fit its stage, and the composed stages must fit their budgets; validated at startup.
+    # The leg's send stage is composed as (gateway max-attempts - 1) x (connect + max-backoff) plus
+    # one full attempt, because only a connection failure or a 429 is retried in-run and a read
+    # timeout ends the stage (design H15, H27): 2 x (5s + 10s) + (5s + 60s) = 95s <= 130s.
     payload: 60s
     youth-switch: 25s
     leg: 130s
@@ -113,14 +117,18 @@ distribution:
     # The results query API, the payload fallback. LOCAL DEFAULT ONLY; deployed environments set
     # RESULTS_BASE_URL to the internal mesh host. The context root belongs to the call's path.
     base-url: ${RESULTS_BASE_URL:http://localhost:8080}
-    # The CJSCPPUID identity the fallback sends when the command carries no userId, and on every
-    # resend. A secret from Key Vault through the Secrets Store CSI driver; REQUIRED.
-    system-user-id: ${RESULTS_SYSTEM_USER_ID:}
+    # The service's own system user (design H30), sent as CJSCPPUID by the fallback when the command
+    # carries no userId, and on every resend. The users-groups read sends the same id, so both keys
+    # bind the one variable; its name is still a proposal. A secret from Key Vault through the
+    # Secrets Store CSI driver; REQUIRED.
+    system-user-id: ${PROBATION_RESULTS_DISTRIBUTION_SYSTEM_USER_ID:}
     connect-timeout: 5s
     # Shorter than the processing deadline on purpose: a read that outlives the deadline outlives
     # the claim behind it.
     read-timeout: 30s
-    # Connect and read failures, 5xx and 429 are retried, honouring Retry-After up to max-backoff.
+    # Connect and read failures, 408, 429 and 5xx are retried, honouring Retry-After up to
+    # max-backoff (DV-23). This is the internal read, not the HMPPS send: the gateway's narrower
+    # rule is below.
     max-attempts: 4
     initial-backoff: 500ms
     max-backoff: 20s
@@ -129,9 +137,11 @@ distribution:
     # The per-message EMYouthFilter permission read, the HMPPS leg's first step. LOCAL DEFAULT
     # ONLY; deployed environments set USERSGROUPS_BASE_URL to the internal mesh host.
     base-url: ${USERSGROUPS_BASE_URL:http://localhost:8080}
-    # The CJSCPPUID the legacy sends on this call is a configured identity, not the event's user.
-    # A secret from Key Vault; REQUIRED.
-    system-user-id: ${USERSGROUPS_SYSTEM_USER_ID:}
+    # The CJSCPPUID sent on this call: the service's own system user (design H30), the same id as
+    # distribution.results.system-user-id. Like the legacy's, it is a configured identity rather
+    # than the event's user, but it replaces the shared identity the legacy sends. A secret from
+    # Key Vault; REQUIRED.
+    system-user-id: ${PROBATION_RESULTS_DISTRIBUTION_SYSTEM_USER_ID:}
     youth-filter-key: ${EM_YOUTH_FILTER_FEATURE_KEY:EMYouthFilter}
     # Finite timeouts are the one difference from the legacy, which sets none.
     connect-timeout: 2s
@@ -159,15 +169,39 @@ distribution:
     # Sent as Ocp-Apim-Subscription-Key. A secret from Key Vault; REQUIRED, never committed.
     subscription-key: ${GATEWAY_SUBSCRIPTION_KEY:}
     connect-timeout: 5s
-    read-timeout: 30s
-    # 408, 429, 5xx and connect/IO errors are retried, honouring Retry-After up to max-backoff.
+    # 60s (design H27): on an HMPPS 5xx the gateway answers only after its own retries, so a 30s
+    # read would usually time out while the gateway was still retrying and leave the outcome
+    # unknown. A longer gateway answer still times out, and parks as below.
+    read-timeout: 60s
+    # Only a connection failure (the request never left; a connect timeout included) and a 429 are
+    # retried in-run, honouring Retry-After up to max-backoff (design H11, H15). A 5xx, a 408, and
+    # a read timeout or I/O failure once the request was written are outcome-unknown: the HMPPS
+    # POST is not idempotent, so the leg parks for broker redelivery instead of retrying in-run.
+    # The retryable set is fixed in code, not a property, so configuration cannot widen it.
     max-attempts: 3
     initial-backoff: 500ms
     max-backoff: 10s
 
-  # Not configured, deliberately: `distribution.feature.connection-string` / `label`
-  # (PROBATION_FEATURE_CONNECTION_STRING, STACK_LABEL). The service does not read the cutover flag;
-  # the properties exist only if the operations API's optional flag-check action is adopted.
+  resend:
+    # The most requestIds one resend-leg run takes (design H16). A longer list is refused whole;
+    # within the cap every listed id is checked, refused or run, and reported on its own. At least
+    # 1, validated at startup.
+    max-ids-per-run: 100
+
+  # The stored outbound bodies (outbound_body, design H18-H20). One in-service scheduled job, run
+  # by one pod at a time, pre-creates the current and next two monthly partitions and drops each
+  # whole month that ends on or before the retention cut-off, so a body is kept 6-7 months. Whole
+  # months, at least P1M; validated at startup.
+  body-retention: P6M
+  body-maintenance:
+    # Spring's six-field cron (second minute hour day-of-month month day-of-week), read in UTC: the
+    # job is scheduled with zone UTC, the clock its cut-off and the partition bounds are kept in.
+    cron: "0 15 2 * * *"
+
+  # No App Configuration properties, deliberately (design H22, H26): the service reads nothing from
+  # App Configuration and does not check the cutover switch, which the results producer checks
+  # before it publishes. Pause-intake is the service-side stop. The optional diagnostic switch
+  # check, if it is ever adopted, reads the users-groups permission through the client above.
 
 # The operations API's authorisation, owned by `cp-auth-rules-filter`.
 authz:

@@ -52,7 +52,7 @@ Consequences to respect:
 
 ### Hygiene
 - `.claude/settings.local.json`, `.claude/projects/`, `.claude/todos/`, `.claude/shell-snapshots/`, `.claude/worktrees/` are gitignored and must stay that way. The **team-shared** `.claude/agents/`, `.claude/rules/`, `.claude/context/`, `.claude/skills/`, `.claude/workflows/` **are** tracked.
-- Never commit `.env`, credentials, kubeconfigs, connection strings, subscription keys or Service Bus SAS keys. Never commit internal hostnames or production (PRD/PRP) hearing data — the repository is public; recorded SIT payloads are allowed as test fixtures.
+- Never commit `.env`, credentials, kubeconfigs, connection strings, subscription keys or Service Bus SAS keys. Never commit internal hostnames or production (PRD/PRP) hearing data — the repository is public; recorded SIT payloads and SIT's logged HMPPS bodies are allowed as test fixtures.
 - Gradle wrapper stays committed (`gradlew`, `gradle/wrapper/*`) despite the broad `gradle` gitignore entry — check the `!gradle/` exceptions survive any `.gitignore` edit.
 
 ## CI/CD Pipelines (GitHub Actions)
@@ -91,7 +91,14 @@ The Dockerfile is inherited — preserve its shape:
 - Secrets via Key Vault CSI driver + workload identity — never in Helm values, never a connection string or subscription key in a ConfigMap.
 - **Readiness must not depend on Azure Service Bus.** Probe `/actuator/health/readiness` with a health group that excludes broker connectivity.
 - Scaling on queue depth (KEDA) is a **known gap** — the `springboot-app` chart has no ScaledObject template. Flag it as a platform dependency; do not hand-roll a chart fork.
-- The queue `probation.requests` + DLQ (duplicate detection set at creation), the receiver and sender roles, and the shadow deployment's egress-denying NetworkPolicy are **platform asks** (design §8.4), not repo changes.
+- These are **platform asks** (design §8.4), not repo changes:
+  - the queue `probation.requests` + DLQ, created with broker duplicate detection **off** (H14; ask 1) — enabling it later means recreating the queue;
+  - the receiver and sender roles, and no App Configuration role (ask 2);
+  - the database, set up as the Informant Register's: on the environment's Results server, PostgreSQL 15, owned by the service role, which creates and so owns its partitions (ask 5; row A3-105);
+  - the operations API's five gates, its NetworkPolicy among them (asks 12, 14; H9);
+  - the service's own system user: a static-data patch per environment and its id in Key Vault (ask 16; H30).
+
+  The shadow deployment and its egress-denying NetworkPolicy are withdrawn (H21).
 
 ## Security Checklist
 - [ ] No hardcoded secrets, connection strings, subscription keys or SAS keys in any file

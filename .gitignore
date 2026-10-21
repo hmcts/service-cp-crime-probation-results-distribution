@@ -34,7 +34,7 @@ applicationinsights-agent-*.jar
 .DS_Store
 */.DS_Store
 
-# Claude Code — local-only files (team-shared agents/rules/skills ARE tracked)
+# Local-only tool state (the team-shared agents, rules and skills under .claude/ ARE tracked)
 .claude/settings.local.json
 .claude/projects/
 .claude/todos/
@@ -46,5 +46,3 @@ applicationinsights-agent-*.jar
 .gemini/
 
 /graphify-out/
-
-# Claude local-only (never commit)

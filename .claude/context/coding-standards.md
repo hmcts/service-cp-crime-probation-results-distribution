@@ -5,11 +5,11 @@
 > conflicts with this service's constitution (`.specify/memory/constitution.md`) or its rules
 > (`.claude/rules/`), **the service files win**. In this repository specifically:
 >
-> - There is **no business REST API** — actuator only. The one HTTP surface the design contemplates
->   beyond actuator is the operations API under `/operations/**` (design §4.8), which is
->   **recommended and open**; until it is approved, guidance on REST controllers, `@ControllerAdvice`
->   handlers, and Pact consumer/provider tests does not apply here, and adding a controller requires
->   a constitution amendment, not a spec.
+> - There is **no business REST API**. The one HTTP surface beyond actuator is the operations API
+>   under `/operations/**` (design §4.8), **in scope for replay and resend-leg** (H9; design row
+>   A3-35). REST-controller and error-handler guidance applies to those endpoints only; Pact
+>   consumer/provider tests do not apply. Exposing any other operator action over HTTP is still
+>   open (O-1) and requires a constitution amendment, not a spec.
 > - The correlation set `requestId` / `hearingId` / `hearingDay` **is permitted at `INFO`** and is in
 >   fact required on every processing log line. Defendant PII at `INFO` or above remains forbidden.
 > - Secrets come from **Key Vault via the Secrets Store CSI driver**, and messaging uses the raw

@@ -8,10 +8,11 @@ logmsg() {
 export LOCALJARFILE=$(ls ./build/libs/*.jar 2>/dev/null | grep -v 'plain' | head -n1)
 export DOCKERJARFILE=$(ls /app/*.jar 2>/dev/null | grep -v 'plain' | head -n1)
 
-# The entrypoint starts the application, full stop. The operator actions (replay, resend-leg,
-# pause/resume intake, submit-hearing, purge-queue) are served by the pod's operations API; if
-# that API is not adopted, each becomes a command-line runner and its dispatch is added here with
-# the feature that builds it.
+# The entrypoint starts the application, full stop. Replay and resend-leg are served by the pod's
+# operations API (design H9). Every operator action (replay, resend-leg, pause/resume intake,
+# submit-hearing, purge-queue) is also a command-line runner in the image: the fallback for the two
+# API actions and, until their HTTP exposure is decided (O-1), the only route for the rest. Each
+# runner's dispatch is added here with the feature that builds it.
 #
 # `exec` replaces this shell with the JVM, so the JVM becomes PID 1 and receives the container's
 # SIGTERM directly. Without it the signal is delivered to the shell, which dies while the JVM is

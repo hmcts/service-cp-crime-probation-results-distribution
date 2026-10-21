@@ -28,8 +28,8 @@ private CachedHearingPayloadAdapter adapter;
 - Java records for ALL value types — immutable by design
 - `DistributionCommand` (inbound message) is a record; parse it from `JsonNode`, validate explicitly
 - **JsonNode-canonical inbound**: the hearing payload stays a Jackson tree end to end. The HMPPS body
-  is the redacted tree (the legacy sends the filtered JSON), validated against the closed outbound
-  schema before the POST — not bound to a typed model
+  is the redacted tree (the legacy sends the filtered JSON) — not bound to a typed model and, in this
+  release, not validated against any schema (H13); its exact bytes are digested and stored
 - What this service originates — decisions, outcomes, processed-log rows, operator commands — is
   typed records and enums
 - `ObjectMapper` configured with the Jackson 3 equivalent of `USE_BIG_DECIMAL_FOR_FLOATS`
@@ -47,8 +47,11 @@ private CachedHearingPayloadAdapter adapter;
 - Where the legacy throws and swallows inside a rule, the port throws and reports:
   `FAILED(rules-exception)`, ERROR log, counted
 - The message listener is the only place that converts a run's result into a settlement decision
-- No `@ControllerAdvice` / `ProblemDetail` — there is no HTTP request surface to map errors onto
-  until the operations API (design §4.8, O-1) is decided
+- The operations API (design §4.8; H9) is the only HTTP request surface beyond actuator. Its
+  refusals are **bounded API codes**, never row values and never exception text: `resend-in-progress`,
+  `unknown-request`, `not-eligible`, `request-claimed`, and submit-hearing's `payload-unavailable`
+  should that action be exposed (O-1). How they are rendered is the operations API spec's to settle,
+  following YOT's operations API
 
 ## Messaging
 
@@ -57,7 +60,9 @@ private CachedHearingPayloadAdapter adapter;
 - `maxDeliveryCount` 5; concurrency 2 to start; lock 5 min; claim lease PT4M30S (strictly shorter
   than the lock); processing deadline 4 min
 - `messageId` = `"RESULTS:{requestId}"`; `correlationId` = `hearingId`; broker duplicate detection
-  on; replay re-sends the stored command under a **fresh** `messageId`
+  **off** — the processed-log guard is the only duplicate protection (H14). The service's replay
+  action re-sends the stored command under a **fresh** `messageId`; a dead-letter resubmission under
+  the exhausted `messageId` is a replay at broker delivery count 1 (H9, DV-26)
 - Operator markers (`origin = REPLAY`, `origin = SUPPORT`, `operator`, `runId`, `reason`) are broker
   application properties, never body fields
 - Dead-letter reasons are the closed set `validation`, `collision`, `exhausted`, `leg-exhausted`
@@ -68,9 +73,16 @@ private CachedHearingPayloadAdapter adapter;
 ## Outbound HTTP
 
 - Spring `RestClient` with connect and read timeouts on every client; no client without them
-- Gateway and results-query reads use the `RetryPolicy` copied from YOT (408, 429, 5xx and
-  connect/IO failures retried; `Retry-After` honoured and capped; bounded attempts; an attempt
-  starts only if its worst case fits before the stage deadline, the wait included)
+- The **gateway** POST uses the `RetryPolicy` copied from YOT with a predicate this service passes,
+  **fixed in code, never a property**: in-run retries only for a connection failure (the request
+  never sent; a connect timeout included) and 429 (H11, H15). A 5xx, a 408 and a read timeout or I/O
+  failure after the write are outcome-unknown and park at once. `Retry-After` honoured, capped by
+  `max-backoff`; bounded attempts; timeouts connect 5 s / read 60 s (H27)
+- The **results-query** read keeps YOT's retryable set: 408, 429, every status from 500, and
+  connect and read failures (DV-23)
+- On both, an attempt starts only if its worst case fits before the stage deadline, the wait
+  included. Startup also validates the gateway's composed send stage: (attempts − 1) × (connect +
+  `max-backoff`) + (connect + read) ≤ 130 s, 95 s with the defaults (row A3-96)
 - The users-groups permission read uses the legacy's rule instead (`LegacyGetRetry`: 3 attempts,
   fixed 1 s wait, retry only an error without a response or a status above 429), connect 2 s /
   read 5 s (DV-24). A read that stays unreadable resolves to
@@ -88,12 +100,28 @@ private CachedHearingPayloadAdapter adapter;
 - The processed-log insert is the idempotency claim — a unique-constraint violation means duplicate
   delivery, and is handled, not logged as an error
 - Every CHECK the design names is in the migration, and `SchemaVocabularyIT` asserts the SQL value
-  sets against the Java enums
+  sets against the Java enums. It also covers: three tables and one view;
+  `outbound_message_presence_service_version_chk` (`service_version` ⇔ `body_digest`); and the seven
+  `NoteForms` forms, of which `baseline=none` and `contract=invalid` are reserved, unused
+- PostgreSQL 15, production's version (row A3-105). `outbound_body` is partitioned by month on
+  `created_at` (UTC) with a DEFAULT partition; its partitions are created by the service role, which
+  owns the database, so the role owns them and can detach and drop them. The digest trigger and the
+  `ON DELETE RESTRICT` foreign key are part of V1
+- Write order: the leg's outcome UPDATE (with `body_digest`) first, then the `outbound_body` INSERT,
+  in the same transaction (H20)
+- The body-retention job: single runner by a transaction-scoped advisory lock on a fixed key; the
+  cut-off is computed in UTC and compared with each partition's bounds read from the catalogue,
+  never parsed from its name; `DETACH PARTITION … CONCURRENTLY`, then `DROP`, each under a
+  `lock_timeout` and retried on the next run; stranded DEFAULT rows older than the cut-off are
+  deleted; the scheduler runs with `zone = "UTC"` (row A3-64)
 
 ## Enums and Routing
 
 - Java enums for fixed value sets (`Leg`, `LegStatus`, `LegReason`, `CompletionReason`,
-  `FailureReason`, `DeadLetterReason`, `YouthSwitchUnreadableCause`, `AttemptOrigin`)
+  `FailureReason`, `DeadLetterReason`, `YouthSwitchUnreadableCause`, `AttemptOrigin`), and for the
+  bounded sets rev 3.6 adds — the replay route (`service`, `support`, `copy`), the resend refusal
+  codes, the recovery `after` (`429-in-run`, `5xx-redelivery`) and the maintenance `step` (`lock`,
+  `create`, `drop`); their type names are the specs' to choose
 - Switch expressions for routing — the compiler enforces exhaustive coverage
 - Include a `fromValue(String)` factory when parsing wire strings; unknown values are an explicit
   non-transient failure, never a silent default
@@ -105,14 +133,16 @@ private CachedHearingPayloadAdapter adapter;
   allowed forms
 - MDC on every message: `requestId`, `hearingId`, `hearingDay`, `source` (cleared in a `finally`)
 - `LoggingEventCompositeJsonEncoder` emits structured JSON unconditionally (`logback.xml`)
-- One log line per leg outcome: status, reason, HTTP status, body digest, `runOrigin`, the
-  `youth_switch` value recorded (`ACTIVE`, `INACTIVE`, `UNREADABLE_DEFAULTED_ACTIVE`,
+- One log line per leg outcome: status, reason, HTTP status, body digest, `runOrigin`, for a replay
+  its `route` (`service`, `support`, `copy`), for a forced resend `forced=true`, the `youth_switch`
+  value recorded (`ACTIVE`, `INACTIVE`, `UNREADABLE_DEFAULTED_ACTIVE`,
   `UNREADABLE_DEFAULTED_INACTIVE`) and, for a defaulted read, its bounded cause; a defaulted read is
-  logged at WARN
+  logged at WARN, and so is a 2xx other than 200 (design §10.2)
 - NEVER use `System.out.println`, `System.err.println`, or `Throwable#printStackTrace()`
 - NEVER log secrets, tokens, subscription keys or connection strings
-- **NEVER log defendant PII at `info` or above**, and never a payload or outbound body at any level
-  in a deployed environment (DV-09). Identifiers only
+- **NEVER log defendant PII at `info` or above**, never a payload at any level in a deployed
+  environment (DV-09), and **never the outbound body — sent or stored — at any level, in any
+  profile** (row A3-60). Identifiers only
 
 ## Imports
 
@@ -145,11 +175,14 @@ Names the design marks "proposed" are fixed at build time; keep them unless the 
 - WireMock for external HTTP stubs (use `dynamicPort()`), asserting exact CPP vendor media types, the
   `CJSCPPUID` header and the gateway subscription-key header
 - **Parity tests**: legacy Jest fixtures copied byte-identical into `src/test/resources/fixtures/`;
-  one JUnit twin per Jest case; the recorded corpus compared semantically after canonicalisation,
-  BigDecimal throughout; registered deviations asserted by derivation
+  one JUnit twin per Jest case; the SIT corpus payloads compared semantically after canonicalisation,
+  BigDecimal throughout, with SIT's own logged HMPPS bodies (switch off) and with the executed legacy
+  (switch on, synthetic cases) — `SitLoggedBodyParityTest`, name proposed (H21; row A3-67);
+  registered deviations asserted by derivation
 - **No production hearing data in this repository** — it is public. Fixtures are synthetic, copied
-  legacy test fixtures, or recorded SIT payloads under `src/test/resources/corpus/` (SIT holds no
-  production data; PRD/PRP payloads are never committed)
+  legacy test fixtures, or SIT data — recorded SIT payloads and SIT's logged HMPPS bodies — under
+  `src/test/resources/corpus/` (SIT holds no production data; PRD/PRP payloads and bodies are never
+  committed)
 - TDD: write the failing test first, see it fail for the right reason, then implement
 - Logging in tests: SLF4J only
 - Test commands: `./gradlew test` runs the whole suite — unit, integration and `*IT` classes alike,

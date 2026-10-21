@@ -7,11 +7,13 @@
 >
 > - The correlation set `requestId` / `hearingId` / `hearingDay` **is permitted at `INFO`**, and every
 >   processing log line MUST carry `requestId` and `hearingId`. Defendant PII at `INFO` or above
->   remains forbidden, and whole payloads and outbound HMPPS bodies are never logged at any level in
->   a deployed environment. The legacy function app logged whole payloads at info; this service
->   does not (deviation DV-09, design §7.2).
-> - There is **no business REST API**, so there are no request/response or `@ControllerAdvice` log
->   points to standardise — the units of work are queue messages and one HMPPS send per share.
+>   remains forbidden, and whole payloads are never logged at any level in a deployed environment.
+>   The outbound HMPPS body — sent, or stored in `outbound_body` — is never logged at any level, in
+>   any profile, and never put in a metric label (design row A3-60). The legacy function app logged
+>   whole payloads at info; this service does not (deviation DV-09, design §7.2).
+> - There is **no business REST API**; the units of work are queue messages and one HMPPS send per
+>   share. The operations API (replay and resend-leg under `/operations/**`, H9) adds audited
+>   request log points through the estate audit filter, with payload and body content excluded.
 > - JSON logging is configured unconditionally in `src/main/resources/logback.xml`; there is no
 >   profile-switched plain-text alternative to fall back on.
 

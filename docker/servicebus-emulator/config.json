@@ -9,12 +9,11 @@
             "Properties": {
               "DeadLetteringOnMessageExpiration": true,
               "DefaultMessageTimeToLive": "PT1H",
-              "DuplicateDetectionHistoryTimeWindow": "PT5M",
               "ForwardDeadLetteredMessagesTo": "",
               "ForwardTo": "",
               "LockDuration": "PT5M",
               "MaxDeliveryCount": 5,
-              "RequiresDuplicateDetection": true,
+              "RequiresDuplicateDetection": false,
               "RequiresSession": false
             }
           }

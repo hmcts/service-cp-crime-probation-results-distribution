@@ -14,8 +14,12 @@
 >   API, the users-groups permission read) through Spring `RestClient`, not an Azure SDK client. The
 >   only Service Bus *sender* is the service's own command sender on `probation.requests`, used by
 >   the submit-hearing (design §4.8 action 5) and replay (§4.8 action 2) actions; nothing else
->   sends. There is **no business REST API**, so guidance about controllers or Pact
->   contracts is background only.
+>   sends. There is **no business REST API**: the only controllers are the operations API's replay
+>   and resend-leg under `/operations/**` (H9), so guidance about controllers applies to them alone,
+>   and Pact contracts do not apply.
+> - This service reads **no Azure App Configuration** (H22, H26; design rows A3-69, A3-92): the
+>   cutover switch is read by Results, not here, so the "Dynamic configuration / feature flags"
+>   section below does not apply.
 > - The permitted `INFO` correlation set is `requestId` / `hearingId` / `hearingDay`; defendant PII
 >   at `INFO` or above remains forbidden.
 

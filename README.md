@@ -11,9 +11,10 @@ This service replaces that function app with one Spring Boot service on AKS. It 
 command per shared hearing from the Azure Service Bus queue `probation.requests`, which results'
 flag-gated producer publishes to. It reads the hearing's `EXT_` payload from Redis, falling back to
 the results query API, and reads the users-groups youth switch for that message. It applies the
-HMPPS rules **verbatim**, validates the body against a closed outbound schema and posts it to the
-gateway's HMPPS route. Every admitted share ends with a recorded outcome for its leg, including how
-the receiver answered, and every failure is counted and alerted. Nothing ends in silence.
+HMPPS rules **verbatim** and posts the result to the gateway's HMPPS route, keeping the exact body
+it sent for six months. Every admitted share ends with a recorded outcome for its leg, including how
+the receiver answered. Every failure is logged and counted; genuine issues raise an alert, and known
+ones are counted on the dashboard. Nothing ends in silence.
 
 The rules are **ported, not fixed**: what is sent to HMPPS is what the function app sends today
 ("lift and shift"). The **delivery** defects around the rules are fixed: no timeouts, no retries,
@@ -43,14 +44,16 @@ The design lives on Confluence and is the authority for what this service does a
 
 **[Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service)**
 (CRA space). It covers the as-is function app and gateway route, the to-be architecture, the
-producer increment in `cpp-context-results`, cutover and rollback, and the open questions.
+producer increment in `cpp-context-results`, cutover and rollback, and the open questions. This
+repository follows its rev 3.6 (decisions H1–H34).
 
 This repository carries no design narrative of its own. What it does carry:
 
 | Artefact | Location | Purpose |
 |---|---|---|
+| Design digest | [doc/design/DIGEST.md](doc/design/DIGEST.md) | The design's rules for spec authors and implementers, each with its design row id; no rationale. The design wins where they differ |
 | Engineering constitution | [.specify/memory/constitution.md](.specify/memory/constitution.md) | The non-negotiable principles: parity with registered deviations, TDD, message contract first, ports and adapters, explicit failure, privacy in telemetry, estate conventions, HMPPS-only scope |
-| Contracts | [doc/API_CONTRACTS.md](doc/API_CONTRACTS.md) | The inbound `probation.requests` message and the outbound HMPPS publish |
+| Contracts | [doc/API_CONTRACTS.md](doc/API_CONTRACTS.md) | The inbound `probation.requests` message, the outbound HMPPS publish and the operations API |
 | Changelog | [doc/CHANGELOG.md](doc/CHANGELOG.md) | Notable changes |
 | Specifications | `specs/` | Spec Kit increments: spec, plan, research, data model, tasks and checklists. None yet; the first feature starts with `/speckit-specify` |
 | Working conventions | [CLAUDE.md](CLAUDE.md) | Build loop, contract rule and build and test commands |
@@ -66,7 +69,9 @@ cpp-context-results (WildFly)                     probation-results-distribution
 │    -publish, gated on the         │──(+DLQ)───▶│ pipeline/     HMPPS redaction (pure)         │
 │    ProbationResultsDistribution-  │            │ adapter/      payload · usersgroups · gateway│
 │    Service flag                   │            │ persistence/  processed_request ·            │
-└───────────────────────────────────┘            │               outbound_message               │
+└───────────────────────────────────┘            │               outbound_message ·             │
+                                                 │               outbound_body                  │
+                                                 │ api/          operations: replay · resend    │
                                                  └───┬──────────────┬───────────────┬───────────┘
           Redis EXT_{hearingId}_{hearingDay}_result_ ◀┘              │               │
           miss ⇒ results query API (hearingDetails)                  │               ▼
@@ -78,7 +83,8 @@ cpp-context-results (WildFly)                     probation-results-distribution
 
 - **Inbound.** The service owns the ASB queue `probation.requests` and its dead-letter queue. It
   uses peek-lock with auto-complete off. Each delivery is settled exactly once: complete, abandon
-  or dead-letter. Duplicate detection is on with a PT5M window, the lock duration is 5 minutes,
+  or dead-letter. Broker duplicate detection is **off**: the service's own processed log is the only
+  duplicate protection, and every copy of a message reaches it. The lock duration is 5 minutes,
   `maxDeliveryCount` is 5, there are no sessions and concurrency starts at 2. The message is a
   claim check: it names the hearing share, and the payload is read separately.
 - **Reads.**
@@ -86,25 +92,37 @@ cpp-context-results (WildFly)                     probation-results-distribution
   - On a miss, the results query API is the fallback.
   - The users-groups `EMYouthFilter` permission is read once per message, with the legacy's
     3 × 1 s retry and finite timeouts.
+  - The users-groups read is made as the service's own system user. The results query API
+    fallback is made as the command's user or, when the command has no `userId` and on every
+    resend, as the service's own system user (DV-17, H30).
 - **Pipeline.** The HMPPS rules are a pure function over the payload. The youth rules apply only
   while the switch reads active. If the switch cannot be read, the leg assumes the configured
   default (`ACTIVE`, matching production today) and the hearing is sent as normal. Today nothing is
   sent in that case. The row records `UNREADABLE_DEFAULTED_ACTIVE` (or `_INACTIVE`), and the read
   is counted and alerted (DV-25).
 - **Outbound.** There is one HTTPS POST to the APIM gateway's HMPPS route. It carries the existing
-  gateway subscription key, so the gateway itself does not change. Before the POST, the body is
-  validated against a closed interim schema. Transient failures (408, 429, 5xx and I/O) are
-  retried with a bounded backoff that honours `Retry-After`.
-- **Store.** PostgreSQL, owned by this service and migrated by Flyway. It holds:
+  gateway subscription key, so the gateway itself does not change. The body is not validated
+  against any schema: it is the function app's redacted body, unchanged, and the parity harness is
+  what guards it. Timeouts are 5 s to connect and 60 s to read. Only a connection failure and a
+  429 are retried in-run, with a bounded backoff that honours `Retry-After`. A 5xx, a 408 or a read
+  timeout leaves the outcome unknown, and the HMPPS POST is not idempotent, so the leg parks for
+  broker redelivery instead of retrying.
+- **Store.** PostgreSQL 15, owned by this service and migrated by Flyway. It holds:
   - `processed_request`, the idempotency key `(source, requestId)` with a
     `RECEIVED → RETRYING → COMPLETED | FAILED` state machine;
-  - `outbound_message`, one row per leg per attempt, carrying the body digest, the receiver's
-    status and the reason.
+  - `outbound_message`, one row per leg per attempt, carrying the body digest, the build's
+    `service_version`, the `sharedTime` the attempt read, the receiver's status and the reason;
+  - the view `outbound_message_latest`, each leg's current state;
+  - `outbound_body`, the exact bytes POSTed, partitioned by month and kept for six to seven
+    months.
 - **Shape.** Ports and adapters: the application layer depends on interfaces only. There is one
-  image, with no batch job and no scheduler. There is **no business REST API**. The HTTP surface is
-  Spring Boot Actuator. A small `/operations/**` API is recommended but still open; it would cover
-  replay, resend-leg, pause and resume intake, submit-hearing and purge-queue. Its estate starters,
-  `cp-auth-rules-filter` and `cp-audit-filter-springboot`, are already on the classpath.
+  image, with no batch job. Its one scheduled task is the daily body-retention job, which
+  pre-creates the monthly partitions and drops expired ones. There is **no business REST API**. The
+  HTTP surface is Spring Boot Actuator and the operations API under `/operations/**`, decided for
+  replay and resend-leg, including a forced resend. The other operator actions (pause and resume
+  intake, submit-hearing, purge-queue and the rest) run as command-line runners until their HTTP
+  exposure is decided. The operations API's estate starters, `cp-auth-rules-filter` and
+  `cp-audit-filter-springboot`, are already on the classpath.
 
 Package modules under `uk.gov.hmcts.cp.probationresultsdistribution`. Each module's
 `package-info.java` states what it is for and what it may depend on.
@@ -112,25 +130,25 @@ Package modules under `uk.gov.hmcts.cp.probationresultsdistribution`. Each modul
 | Package | Responsibility |
 |---|---|
 | `inbound` | Service Bus listener, message parser, closed inbound schema and settlement |
-| `application` | Idempotency guard, distribution runner, leg resender and outbound contract validation |
+| `application` | Idempotency guard, distribution runner, leg resender (resend by `requestId` list, forced resend) and the submit-hearing action |
 | `pipeline` | HMPPS redaction rules: pure, with no I/O |
 | `adapter.payload` | Redis `EXT_` reads and the results query API fallback |
 | `adapter.usersgroups` | The per-message `EMYouthFilter` permission read |
 | `adapter.gateway` | The HMPPS publisher behind the APIM gateway |
-| `persistence` | `processed_request` and `outbound_message` repositories |
+| `persistence` | `processed_request`, `outbound_message` and `outbound_body` repositories, and the store probe |
 | `domain` | Value types and the state vocabulary |
 | `config` | Typed properties and their startup validation |
-| `api` | The operations API, if it is adopted |
+| `api` | The operations API: replay and resend-leg |
 
 ## Status
 
 **Scaffold only.** The repository builds, runs its gates and carries every library the design
 needs, but it has no business code and no Flyway migration yet. The first increment starts with
-`/speckit-specify`, under the constitution.
+`/speckit-specify`, under the constitution, written against the design digest.
 
-The outbound HMPPS schema is **pre-build gate G1**. It is derived from the recorded parity corpus
-and approved before the build starts. If the HMPPS interface control document arrives first, it
-replaces the derived schema.
+There is no outbound HMPPS schema in this release. Outbound schema validation is parked, so there
+is no pre-build gate. The HMPPS interface control document is recorded as information only: its
+schema is out of date and the receiver does not enforce it.
 
 ## Prerequisites
 
@@ -169,8 +187,7 @@ REDIS_PORT=6379 REDIS_SSL=false \
 RESULTS_BASE_URL=http://localhost:8089 \
 USERSGROUPS_BASE_URL=http://localhost:8089 \
 HMPPS_PUBLISH_URL=http://localhost:8089/probation/api/v1/hearing/results \
-RESULTS_SYSTEM_USER_ID=00000000-0000-0000-0000-000000000000 \
-USERSGROUPS_SYSTEM_USER_ID=00000000-0000-0000-0000-000000000000 \
+PROBATION_RESULTS_DISTRIBUTION_SYSTEM_USER_ID=00000000-0000-0000-0000-000000000000 \
 GATEWAY_SUBSCRIPTION_KEY=local-only-not-a-key \
 AUTHZ_HTTP_ENABLED=false HTTP_AUDIT_ENABLED=false \
   ./gradlew bootRun
@@ -217,9 +234,8 @@ nothing to borrow.
 | `REDIS_KEY` | `distribution.redis.key` | empty | Key Vault |
 | `REDIS_SSL` | `distribution.redis.ssl`, `.verify-peer` | `true` | TLS with peer verification; `false` only for the local compose Redis |
 | `RESULTS_BASE_URL` | `distribution.results.base-url` | `http://localhost:8080` | Results query API, the payload fallback |
-| `RESULTS_SYSTEM_USER_ID` | `distribution.results.system-user-id` | empty | **Required.** The `CJSCPPUID` used when the command has no `userId`, and on every resend. Key Vault |
+| `PROBATION_RESULTS_DISTRIBUTION_SYSTEM_USER_ID` | `distribution.results.system-user-id`, `distribution.usersgroups.system-user-id` | empty | **Required.** The service's own system user: the `CJSCPPUID` on every users-groups read, and on the results fallback when the command has no `userId` and on every resend. One id for both. Key Vault. Variable name proposed |
 | `USERSGROUPS_BASE_URL` | `distribution.usersgroups.base-url` | `http://localhost:8080` | The youth-switch read, and the operations API's group resolution |
-| `USERSGROUPS_SYSTEM_USER_ID` | `distribution.usersgroups.system-user-id` | empty | **Required.** Key Vault |
 | `EM_YOUTH_FILTER_FEATURE_KEY` | `distribution.usersgroups.youth-filter-key` | `EMYouthFilter` | The permission key the legacy reads |
 | `YOUTH_SWITCH_DEFAULT_WHEN_UNREADABLE` | `distribution.youth-switch.default-when-unreadable` | `ACTIVE` | `ACTIVE` or `INACTIVE`: the value assumed when the youth switch cannot be read. Logged at startup. **Must equal the environment's live `EMYouthFilter` state**; check it at go-live and after any change to the switch. Variable name proposed |
 | `HMPPS_PUBLISH_URL` | `distribution.hmpps.url` | empty | **Required**, https (relaxed under the `local` profile only). The gateway's HMPPS route |
@@ -235,7 +251,17 @@ nothing to borrow.
 The queue and time-budget properties are deliberately **not** environment-driven: `max-delivery-count`,
 `lock-duration`, the claim `lease` and `processing-deadline`, and the per-stage `budget`. Each
 mirrors a broker setting or a relationship that startup validates, so changing one means changing
-it here and on the queue together.
+it here and on the queue together. Nor are the gateway's timeouts and retry block: connect 5 s,
+read 60 s, and a retryable set fixed in code.
+
+Three more properties have no environment variable, as in the design's property catalogue; whether
+they should get one is still open:
+
+- `distribution.resend.max-ids-per-run` (default `100`): the longest `requestId` list one resend-leg
+  run takes;
+- `distribution.body-retention` (default `P6M`): how long stored bodies are kept, in whole months;
+- `distribution.body-maintenance.cron` (default `0 15 2 * * *`, in UTC): when the daily
+  body-retention job runs.
 
 Deployment values (Helm, Key Vault, the stack-prefixed queue) live in `cpp-aks-deploy`, not in
 this repository.
@@ -260,9 +286,8 @@ action is pinned to a commit SHA.
 
 ### Branch protection
 
-`main` is protected by a repository ruleset. Its definition is committed in
-[.github/rulesets/main.json](.github/rulesets/main.json), which is imported into the repository
-settings once, after which the `rulesets/` directory is removed. The ruleset enforces:
+`main` is protected by a repository ruleset. It lives in the repository settings, imported once from
+a `.github/rulesets/main.json` definition that is not kept in the tree. The ruleset enforces:
 
 - no deletion and no force-push;
 - a pull request with one approval and all review threads resolved;

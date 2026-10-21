@@ -2,9 +2,9 @@
 #
 # Everything here is LOCAL ONLY. The credentials below are development defaults, deliberately
 # committed so the stack starts with no .env file; they are never used in any deployed environment,
-# where the Postgres credentials, the Redis key, the gateway subscription key and the system user
-# ids come from Key Vault via the Secrets Store CSI driver, and the Service Bus identity is the
-# pod's workload identity.
+# where the Postgres credentials, the Redis key, the gateway subscription key and the service's own
+# system user id come from Key Vault via the Secrets Store CSI driver, and the Service Bus identity
+# is the pod's workload identity.
 #
 #   docker compose up -d postgres servicebus-emulator redis wiremock   # dependencies, for ./gradlew bootRun
 #   docker compose up app                                              # the service in its container
@@ -44,9 +44,10 @@ services:
       RESULTS_BASE_URL: http://wiremock:8080
       USERSGROUPS_BASE_URL: http://wiremock:8080
       HMPPS_PUBLISH_URL: http://wiremock:8080/probation/api/v1/hearing/results
-      # Local-only dummies. Never a real user id and never a real key.
-      RESULTS_SYSTEM_USER_ID: 00000000-0000-0000-0000-000000000000
-      USERSGROUPS_SYSTEM_USER_ID: 00000000-0000-0000-0000-000000000000
+      # Local-only dummies. Never a real user id and never a real key. The service has one system
+      # user of its own (design H30), sent as CJSCPPUID on both the results fallback and the
+      # users-groups read, so one variable feeds both; its name is still a proposal.
+      PROBATION_RESULTS_DISTRIBUTION_SYSTEM_USER_ID: 00000000-0000-0000-0000-000000000000
       GATEWAY_SUBSCRIPTION_KEY: local-only-not-a-key
       # The two estate filters, off for the local loop: a laptop has no usersgroups for
       # `cp-auth-rules-filter` to resolve a caller's groups through and no audit broker for
@@ -55,8 +56,14 @@ services:
       HTTP_AUDIT_ENABLED: "false"
 
   # The service's own store. Flyway runs at the application's start-up, not here.
+  #
+  # PostgreSQL 15, the major version the deployed servers run (design platform ask 5): the
+  # outbound_body digest trigger needs 13 or later and the body-retention job's
+  # DETACH PARTITION ... CONCURRENTLY needs 14, so the local store matches production rather than
+  # running ahead of it. A data volume initialised by another major version will not start; remove
+  # it with `docker compose down -v`.
   postgres:
-    image: postgres:16
+    image: postgres:15
     ports:
       - "5432:5432"
     environment:
@@ -80,6 +87,11 @@ services:
   # change settlement or delivery-count behaviour under a green build. Bump it as its own reviewed
   # change, re-running the *IT suites. The same config.json is mounted by the Testcontainers
   # harness, so the queue definition cannot drift between this stack and CI.
+  #
+  # The queue has duplicate detection OFF, as the deployed queues are to be created (design H14):
+  # the guard on processed_request is the only duplicate protection, so every copy of a message
+  # reaches it. JSON carries no comments, so the reason is recorded here. The emulator logs a
+  # default history window on start-up; with detection off it is never used.
   servicebus-emulator:
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:1.1.2
     ports:

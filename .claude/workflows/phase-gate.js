@@ -185,7 +185,7 @@ const REVIEWERS = [
   },
   {
     key: 'spec-validator', agentFile: '.claude/agents/spec-validator.md', verdicts: ['COMPLIANT', 'DRIFT DETECTED'], pass: 'COMPLIANT',
-    ask: 'Check the range against the message contracts, the outbound HMPPS schema, settlement discipline, state-machine completeness, the deviations register and the constitution as it stands in this tree.',
+    ask: 'Check the range against the message contracts, the legacy-parity outbound body and the deviation register, settlement discipline, state-machine completeness and the constitution as it stands in this tree.',
   },
 ]
 if (Array.isArray(a.reviewers) && a.reviewers.length === 0) {

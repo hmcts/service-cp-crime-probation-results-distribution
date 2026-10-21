@@ -57,7 +57,7 @@ dependencies {
   implementation libs.cp.auth.rules.filter
   implementation libs.cp.audit.filter.springboot
 
-  // --- Persistence: processed_request + outbound_message store (JdbcClient + Flyway) ---
+  // --- Persistence: processed_request / outbound_message / outbound_body (JdbcClient + Flyway) ---
   implementation 'org.springframework.boot:spring-boot-starter-jdbc'
   implementation 'org.springframework.boot:spring-boot-starter-flyway'
   implementation 'org.flywaydb:flyway-database-postgresql'
@@ -71,10 +71,12 @@ dependencies {
   implementation 'com.azure:azure-messaging-servicebus'
   implementation 'com.azure:azure-identity'
 
-  // Not declared, deliberately: com.azure:azure-data-appconfiguration. The service does not read
-  // the ProbationResultsDistributionService cutover flag (design Q15); the client is needed only if
-  // the operations API's optional flag-check action is adopted (design §4.8 action 7), and is added
-  // with that action. Version would come from the azure-sdk-bom platform above.
+  // Not declared, deliberately, and not to be added: com.azure:azure-data-appconfiguration. The
+  // service reads nothing from App Configuration (design H22, H26): the results producer checks the
+  // ProbationResultsDistributionService cutover switch itself, and this service does not check it.
+  // The optional diagnostic switch check (design §4.8 action 7), if it is ever adopted, reads the
+  // users-groups permission through the client the service already has, so it needs no App
+  // Configuration client either.
 
   // --- Payload source: Redis EXT_ cache (Lettuce) + results-query-api fallback ---
   // Lettuce directly rather than spring-boot-starter-data-redis: this service reads one string key
@@ -110,13 +112,15 @@ dependencies {
   // version is declared here for dependabot to track.
   testImplementation 'org.wiremock:wiremock-standalone:3.13.2'
 
-  // Draft-07 validator. RUNTIME dependency, not test-only:
-  // OutboundContractValidator (design §4.4, §6.6) validates every redacted HMPPS body against the
-  // vendored interim outbound schema (classpath:contracts/outbound/) BEFORE the POST, so a
-  // schema-invalid body is an explicit FAILED(contract-invalid) rather than a 400 from the
-  // receiver. The inbound closed command schema and the contract corpus use the same dependency.
-  // Not managed by any BOM on this build, so the version is declared here for dependabot to track.
-  implementation 'com.networknt:json-schema-validator:3.0.8'
+  // Draft-07 validator, TEST SCOPE ONLY: it must not reach the runtime classpath. The contract
+  // corpus tests use it to hold the inbound command parser to the closed schema
+  // (contracts/distribution-command.schema.json, design Appendix B.1, vendored with the first
+  // feature). The parser itself validates explicitly at runtime, as the sibling services' parsers
+  // do, so it needs no schema library. The only runtime use was the outbound contract validator, and outbound schema validation is parked
+  // and not built in this release (design H13); un-parking it would move this back to
+  // `implementation`. Not managed by any BOM on this build, so the version is declared here for
+  // dependabot to track.
+  testImplementation 'com.networknt:json-schema-validator:3.0.8'
 
   // Security: pin transitive tomcat-embed-core to patched version (CVE-2026-41293, -43512, et al.)
   // Brought in transitively via spring-boot-starter-web; >=11.0.0-M1,<11.0.22 are vulnerable
