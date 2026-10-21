@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
@@ -40,6 +41,8 @@ class CorpusCustodyTest {
     private static final String CACHE_FILE = "inputs/cache.json";
     private static final String PAYLOAD_SENTINEL = "SENTINEL-VALUE-MUST-NOT-LEAK-7Q2";
     private static final String EXPECTATION_SENTINEL = "SENTINEL-EXPECTATION-MUST-NOT-LEAK-9F4";
+    private static final String META_SENTINEL = "SENTINEL-META-MUST-NOT-LEAK-ZZ9";
+    private static final String BELONGS_TO_NO_CASE = "belongs to no case";
     private static final String BOGUS_DIGEST = "0".repeat(64);
     private static final ObjectMapper MAPPER = CanonicalJsonMapper.create();
 
@@ -123,6 +126,135 @@ class CorpusCustodyTest {
             assertThat(all)
                     .as("no corpus value may appear in any custody message")
                     .noneMatch(v -> v.contains(PAYLOAD_SENTINEL) || v.contains(EXPECTATION_SENTINEL));
+        }
+
+        @Test
+        @DisplayName("a malformed meta.json is reported value-free, never as a Jackson parse snippet")
+        void findViolations_whenMetaIsNotValidJson_should_name_the_case_without_leaking_content()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            // Truncated, non-parseable JSON that embeds a sentinel: a Jackson parse-error snippet
+            // would echo these bytes into a public CI log (FR-001-031). It must not.
+            Files.writeString(
+                    tmp.resolve(CASE_DIR).resolve("meta.json"),
+                    "{\"caseId\":\"" + CASE_DIR + "\",\"leak\":\"" + META_SENTINEL + "\",");
+
+            final List<String> violations = CorpusCustodyChecker.findViolations(tmp);
+
+            assertThat(violations)
+                    .as("the malformed case must be named and reported as invalid JSON")
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("is not valid JSON"));
+            assertThat(violations)
+                    .as("no meta.json byte, parse position or Jackson text may appear")
+                    .noneMatch(v -> v.contains(META_SENTINEL))
+                    .noneMatch(v -> v.toLowerCase(Locale.ROOT).contains("unexpected")
+                            || v.contains("line:")
+                            || v.contains("column:")
+                            || v.contains("at [Source"));
+        }
+    }
+
+    @Nested
+    @DisplayName("rejects anything but SIT or synthetic-from-SIT (T027, FR-001-030)")
+    class Environment {
+
+        @Test
+        @DisplayName("an environment other than SIT or SYNTHETIC fails, naming the case")
+        void findViolations_whenEnvironmentIsNeitherSitNorSynthetic_should_name_the_case()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> meta.put("environment", "PRD"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("environment must be"));
+        }
+    }
+
+    @Nested
+    @DisplayName("flags files that belong to no verifiable case (T027, FR-001-032)")
+    class Orphans {
+
+        @Test
+        @DisplayName("a case directory with files but no meta.json names the case and its files")
+        void findViolations_whenCaseHasNoMeta_should_name_the_case_and_its_files() throws Exception {
+            copyWellFormedInto(tmp);
+            Files.delete(tmp.resolve(CASE_DIR).resolve("meta.json"));
+
+            final List<String> violations = CorpusCustodyChecker.findViolations(tmp);
+
+            assertThat(violations).anyMatch(v -> v.contains(CASE_DIR) && v.contains("has no meta.json"));
+            assertThat(violations)
+                    .anyMatch(v -> v.contains(CACHE_FILE) && v.contains(BELONGS_TO_NO_CASE));
+        }
+
+        @Test
+        @DisplayName("a stray file inside a case directory, absent from its digests, is flagged")
+        void findViolations_whenAFileInsideACaseIsNotPinned_should_name_the_case_and_file()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            Files.writeString(tmp.resolve(CASE_DIR).resolve("inputs").resolve("stray.json"), "{}");
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR)
+                            && v.contains("stray.json")
+                            && v.contains(BELONGS_TO_NO_CASE));
+        }
+    }
+
+    @Nested
+    @DisplayName("requires complete provenance on every case (T027, FR-001-029)")
+    class Provenance {
+
+        @Test
+        @DisplayName("an executed-legacy expectation without legacyCommit fails, naming the case")
+        void findViolations_whenExecutedLegacyLacksLegacyCommit_should_name_the_case_and_field()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> provenance(meta).remove("legacyCommit"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("legacyCommit"));
+        }
+
+        @Test
+        @DisplayName("an executed-legacy expectation without runtime fails, naming the case")
+        void findViolations_whenExecutedLegacyLacksRuntime_should_name_the_case_and_field()
+                throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> provenance(meta).remove("runtime"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("runtime"));
+        }
+
+        @Test
+        @DisplayName("a caseId that does not match the directory name fails, naming the case")
+        void findViolations_whenCaseIdDiffersFromDirectory_should_name_the_case() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> meta.put("caseId", "a-different-id"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains("caseId does not match"));
+        }
+
+        @Test
+        @DisplayName("an empty formsHeld array fails, naming the case and field")
+        void findViolations_whenFormsHeldIsEmpty_should_name_the_case_and_field() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> meta.putArray("formsHeld"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("formsHeld"));
+        }
+
+        @Test
+        @DisplayName("an empty digests object fails, naming the case and field")
+        void findViolations_whenDigestsIsEmpty_should_name_the_case_and_field() throws Exception {
+            copyWellFormedInto(tmp);
+            rewriteMeta(tmp, meta -> meta.putObject("digests"));
+
+            assertThat(CorpusCustodyChecker.findViolations(tmp))
+                    .anyMatch(v -> v.contains(CASE_DIR) && v.contains("digests"));
         }
     }
 
