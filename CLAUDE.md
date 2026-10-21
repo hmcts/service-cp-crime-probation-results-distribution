@@ -34,8 +34,8 @@ Jira: none — this work carries no ticket; features land on `main` through pull
 ## Key Documentation
 | Document | Location |
 |---|---|
-| **Design (authoritative)** | Confluence — [Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service) (CRA space), rev 3.6 (decisions H1–H34). This repo carries **no** design narrative: do not create `doc/*_DESIGN.md`, `SOLUTION_BRIEF.md` or any other rationale document here |
-| Design digest | `doc/design/DIGEST.md` — rev 3.6's rules for spec authors and implementers, each tagged with its design row id; rules only, no rationale. The design wins where they differ |
+| **Design (authoritative)** | Confluence — [Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service) (CRA space), rev 3.6 (decisions H1–H34) and H35 (2026-10-21). This repo carries **no** design narrative: do not create `doc/*_DESIGN.md`, `SOLUTION_BRIEF.md` or any other rationale document here |
+| Design digest | `doc/design/DIGEST.md` — the rules of rev 3.6 and H35 for spec authors and implementers, each tagged with its design row id; rules only, no rationale. The design wins where they differ |
 | Constitution | `.specify/memory/constitution.md` |
 | Contracts | `doc/API_CONTRACTS.md` |
 | Deviation register | `doc/DEVIATIONS.md` — seeded from design §7.2 (DV-01 … DV-26) by the first feature that lands behaviour; not present yet |
@@ -152,7 +152,7 @@ Postgres, Redis, WireMock).
 ## Setup
 
 <!-- SPECKIT START -->
-All six features are specified (design rev 3.6, constitution v2.0.0); none is planned yet.
+All six features are specified (design rev 3.6 + H35, constitution v2.0.1); none is planned yet.
 Implement in dependency order: `001-parity-kernel` → `002-hmpps-distribution` (owns the shared core:
 Flyway V1, enums, state machine, ports, metric registry) → `003-body-retention` and `004-recovery`
 → `005-operations-api` → `006-production-readiness`.

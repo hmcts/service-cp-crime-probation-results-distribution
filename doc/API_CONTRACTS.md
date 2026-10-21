@@ -26,8 +26,9 @@ It also makes three **reads**. They are dependencies, not contracts this service
 
 The authority for every rule below is the design: the
 [Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service)
-Confluence page, at rev 3.6 (decisions H1–H34). Section references (§n, Appendix B) are to that
-design; [design/DIGEST.md](design/DIGEST.md) restates its rules with their row ids.
+Confluence page, at rev 3.6 (decisions H1–H34) and H35 (2026-10-21). Section references (§n,
+Appendix B) are to that design; [design/DIGEST.md](design/DIGEST.md) restates its rules with their
+row ids.
 
 ---
 

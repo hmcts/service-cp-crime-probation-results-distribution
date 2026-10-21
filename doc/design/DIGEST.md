@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Baseline | Design rev 3.6 (draft, 2026-10-20), decisions H1–H34. Frozen for this repo until a later amendment. |
+| Baseline | Design rev 3.6 (draft, 2026-10-20), decisions H1–H35 (H35 decided 2026-10-21). Frozen for this repo until a later amendment. |
 | Source of truth | [Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service) (Confluence) |
-| How to use | Rules only; the reasoning is on Confluence. Where this digest differs from the design, the design wins. A Confluence section that still predates a rev 3.6 decision (H1–H34) does not override that decision: the rev 3.6 decision applies, and the difference is raised with the design owner as an open issue (constitution, Governance). |
+| How to use | Rules only; the reasoning is on Confluence. Where this digest differs from the design, the design wins. A Confluence section that still predates a rev 3.6 decision (H1–H34) or H35 does not override that decision: the decision applies, and the difference is raised with the design owner as an open issue (constitution, Governance). |
 | Tags | Ids from the design record: H-n, D-n decisions; A2-n, A3-n, R1-n, R2-n, Q-n, O-n design rows; DV-n deviations; P-n legacy defects; R0–R12 HMPPS rules; §n and App. A/B are sections of design rev 3.6. The Confluence page states the same design in plain English, without ids. |
 | Names | All `distribution.*` property names, and every name marked *(proposed)*, are proposals of the design (§8.1), not fixed. |
 
@@ -43,7 +43,7 @@
 - Reused from the informant parity pack: the `recorded/` layout with pinned digests, `comparator-vectors/vectors.json`, `JsonParity`, `ParityCase`, and `RegisteredFieldDeviations` keyed on `doc/DEVIATIONS.md` (§6.1).
 - Before cutover: one week of SIT events is replayed into STE against a stub gateway. STE's `outbound_body` is compared hearing by hearing with SIT's logged bodies; any unexplained difference blocks cutover (A3-68, §6.5).
 
-## 3. Decisions H1–H34
+## 3. Decisions H1–H35
 
 | Id | Rule |
 |---|---|
@@ -78,9 +78,10 @@
 | H29 | The legacy topic's ad hoc replay subscription is out of scope. |
 | H30 | The service has its own system user (static-data patch; id from Key Vault). It is sent as `CJSCPPUID` on the users-groups read, and on the results fallback when the command has no `userId` and on every resend (Q14, DV-17). |
 | H31 | The owning team owns and supports the service and sets the soak length with stakeholders. The daily reconciliation runs throughout the soak. |
-| H32 | An urgent rollback that cannot wait for the window runs out of hours, with Common Platform up: 1 pause intake; 2 restore the subscription and record T; 3 turn the Results switch off and wait ≥ 10 min; 4 close in-flight sends; 5 reconcile the paused queue against T (pre-T → court re-share; post-T → purge; intake stays paused); 6 purge. Then planned steps 5–7 (A3-113, A3-117). |
+| H32 | An urgent rollback that cannot wait for the window runs out of hours, with Common Platform up: 1 pause intake; 2 restore the subscription and record T; 3 turn the Results switch off and wait ≥ 10 min; 4 close in-flight sends; 5 reconcile the paused queue against T (pre-T → court re-share; post-T → handled by the function app, purged; intake stays paused), then reconcile and repair the live period as in the planned rollback, steps 5–7; 6 purge the queue (§9.4; A3-113, A3-117). |
 | H33 | Application-only 400s are counted daily (`shape="application-only"`), not alerted. *Generalised by H34.* |
 | H34 | Alerts page only for genuine issues. Known recurring behaviour is counted on the dashboard and in the daily reconciliation. Thresholds are proposals, tuned after go-live (§13). |
+| H35 | An expired `outbound_body` month is removed with a plain `DROP` of its partition, with no `DETACH` (concurrent or not). Each `DROP` runs under `lock_timeout` 5 s in its own short transaction that commits at once; the single-runner advisory lock stays on its own transaction for the whole run. A timed-out `DROP` is retried on the next run. The DEFAULT partition, its alert and its recovery stay; V1 is unchanged (amends A3-64 (b)). |
 
 **Other decisions in force**
 - D1: lift and shift. Rules and payload are copied verbatim; delivery and reliability defects are fixed by construction, each as a numbered DV with its own test.
@@ -415,18 +416,18 @@ Flyway `V1__create_processed_log.sql` creates three tables and one view. The dat
 - An in-place re-run deletes the earlier body row and inserts the new one in the same transaction. "The body" is the latest row by `created_at`.
 - "Digest ⇒ body" is not a constraint (the purge removes bodies).
 
-**Retention job (H20, A3-64)**
+**Retention job (H20, H35, A3-64)**
 - `processed_request` and `outbound_message` are never purged.
 - `outbound_body` is maintained daily on `distribution.body-maintenance.cron`, with the scheduler zone UTC; not `pg_cron`.
-- Single runner: `pg_try_advisory_xact_lock` on a fixed key. A pod that does not get the lock skips the run; that is not a failure.
+- Single runner: `pg_try_advisory_xact_lock` on a fixed key, its transaction open on its own for the whole run (H35). A pod that does not get the lock skips the run; that is not a failure.
 - Each run:
   - pre-creates the current month's partition and the next two;
-  - drops each partition whose upper bound ≤ `date_trunc('month', (now() AT TIME ZONE 'UTC') - retention)`, using `DETACH PARTITION … CONCURRENTLY` then `DROP` (the bound is read from the catalogue, never parsed from the name);
+  - drops each partition whose upper bound ≤ `date_trunc('month', (now() AT TIME ZONE 'UTC') - retention)` (the bound is read from the catalogue, never parsed from the name) with a plain `DROP`, each in its own short transaction that commits at once, never the lock's (H35);
   - deletes DEFAULT rows older than the cut-off;
   - runs each DDL under `lock_timeout` 5 s, retrying on the next run;
   - counts creates, drops and failures, and gauges the DEFAULT row count.
 - Partitions are created, and so owned, by the service role.
-- PostgreSQL ≥ 13 for the trigger and ≥ 14 for `DETACH … CONCURRENTLY`; both confirmed on the platform (A3-105).
+- PostgreSQL ≥ 13 for the trigger; the platform runs 15 (A3-105). The plain `DROP` (H35) needs no later version.
 - DEFAULT non-empty → alert. Runbook: detach DEFAULT, create the month, move the rows, re-attach.
 - After the purge, only `body_digest`, `service_version`, the status and the metadata remain.
 
@@ -700,7 +701,7 @@ Thresholds are proposals, tuned after go-live.
 | 1 | Queue `probation.requests` plus DLQ per environment: duplicate detection off, lock 5 min, `maxDeliveryCount` 5 (H14). |
 | 2 | Service workload identity: Service Bus Data Receiver on the namespace, Data Sender on `probation.requests`, and Key Vault Secrets User. No App Configuration role. |
 | 3, 4 | Producer: results-service holds Data Sender, confirmed per environment; JNDI queue namespace and name set per environment. |
-| 5 | Database `probationresultsdistribution` on the environment's Results PostgreSQL server, created by the platform's dbsetup job and owned by the service role (A3-105). Flyway runs in-service. PostgreSQL ≥ 13 / ≥ 14 (confirmed). |
+| 5 | Database `probationresultsdistribution` on the environment's Results PostgreSQL server, created by the platform's dbsetup job and owned by the service role (A3-105). Flyway runs in-service. PostgreSQL ≥ 13 (15 confirmed). |
 | 6 | Key Vault through the Secrets Store CSI driver: the gateway subscription key (same value as the legacy), the Redis key, the datasource credentials, the system user id and the App Insights connection string. |
 | 6a | Network path pod → users-groups query API; the system user permitted on the permissions query. |
 | 7 | App Configuration flag `ProbationResultsDistributionService`, off, under every environment label. A users-groups static-data patch creating the feature and permission (title "Probation Results Distribution Service", action `COMPONENT`), inactive. Re-apply after every STE rebuild (H24, H26). |
@@ -758,7 +759,7 @@ Operations only: rows 2, 8 and 22. G1 is parked; the other rows are closed or an
 - A3-56: where a normal (unforced) resend's free-text reason is recorded is not stated. A forced resend's goes to `audit_note`.
 - §4.4: where the body-retention job sits in the package tree. The scaffold keeps the `outbound_body` writes in `persistence` behind `OutboundLog`; the first spec that needs the job places it.
 - §8.1 vs App. A: whether `distribution.resend.max-ids-per-run`, `distribution.body-retention` and `distribution.body-maintenance.cron` bind an environment variable. §8.1 gives none and App. A proposes names (§12); the scaffold binds none.
-- Which sections of the Confluence page already carry the rev 3.6 text. Where one lags, the rev 3.6 decision applies (§1).
+- Which sections of the Confluence page already carry the rev 3.6 and H35 text. Where one lags, the decision applies (§1).
 
 **Design text that contradicts its own decisions — read by the decision**
 - §1.1 "every failure is counted and alerted" → H34: alerts page only for genuine issues; known behaviour is counted.

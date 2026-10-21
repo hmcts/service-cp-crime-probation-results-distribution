@@ -7,14 +7,14 @@
 ## Content Quality
 
 - [x] No implementation details (languages, frameworks, APIs) — the spec names what the design fixes
-      for this job (A3-64): the two properties, the four `probation_body_*` metrics and their `step`
-      label, V1's partition names and bounds, and the PostgreSQL mechanisms the design prescribes
-      (a transaction-scoped advisory lock, a lock timeout, partition bounds read from the catalogue).
-      The design's SQL is quoted only where the design is cited (the Clarifications, the marker of
-      FR-003-011 and open question 1), and the slice plan's own words in the Input line, never as a
-      requirement. It chooses no class, package, library
-      or framework: where the job sits is left to the plan (assumption AS-1), and so is whether the
-      run's statements share the lock's transaction (AS-13)
+      for this job (A3-64; H35): the two properties, the four `probation_body_*` metrics and their
+      `step` label, V1's partition names and bounds, and the PostgreSQL mechanisms the design
+      prescribes (a transaction-scoped advisory lock, a lock timeout, partition bounds read from the
+      catalogue, a plain `DROP` of an expired partition in its own transaction). The design's SQL is
+      quoted only where the design is cited (the Clarifications and open question 1), and the slice
+      plan's own words in the Input line, never as a requirement. It chooses no class, package,
+      library or framework: where the job sits is left to the plan (assumption AS-1), and so is
+      whether the statements other than the removals share the lock's transaction (AS-13)
 - [x] Focused on user value and business needs — the retention commitment given to the data owner
       and the DPIA, the investigation window for operations, and capacity for the platform
 - [x] Written for non-technical stakeholders — the stories, edge cases and success criteria are in
@@ -25,12 +25,12 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain — **one remains**, within the limit of three, a
-      genuine design gap for the design owner:
-      - FR-003-011 (open question 1): how an expired month is removed. The design's
-        `DETACH PARTITION … CONCURRENTLY` then `DROP` cannot run on this table: the PostgreSQL
-        manual states that a concurrent detach cannot run in a transaction block and is not allowed
-        while the partitioned table has a default partition, and V1 creates one.
+- [x] No [NEEDS CLARIFICATION] markers remain — **none remain**. The one there was, FR-003-011
+      (open question 1: how an expired month is removed, since the design's concurrent detach then
+      `DROP` cannot run on this table), was answered by the design owner on 2026-10-21 with option
+      A, recorded in the design as H35 (amending A3-64 (b)): a plain `DROP` of the expired
+      partition, each in its own short transaction under the 5 s lock timeout. FR-003-011 now
+      states it.
 
       Open question 2 — how a job that never runs, or a DEFAULT reading left stale on the pod that
       skipped, is noticed — is not a marker: the design's default stands (every signal comes from a
@@ -38,23 +38,25 @@
       itself is a requirement as designed (FR-003-022). Both questions, with their options, are at
       the end of this checklist.
 
-      Twenty-one points were settled in the Clarifications session of 2026-10-21, each with its
-      design reference: eighteen answered from the design (the inferred ones say so); one answered
-      as far as the design goes, which fixes the lock's kind but not whether the run's statements
-      share its transaction (AS-13); and two the design does not establish, carried as assumptions
-      (the failure causes, AS-14; the job's package and the properties' binding, AS-1 and AS-2)
+      Twenty-two points were settled in the Clarifications session of 2026-10-21, each with its
+      design reference: eighteen answered from the design (the inferred ones say so); one by the
+      design owner's answer to open question 1 (H35); one answered as far as the design goes, which
+      since H35 fixes the removals' transactions but not whether the run's other statements share
+      the lock's (AS-13); and two the design does not establish, carried as assumptions (the
+      failure causes, AS-14; the job's package and the properties' binding, AS-1 and AS-2)
 - [x] Requirements are testable and unambiguous — every requirement states an outcome a test can
-      check, and a failure's cause is one of a closed set (FR-003-017; AS-14). The marked
-      requirement also states what must hold whatever the answer: the removal's lock timeout and
-      its failure behaviour (FR-003-012, FR-003-016, FR-003-017); and the gauge's value after a run
-      is stated as designed (FR-003-022), whatever open question 2's answer
+      check, and a failure's cause is one of a closed set (FR-003-017; AS-14). FR-003-011 states
+      the removal H35 decides — a plain `DROP`, committed in its own transaction while the lock's
+      transaction stays open, under the lock timeout and retried on the next run — with its failure
+      behaviour (FR-003-012, FR-003-016, FR-003-017); and the gauge's value after a run is stated as
+      designed (FR-003-022), whatever open question 2's answer
 - [x] Success criteria are measurable — each has a count, a duration, a percentage or a test matrix
-      (SC-003-001 … SC-003-013); SC-003-013's bound holds whichever way the run's statements stand to
-      the lock's transaction (AS-13)
+      (SC-003-001 … SC-003-013); SC-003-013's bound is stated for a removal, which commits on its own
+      (H35), and for a creation, whichever way the plan arranges it (AS-13)
 - [x] Success criteria are technology-agnostic (no implementation details) — they speak of bodies,
       months, runs, failures and settings; "partition" appears only in SC-003-012, as the unit in
       which a month's storage is read
-- [x] All acceptance scenarios are defined — six stories, 31 Given/When/Then scenarios
+- [x] All acceptance scenarios are defined — six stories, 32 Given/When/Then scenarios
 - [x] Edge cases are identified — 20, including the cut-off on a bound, the turn of the year, a
       non-UTC database session (checked against PostgreSQL 15), clock changes, missed runs, a
       schedule that never fires, which months DEFAULT can hold at all, DEFAULT rows of a current or
@@ -69,17 +71,17 @@
 - [x] All functional requirements have clear acceptance criteria — each of FR-003-001 … FR-003-028
       is exercised by a scenario of User Stories 1–6: among them FR-003-007 by User Story 1
       scenarios 2 and 4 (a present month left alone; an overlapping creation refused and counted),
-      FR-003-015 by User Story 2 scenario 4 (no DEFAULT row moved, no past month created) and
-      FR-003-027 by User Story 5 scenario 6 (no other property, no named environment variable).
-      The Design traceability table ties each requirement to its design row
+      FR-003-011 by User Story 3 scenarios 4 and 7 (a removal that gives up is retried; a removal
+      commits on its own while the lock is held, H35), FR-003-015 by User Story 2 scenario 4 (no
+      DEFAULT row moved, no past month created) and FR-003-027 by User Story 5 scenario 6 (no other
+      property, no named environment variable). The Design traceability table ties each
+      requirement to its design row
 - [x] User scenarios cover primary flows — creation ahead, removal, single runner and bounded waits,
       signals, configuration, and recovery from a DEFAULT spill
 - [x] Feature meets measurable outcomes defined in Success Criteria — every criterion is an outcome
       of this slice (SC-003-012 reads the storage of the months this slice keeps in their own
-      partitions), and they hold under every option of the two open questions, except that option C
-      of question 1 (no DEFAULT partition) would withdraw the DEFAULT parts of SC-003-008 and
-      SC-003-012 along with FR-003-014, FR-003-015, FR-003-022, FR-003-028 and the DEFAULT half of
-      FR-003-023
+      partitions), and they hold under the answer to question 1 (option A, H35, which keeps the
+      DEFAULT partition, so nothing is withdrawn) and under every option of question 2
 - [x] No implementation details leak into specification — as the first item: only what the design
       fixes
 
@@ -114,12 +116,17 @@
   - the error for a refused write quotes the failing row, which is why the database's own error text
     stays out of every line at INFO or above (AS-14);
   - the design's cut-off expression, compared with the bounds in a UK session zone, keeps a month
-    for a month too long unless it is read as a UTC instant.
-- Before `/speckit-plan`: open question 1 needs the design owner's answer before the tasks for
-  FR-003-011 are written, and before slice 002 writes V1, because option C would change V1 (002's
-  FR-002-054). Open question 2 blocks nothing: the design's default stands (AS-15). The plan also
-  records where the job sits (AS-1) and whether the run's statements share the lock's transaction
-  (AS-13). The rest of the slice can be planned now.
+    for a month too long unless it is read as a UTC instant;
+  - a plain `DROP` of a month takes `ACCESS EXCLUSIVE` on `outbound_body` and on its DEFAULT
+    partition. Run on its own connection while the lock's transaction holds only the advisory lock,
+    it completes at once; once that transaction has created a month, deleted DEFAULT rows or read
+    the DEFAULT count, the `DROP` gives up after the 5 s lock timeout (checked on PostgreSQL 15.14
+    the same day, for H35; AS-13).
+- Before `/speckit-plan`: open question 1 is answered (option A, H35, 2026-10-21), so the tasks for
+  FR-003-011 can be written, and slice 002 writes V1 unchanged (002's FR-002-054). Open question 2
+  blocks nothing: the design's default stands (AS-15). The plan also records where the job sits
+  (AS-1) and whether the creations, the DEFAULT delete and the gauge's read share the lock's
+  transaction, within the constraint AS-13 states. The whole slice can be planned now.
 - Raised with the design owner alongside the two questions, as assumptions rather than markers: the
   recovery procedure runs with intake paused (AS-9); a failed delete of DEFAULT rows is counted
   `drop` (AS-7); whether a `lock` failure pages is the alert rule's (AS-8); the failure causes are
@@ -143,6 +150,23 @@
   - The Key Entity "Attempt row" is renamed "Leg attempt", as slices 002 and 004 name it.
 
   Every item passes except the markers item, which stays open on FR-003-011.
+- Validation run 4 (2026-10-21, open question 1 answered). The design owner chose option A,
+  recorded in the design as H35 (amending A3-64 (b)), and the spec was updated to match:
+  - FR-003-011's marker is replaced by the decided rule: a plain `DROP` of each expired partition,
+    in its own short transaction that commits at once, under the 5 s lock timeout, never in the
+    lock's transaction, and retried on the next run; the DEFAULT partition stays and V1 is
+    unchanged. A Clarifications point records the answer.
+  - AS-13 is resolved for removals, as its arrangement (b). The design says nothing of the other
+    statements, so their arrangement stays the plan's, within a constraint checked against
+    PostgreSQL 15: while a removal runs, the lock's transaction holds no lock on `outbound_body` or
+    its DEFAULT partition.
+  - FR-003-002, FR-003-012, FR-003-016, FR-003-017, SC-003-013, User Story 3 (a new scenario 7),
+    the edge case of a long transaction, Dependencies and the traceability table (a new H35 row;
+    A3-64 (b) and A3-105 reworded) follow it.
+  - Slice 002's FR-002-054, Assumptions, Dependencies and traceability table, and its checklist,
+    now say that the question is answered and that V1 keeps the DEFAULT partition.
+
+  Every item passes; no marker remains.
 - This spec was written directly in `specs/003-body-retention/`. `.specify/feature.json` does not
   point at it; a developer starting the feature branches `003-body-retention` from `main` (or sets
   `feature.json`) before running `/speckit-plan`.
@@ -150,19 +174,19 @@
 
 ## Open questions
 
-Two points cannot be answered from the design, and both are for the design owner. Question 1 blocks
-FR-003-011 and is marked there. Question 2 is not a marker: the design's default stands, and it is
-carried as assumption AS-15. The rest of the slice can be planned while they are open, and the
-outcomes FR-003-012, FR-003-016, FR-003-017, FR-003-022 and FR-003-023 state hold under every option
-below, with one exception: option C of question 1 removes the DEFAULT partition, which would
-withdraw FR-003-014, FR-003-015, FR-003-022, FR-003-028 and the DEFAULT half of FR-003-023, and
-change V1 in slice 002 (002's FR-002-054). Question 1 is therefore answered before V1 is written.
+Two points could not be answered from the design, and both went to the design owner. Question 1
+blocked FR-003-011; the design owner answered it on 2026-10-21 with option A, recorded in the
+design as H35, and FR-003-011 now states it. Option C, which would have removed the DEFAULT
+partition and changed V1 in slice 002 (002's FR-002-054), was not chosen: V1 is unchanged.
+Question 2 is not a marker: the design's default stands, and it is carried as assumption AS-15. The
+slice can be planned while it is open, and the outcomes FR-003-022 and FR-003-023 state hold under
+every option of question 2.
 
-### Question 1: How is an expired month removed? (FR-003-011)
+### Question 1: How is an expired month removed? (FR-003-011; answered, H35)
 
-**Context**: A3-64 (b) and DIGEST §8 remove an expired partition with `DETACH PARTITION …
-CONCURRENTLY`, then `DROP`, preferring the concurrent detach because it does not take the strongest
-lock on `outbound_body`. It cannot run on this table. The PostgreSQL manual (ALTER TABLE, DETACH
+**Context**: Before H35, A3-64 (b) and DIGEST §8 removed an expired partition with `DETACH PARTITION
+… CONCURRENTLY`, then `DROP`, preferring the concurrent detach because it does not take the
+strongest lock on `outbound_body`. It cannot run on this table. The PostgreSQL manual (ALTER TABLE, DETACH
 PARTITION) states that `CONCURRENTLY` "cannot be run in a transaction block and is not allowed if the
 partitioned table contains a default partition", and a check against PostgreSQL 15 on 2026-10-21
 confirmed both:
@@ -187,7 +211,10 @@ partition in place and inside the lock's transaction.
 | C | No DEFAULT partition in V1 (slice 002), so the concurrent detach becomes possible, run outside the lock's transaction | A removal no longer queues the pipeline's writes. But a body for a month with no partition is then refused, so its send's outcome write fails after the POST (a possible duplicate at HMPPS); the DEFAULT gauge, its alert, the DEFAULT delete and the recovery procedure go; a detach interrupted between its two phases is left pending and needs its own completion step; and the single-runner lock must be held outside the detach's transactions. Either its transaction stays open on a connection of its own (AS-13 (b)), or the lock becomes session-scoped, a departure from A3-64's transaction-scoped lock: released by the run itself, and a run that fails to release it blocks every later run until its connection closes. V1 changes in slice 002; after V1 is applied, only by a V2 migration |
 | Custom | Another removal | Stated by the design owner |
 
-**Your choice**: _for the design owner_
+**Your choice**: A (H35, 2026-10-21) — each `DROP` in its own short transaction that commits at
+once, under the 5 s lock timeout; the single-runner advisory lock stays on its own transaction for
+the whole run (AS-13 (b) for removals); a timed-out `DROP` is retried on the next run; the DEFAULT
+partition, its alert and its recovery stay; V1 unchanged. Applied in FR-003-011.
 
 ### Question 2: How is a job that does not run, or a stale reading, noticed? (AS-15; not a marker)
 

@@ -7,7 +7,8 @@ deployment gates, with the command-line runners in the image as the fallback (H9
 other operator actions (list, pause and resume intake, submit-hearing, purge-queue, the optional
 flag check, the recommended `dlq-completed` listing) run as command-line runners; their HTTP
 exposure is open (O-1). Everything below assumes that shape. Section references are to the design,
-rev 3.6 (decisions H1–H34); `doc/design/DIGEST.md` restates its rules with their row ids.
+rev 3.6 (decisions H1–H34) and H35 (2026-10-21); `doc/design/DIGEST.md` restates its rules with
+their row ids.
 
 ## Pipeline Architecture (ports and adapters)
 

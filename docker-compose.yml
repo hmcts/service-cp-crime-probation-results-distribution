@@ -58,10 +58,9 @@ services:
   # The service's own store. Flyway runs at the application's start-up, not here.
   #
   # PostgreSQL 15, the major version the deployed servers run (design platform ask 5): the
-  # outbound_body digest trigger needs 13 or later and the body-retention job's
-  # DETACH PARTITION ... CONCURRENTLY needs 14, so the local store matches production rather than
-  # running ahead of it. A data volume initialised by another major version will not start; remove
-  # it with `docker compose down -v`.
+  # outbound_body digest trigger needs 13 or later, and the local store matches production rather
+  # than running ahead of it. A data volume initialised by another major version will not start;
+  # remove it with `docker compose down -v`.
   postgres:
     image: postgres:15
     ports:

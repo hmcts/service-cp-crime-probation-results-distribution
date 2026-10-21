@@ -109,11 +109,13 @@ private CachedHearingPayloadAdapter adapter;
   `ON DELETE RESTRICT` foreign key are part of V1
 - Write order: the leg's outcome UPDATE (with `body_digest`) first, then the `outbound_body` INSERT,
   in the same transaction (H20)
-- The body-retention job: single runner by a transaction-scoped advisory lock on a fixed key; the
-  cut-off is computed in UTC and compared with each partition's bounds read from the catalogue,
-  never parsed from its name; `DETACH PARTITION … CONCURRENTLY`, then `DROP`, each under a
-  `lock_timeout` and retried on the next run; stranded DEFAULT rows older than the cut-off are
-  deleted; the scheduler runs with `zone = "UTC"` (row A3-64)
+- The body-retention job: single runner by a transaction-scoped advisory lock on a fixed key, its
+  transaction open on its own for the whole run; the cut-off is computed in UTC and compared with
+  each partition's bounds read from the catalogue, never parsed from its name; an expired month is
+  removed by a plain `DROP` of its partition, with no `DETACH`, each `DROP` in its own short
+  transaction that commits at once, never the lock's (H35); every partition statement runs under a
+  5 s `lock_timeout` and one that fails is retried on the next run; stranded DEFAULT rows older than
+  the cut-off are deleted; the scheduler runs with `zone = "UTC"` (row A3-64; H35)
 
 ## Enums and Routing
 

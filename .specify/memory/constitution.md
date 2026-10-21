@@ -1,7 +1,52 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: 1.1.0 → 2.0.0
+Version change: 2.0.0 → 2.0.1
+Bump rationale: PATCH (2026-10-21; design rev 3.6 + H35). H35 settles how
+                an expired `outbound_body` month is removed: a plain `DROP`
+                of its partition, each in its own short transaction that
+                commits at once, under the 5 s `lock_timeout`, retried on the
+                next run, while the single-runner advisory lock stays on its
+                own transaction for the whole run (row A3-64 (b) as amended).
+                It replaces the concurrent detach the 2.0.0 text named, which
+                PostgreSQL refuses while the table has a DEFAULT partition.
+                No principle is added, removed or redefined, no code
+                implemented the replaced text, and V1, its DEFAULT partition
+                and the DEFAULT alert and recovery are unchanged.
+                PATCH rather than MINOR: the change rewrites two existing
+                Technology Stack bullets, which restate design mechanisms by
+                row id, and the Governance citations; it swaps one removal
+                statement for another and expands no guidance. 1.1.0's H8,
+                by contrast, changed Principles I, VI and IX and allocated
+                DV-25.
+
+Modified sections (2.0.1):
+  - Technology Stack & Deployment - the PostgreSQL bullet no longer rests
+    the version on the concurrent detach; the body-retention bullet removes
+    an expired month by a plain `DROP` in its own short transaction (H35).
+  - Governance - H35 named as adopted at amendment 2.0.1; the override
+    clause and the digest's description reach H35, not only rev 3.6.
+
+Templates requiring updates (2.0.1):
+  - .specify/templates/*.md                   ✅ compatible - no change.
+  - CLAUDE.md (version line, design and digest rows), README.md,
+    doc/API_CONTRACTS.md, doc/design/DIGEST.md, doc/CHANGELOG.md,
+    .claude/rules/design_rules.md, .claude/rules/technical-rules.md,
+    .claude/agents/software-engineer.md, .claude/agents/qa.md,
+    .claude/agents/spec-validator.md, .claude/agents/research.md,
+    docker-compose.yml (comment only)
+                                              ✅ aligned in the same change;
+      the design baseline is cited as rev 3.6 (decisions H1–H34) and H35.
+  - specs/002-hmpps-distribution, specs/003-body-retention
+                                              ✅ aligned in the same change:
+      003's open question 1 answered (FR-003-011).
+
+Design citations: "design §n" in this document means a section of the design
+rev 3.6. Decision ids (H1–H35, D1, D4a, D10, D16, Q15, ...), deviation ids
+(DV-n), defect ids (P01-P36), rule ids (R0-R12) and row ids (A2-n, A3-n) are
+the design's and are never renumbered here.
+
+Previous amendment (1.1.0 → 2.0.0):
 Bump rationale: MAJOR. Design rev 3.6 (2026-10-20; decisions H1–H34) is
                 adopted whole. Its decisions since rev 3.3 remove or redefine
                 principles and invalidate practice the 1.x text required:
@@ -25,11 +70,6 @@ Bump rationale: MAJOR. Design rev 3.6 (2026-10-20; decisions H1–H34) is
                   in-run; it parks for broker redelivery (Principle VI).
                 H9 had awaited its own amendment since 1.1.0. H10 (warn-only
                 validation) was never adopted; H13 parks it.
-
-Design citations: "design §n" in this document means a section of the design
-rev 3.6. Decision ids (H1–H34, D1, D4a, D10, D16, Q15, ...), deviation ids
-(DV-n), defect ids (P01-P36), rule ids (R0-R12) and row ids (A2-n, A3-n) are
-the design's and are never renumbered here.
 
 Modified principles (2.0.0):
   - I.   Behaviour Parity with Registered Deviations - expected output for
@@ -161,6 +201,11 @@ History:
     outbound body stored in `outbound_body` for 6-7 months; outcome-unknown
     POSTs park with no in-run retry; alerts only for genuine issues; next
     free DV id DV-27.
+  - 2.0.1 (2026-10-21) - design rev 3.6 + H35: an expired `outbound_body`
+    month is removed with a plain `DROP` of its partition, in its own short
+    transaction under the 5 s `lock_timeout` and retried on the next run,
+    while the single-runner lock keeps its own transaction for the whole
+    run; the concurrent detach is gone from the stack section.
 -->
 
 # service-cp-crime-probation-results-distribution Constitution
@@ -817,7 +862,7 @@ here" change re-opens decisions the business has taken.
     in-place re-run replaces the attempt's body row.
 
   **PostgreSQL 15**, production's version (row A3-105): a trigger on a
-  partitioned table needs ≥ 13 and `DETACH PARTITION … CONCURRENTLY` ≥ 14.
+  partitioned table needs ≥ 13; the plain `DROP` of H35 needs no later one.
   The database is set up as the Informant Register's, on the environment's
   Results server and owned by the service role, which creates — and so owns —
   the partitions. Hearing payloads are never persisted; outbound bodies are,
@@ -891,19 +936,22 @@ here" change re-opens decisions the business has taken.
     resend-leg is refused while intake is paused, and purge-queue is allowed
     only while it is paused. After a rollback intake stays paused until a
     full new cutover: purge, reconcile, cutover, and only then resume.
-- **Body-retention job** (H20; row A3-64): the service's one scheduled task;
-  there is no batch job. Daily at `distribution.body-maintenance.cron`
+- **Body-retention job** (H20, H35; row A3-64): the service's one scheduled
+  task; there is no batch job. Daily at `distribution.body-maintenance.cron`
   (default `0 15 2 * * *`), the scheduler in UTC. One runner across pods, by a
-  transaction-scoped advisory lock; a pod that does not get it skips the run.
-  Each run pre-creates the current month's partition and the next two; drops
-  each partition whose whole month ends on or before the UTC cut-off,
+  transaction-scoped advisory lock whose transaction stays open on its own for
+  the whole run; a pod that does not get it skips the run. Each run
+  pre-creates the current month's partition and the next two; drops each
+  partition whose whole month ends on or before the UTC cut-off,
   `date_trunc('month', (now() AT TIME ZONE 'UTC') - retention)`, read from the
-  partition's bounds in the catalogue and never from its name (`DETACH
-  PARTITION … CONCURRENTLY`, then `DROP`, each under a `lock_timeout` and
-  retried on the next run); deletes DEFAULT-partition rows older than the
+  partition's bounds in the catalogue and never from its name — a plain
+  `DROP` of the partition, in its own short transaction that commits at once,
+  never the lock's (H35); deletes DEFAULT-partition rows older than the
   cut-off; and counts creations, drops and failures by step, with a gauge of
-  DEFAULT rows. A failure, or a non-empty DEFAULT partition, alerts.
-  `distribution.body-retention` is whole months, ≥ `P1M`, startup-validated.
+  DEFAULT rows. Each partition statement runs under a 5 s `lock_timeout`, and
+  one that fails is retried on the next run. A failure, or a non-empty
+  DEFAULT partition, alerts. `distribution.body-retention` is whole months,
+  ≥ `P1M`, startup-validated.
 - **Observability**: Micrometer → Prometheus with the `probation_` metric
   family of design §10.1, plus the App Insights Java agent; structured JSON
   logs (Principle VIII); DLQ depth from Azure Monitor. Alerts per design
@@ -994,11 +1042,12 @@ retained as quick-reference material and MUST be kept in sync.
 The design — the Confluence page "Probation Results Distribution Service" in
 the CRA space
 (https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service),
-rev 3.1 at ratification, rev 3.3 at amendment 1.1.0 (H8 only) and rev 3.6
-(2026-10-20; decisions H1–H34) at amendment 2.0.0 — is the source of truth for
-names and behaviour. Where a section of the page and rev 3.6 differ, the rev
-3.6 decision cited here applies and the difference is raised with the design
-owner. `doc/design/DIGEST.md` restates rev 3.6's rules, each with its design
+rev 3.1 at ratification, rev 3.3 at amendment 1.1.0 (H8 only), rev 3.6
+(2026-10-20; decisions H1–H34) at amendment 2.0.0, and its H35 (2026-10-21)
+at amendment 2.0.1 — is the source of truth for names and behaviour. Where a
+section of the page and rev 3.6 or H35 differ, the decision cited here
+applies and the difference is raised with the design owner.
+`doc/design/DIGEST.md` restates rev 3.6's rules and H35, each with its design
 row id and without rationale, for spec authors and implementers; where the
 digest and the design differ, the design wins. This constitution states the
 principles the design's decisions imply; it does not take decisions the
@@ -1031,4 +1080,4 @@ is adopted by amendment.
   reverted or registered retrospectively with named approval. DV ids are
   stable: renumber never, reuse never, append only.
 
-**Version**: 2.0.0 | **Ratified**: 2026-10-19 | **Last Amended**: 2026-10-21
+**Version**: 2.0.1 | **Ratified**: 2026-10-19 | **Last Amended**: 2026-10-21

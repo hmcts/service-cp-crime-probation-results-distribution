@@ -129,7 +129,8 @@
     `NOT_APPLICABLE(nothing-left-after-redaction)`, which 001's redaction cannot produce for it.
   - FR-002-054 states V1's partition names, UTC bounds and create-if-absent rule (App. B.2), and
     carries 003's open question 1: it is put to the design owner before V1 is written, and a late
-    answer is a V2 migration.
+    answer is a V2 migration. (Answered since, before V1 is written: option A, H35, 2026-10-21 —
+    V1 unchanged, the DEFAULT partition kept.)
   - The registry holds 005's proposed `probation_operations_failures_total` and its two label sets
     (FR-002-057, FR-002-072), so that the registry keeps one owner. FR-002-072 also says which
     vocabularies serve the replay action's refusals and which codes are slice 004's own.
@@ -140,9 +141,10 @@
 - **For the design owner.** Row A2-67's "no settlement" on a stale-runner rejection is read as "no
   completion by that run": the listener abandons, or dead-letters `exhausted` on the final
   permitted delivery (Clarifications; FR-002-007, FR-002-040). The wording is a point to confirm.
-  Two open items, not markers, go with it: the outcome of a parseable payload with no `hearing`
-  (Edge Cases; Assumptions), and 003's open question 1, which must be answered before V1 is written
-  (FR-002-054; Assumptions).
+  One open item, not a marker, goes with it: the outcome of a parseable payload with no `hearing`
+  (Edge Cases; Assumptions). 003's open question 1, which had to be answered before V1 is written,
+  is answered: option A (H35, 2026-10-21), V1 unchanged and the DEFAULT partition kept (FR-002-054;
+  Assumptions).
 - Of the design's "recovery", this slice takes crash recovery: reclaiming an expired claim and
   re-running in place. It also takes the completion-reason rule that writes `recovered`. Recovery
   of a `FAILED` request after a resend (A2-38) is slice 004's.

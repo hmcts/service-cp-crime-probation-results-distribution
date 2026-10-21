@@ -3,13 +3,13 @@
 **Feature Branch**: `003-body-retention`  
 **Created**: 2026-10-21  
 **Status**: Draft  
-**Input**: Design rev 3.6 (2026-10-20; decisions H1–H34) — H20, H28 and H34; rows A3-63 … A3-65,
-A3-98, A3-99, A3-105 and A3-115; design §4.1, §4.6, §4.7, §4.8, §8.1, §8.4 ask 5, §10.1, §10.2,
-§10.3, Appendix A and Appendix B.2 — as restated in `doc/design/DIGEST.md` §2 (the service runs one
-scheduled task), §8 (`outbound_body`, "Retention job", "Sizing floor", "Data protection"), §12
-(configuration keys), §13 (metrics and alerts) and §16 (open items). Slice plan: "daily partition
-job (advisory lock, create ahead, detach/drop > P6M, lock_timeout, metrics/alerts)", built on
-slice 002's V1.
+**Input**: Design rev 3.6 (2026-10-20; decisions H1–H34) and H35 (2026-10-21) — H20, H28, H34 and
+H35; rows A3-63 … A3-65, A3-98, A3-99, A3-105 and A3-115; design §4.1, §4.6, §4.7, §4.8, §8.1,
+§8.4 ask 5, §10.1, §10.2, §10.3, Appendix A and Appendix B.2 — as restated in
+`doc/design/DIGEST.md` §2 (the service runs one scheduled task), §8 (`outbound_body`, "Retention
+job", "Sizing floor", "Data protection"), §12 (configuration keys), §13 (metrics and alerts) and
+§16 (open items). Slice plan: "daily partition job (advisory lock, create ahead, detach/drop >
+P6M, lock_timeout, metrics/alerts)", built on slice 002's V1.
 
 ## Context
 
@@ -42,10 +42,11 @@ is added or changed (constitution Principle I).
 
 An ambiguity scan of the slice against design rev 3.6 and the digest found the points below. Each is
 answered from the design; where an answer is an inference rather than a statement of the design, it
-says so and names the rows it rests on. Two points cannot be answered from the design. One blocks
-a requirement and is marked there (FR-003-011, open question 1); the other has the design's own
-default, which stands, and is carried as assumption AS-15 (open question 2). Both are set out, with
-their options, in `checklists/requirements.md`.
+says so and names the rows it rests on. Two points could not be answered from the design. One
+blocked a requirement (FR-003-011, open question 1) until the design owner answered it the same day
+with option A, recorded in the design as H35 (the last point below); the other has the design's
+own default, which stands, and is carried as assumption AS-15 (open question 2). Both are set out,
+with their options, in `checklists/requirements.md`.
 
 - Q: Which clock decides "now", the current month and the cut-off? → A: The database clock, read in
   UTC. The scheduler's zone (UTC) decides only when a run starts. (§4.6 and DIGEST §8: "the database
@@ -84,12 +85,15 @@ their options, in `checklists/requirements.md`.
   Each statement is attempted, counted under its step and retried on its own. (Inferred from
   A3-64 (b), "each statement … is retried on the next run", and §10.1, which counts failures by
   step.) Applied in FR-003-017.
-- Q: Does the transaction-scoped lock put the whole run in one transaction? → A: Not necessarily.
-  The design fixes the lock's kind (`pg_try_advisory_xact_lock`, so the lock lasts as long as the
-  transaction that took it) and that it covers the run (A3-64); it does not say whether the run's
-  statements share that transaction. Both arrangements meet FR-003-002 and FR-003-017; they differ
-  in how long a statement's locks are held, which the lock timeout does not bound (it bounds only
-  the wait). The choice is the plan's (AS-13). Applied in FR-003-002, FR-003-017 and SC-003-013.
+- Q: Does the transaction-scoped lock put the whole run in one transaction? → A: No. The design
+  fixes the lock's kind (`pg_try_advisory_xact_lock`, so the lock lasts as long as the transaction
+  that took it) and that it covers the run (A3-64); since H35 the lock stays on a transaction of its
+  own for the whole run, and each removal runs and commits in a transaction of its own (AS-13 (b)).
+  For the run's other statements — the creations, the DEFAULT delete and the gauge's read — the
+  design does not say whether they share the lock's transaction. Both arrangements meet FR-003-002
+  and FR-003-017; they differ in how long a statement's locks are held, which the lock timeout does
+  not bound (it bounds only the wait). That choice is the plan's, within the constraint AS-13
+  states. Applied in FR-003-002, FR-003-011, FR-003-017 and SC-003-013.
 - Q: How does a run tell that a month's partition is "absent"? → A: By name, as V1 does. V1 creates
   each month with `CREATE TABLE IF NOT EXISTS` under the month's name (Appendix B.2), and A3-64's
   "if absent" is read as that rule: a month is present when a table with V1's name for it exists.
@@ -122,14 +126,24 @@ their options, in `checklists/requirements.md`.
 - Q: Are `processed_request` or `outbound_message` ever purged? → A: Never (DIGEST §8; row A3-65).
   Applied in FR-003-013.
 - Q: Is the design's plain-`DROP` fallback for PostgreSQL 13 needed? → A: Not for the version: the
-  servers run 15 (row A3-105). The concurrent detach the design prefers is refused on this table for
-  another reason: open question 1.
+  servers run 15 (row A3-105). But the concurrent detach the design preferred is refused on this
+  table for another reason, its DEFAULT partition (open question 1), so H35 makes the plain `DROP`
+  the removal on every version. Applied in FR-003-011.
 - Q: What is the "cause" on a failure's ERROR line? → A: The design requires a sanitised ERROR line
   for every failure (§10.2) and counts the job's failures by step only (§10.1); it names no causes.
   This spec closes the set, as a log field and never a metric label (AS-14). Applied in FR-003-017.
 - Q: Where does the job sit in the package tree, and do its two properties bind environment
   variables? → A: Neither is established by the design (§4.4; §8.1 against Appendix A; DIGEST §16),
   and neither is decided here: both are carried as assumptions AS-1 and AS-2, for `/speckit-plan`.
+- Q: How is an expired month removed, given that the design's `DETACH PARTITION … CONCURRENTLY`
+  then `DROP` cannot run on this table (open question 1)? → A: Option A, decided by the design owner
+  on 2026-10-21 as H35, which amends A3-64 (b): a plain `DROP` of the expired partition, each `DROP`
+  in its own short transaction that commits at once, under the 5 s lock timeout, so that its
+  `ACCESS EXCLUSIVE` lock on `outbound_body` is held only for that statement; the single-runner
+  advisory lock stays on its own transaction for the whole run (AS-13 (b) for removals); a `DROP`
+  that times out is retried on the next run. The DEFAULT partition, its alert and its recovery
+  stay, and V1 is unchanged. Applied in FR-003-002, FR-003-011, FR-003-012, FR-003-016, FR-003-017,
+  SC-003-013 and AS-13.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -225,8 +239,9 @@ and attempt row is unchanged, and the dropped counter rose by two.
 Every pod carries the job (one image, one to two replicas) and every pod's trigger fires at the same
 UTC time. Only the pod that takes the single-runner lock does any work; the others skip, quietly.
 Each partition statement waits at most 5 s for its locks, so a body write that maintenance holds up
-waits, at worst, until the run ends, never indefinitely; and a statement that cannot proceed is
-counted and tried again the next day.
+waits, at worst, until the run ends, never indefinitely; a removal commits on its own, so a write
+it holds up waits only for that removal (H35). A statement that cannot proceed is counted and tried
+again the next day.
 
 **Why this priority**: with one replica the job works without it. With two, it is what stops both
 pods racing to create the same month — a failure, and a page, every day — and what stops a
@@ -260,6 +275,10 @@ once the lock had gone.
    whatever the store's own health makes them — the job changes none of them.
 6. **Given** intake has been paused by an operator, **When** the scheduled time comes, **Then** the
    run takes place as usual.
+7. **Given** a run that removes an expired month and has more to do after it, **When** that removal
+   has completed, **Then** it is already committed and holds no lock while the run still holds the
+   single-runner lock, so a body written to the current month at that moment waits, at most, for
+   that removal, not for the rest of the run (H35).
 
 ---
 
@@ -410,6 +429,7 @@ matching its attempt's `body_digest`.
   run, one after the other, and the second finds nothing to do.
 - **A long transaction on `outbound_body`** (an investigation query, for example). A statement that
   needs a conflicting lock gives up after 5 s and is tried again the next day; delivery carries on.
+  A removal that does get its lock holds it only while it runs: it commits at once (H35).
 - **The store unreachable at the scheduled time.** A `lock` failure, counted, and nothing else that
   day.
 - **Intake paused, including the long pause after a rollback.** The job runs and the retention is
@@ -441,10 +461,11 @@ matching its attempt's `body_digest`.
 - **FR-003-002**: At most one run MUST be in progress at any time across all pods. A run MUST first
   take the transaction-scoped PostgreSQL advisory lock on a fixed key that nothing else in the
   service's database uses, and the transaction that took it MUST stay open until the run's last
-  statement has finished, so that the lock is held for the whole run. Whether the run's statements
-  share that transaction or each run in a transaction of its own is the plan's (AS-13). A pod that
-  does not get the lock MUST skip the run: no partition statement, no DEFAULT delete, no failure
-  counted and no ERROR or WARN line. *(H20; A3-64; §10.1)*
+  statement has finished, so that the lock is held for the whole run. Each removal runs in a
+  transaction of its own, never in the lock's (FR-003-011; H35); whether the run's other statements
+  share the lock's transaction or each run in a transaction of its own is the plan's (AS-13). A pod
+  that does not get the lock MUST skip the run: no partition statement, no DEFAULT delete, no
+  failure counted and no ERROR or WARN line. *(H20; H35; A3-64; §10.1)*
 - **FR-003-003**: An error while trying to take the lock — as opposed to not getting it — MUST be
   logged at ERROR with its cause (FR-003-017) and counted `step="lock"`; that run MUST then do
   nothing else, and the next scheduled run tries again. *(A3-64; §10.1; constitution Principle VI)*
@@ -481,16 +502,19 @@ matching its attempt's `body_digest`.
   M − N − 1 are removed and the months M − N to M are kept. *(H20; A3-64; A3-64 (a))*
 - **FR-003-010**: A partition's upper bound MUST be read from the database catalogue, never derived
   from its name. The DEFAULT partition MUST never be removed. *(A3-64 (a); A3-63)*
-- **FR-003-011**: Each expired partition MUST be removed by [NEEDS CLARIFICATION: the design's
-  `DETACH PARTITION … CONCURRENTLY` then `DROP` cannot run on this table — PostgreSQL refuses a
-  concurrent detach while a DEFAULT partition exists, V1 creates one, and a concurrent detach cannot
-  run inside the transaction that holds the single-runner lock — so which removal does the design
-  intend? See open question 1 in checklists/requirements.md], every removal statement running
-  under the lock timeout of FR-003-016. *(A3-64 (b); A3-105)*
+- **FR-003-011**: Each expired partition MUST be removed by a plain `DROP` of the partition, with no
+  `DETACH` before it, under the lock timeout of FR-003-016. Each `DROP` MUST run in a transaction of
+  its own that commits as soon as the `DROP` has run, so that the locks it takes on `outbound_body`
+  and its DEFAULT partition are held only for that statement, not for the rest of the run; it MUST
+  NOT run in the transaction that holds the single-runner lock, which stays open on its own for the
+  whole run (FR-003-002; AS-13 (b)). A `DROP` that gives up on the lock timeout is retried on the
+  next run, not within the run (FR-003-017). The concurrent detach the design first prescribed is
+  not used: PostgreSQL refuses it while a DEFAULT partition exists, and V1 creates one, which stays
+  (FR-003-010). *(H35; A3-64 (b) as amended by H35; A3-63; A3-105)*
 - **FR-003-012**: A removal that fails MUST leave the expired partition attached to `outbound_body`,
   where the next run finds it and tries again. A failure at any point of a removal MUST NOT leave an
-  expired month's bodies in a table outside `outbound_body`, where no later run would look for them.
-  *(A3-64 (b))*
+  expired month's bodies in a table outside `outbound_body`, where no later run would look for them;
+  the plain `DROP` of FR-003-011 is one atomic statement, so it never does. *(A3-64 (b); H35)*
 - **FR-003-013**: The job MUST NOT delete or change any row of `processed_request` or
   `outbound_message`; neither table is ever purged. After its month is removed, an attempt keeps its
   `body_digest`, `service_version`, status and metadata. *(H20; A3-63; A3-65; DIGEST §8)*
@@ -507,7 +531,7 @@ matching its attempt's `body_digest`.
 
 - **FR-003-016**: Every partition statement — each creation and each removal — MUST run under a lock
   timeout of 5 s, a fixed value; a statement that cannot get its locks within it MUST fail rather
-  than wait. *(A3-64 (b); DIGEST §12)*
+  than wait. *(A3-64 (b); H35; DIGEST §12)*
 - **FR-003-017**: A statement that fails, for a lock timeout or for any other reason, MUST be logged
   at ERROR with its step, its month (for a creation or a removal) and its cause, and counted under
   its step (`create` for a creation; `drop` for a removal or the DEFAULT delete). The cause MUST be
@@ -518,9 +542,9 @@ matching its attempt's `body_digest`.
   (FR-003-003) carries one too. The database's own error text MUST NOT be logged at INFO or above.
   A failed statement MUST NOT be retried within the run: the next scheduled run retries it. It MUST
   NOT undo the statements the run has already completed, and the run MUST still attempt its
-  remaining statements; if the run's statements share the lock's transaction (AS-13), each runs
-  under its own savepoint, so that a failure undoes only that statement. *(A3-64 (b); §10.1; §10.2;
-  constitution Principles VI and VII; AS-14)*
+  remaining statements; a statement that shares the lock's transaction (AS-13; never a removal,
+  FR-003-011) runs under its own savepoint, so that a failure undoes only that statement.
+  *(A3-64 (b); H35; §10.1; §10.2; constitution Principles VI and VII; AS-14)*
 - **FR-003-018**: A run MUST be idempotent. Run again — the same day, by another pod, or after a
   failed run — it MUST do only what is still due, and MUST NOT fail, or count anything, for work an
   earlier run has already done. *(A3-64)*
@@ -636,10 +660,12 @@ matching its attempt's `body_digest`.
   the size of that month's partition (the DEFAULT partition being empty in normal operation), so
   that after the first full month in production the H28 sizing floor (at least about 24 KB a body
   on average, 100 MB a day and 20 GB held) is replaced by the real figure (AS-11).
-- **SC-003-013**: No send fails, and no send's outcome goes unrecorded, because of maintenance: a
-  body written while a run holds or waits for the stored bodies is stored by the end of that run at
-  the latest, that is within at most 5 s of lock waits for each creation or removal in the run plus
-  the time its statements take.
+- **SC-003-013**: No send fails, and no send's outcome goes unrecorded, because of maintenance. A
+  body written while a removal holds or waits for the stored bodies is stored as soon as that
+  removal has completed or given up, within at most 5 s of lock wait plus the time the removal
+  takes, because each removal is committed on its own (H35); one written while a creation holds or
+  waits for them is stored by the end of that run at the latest, whichever arrangement the plan
+  chooses for creations (AS-13).
 
 ## Assumptions
 
@@ -685,16 +711,23 @@ matching its attempt's `body_digest`.
   name is kept unless the plan says otherwise.
 - **AS-13 — The lock's transaction and the statements' own.** The single-runner lock is
   transaction-scoped and held for the whole run (FR-003-002), while each statement succeeds or fails
-  on its own (FR-003-017). Two arrangements meet both, and the plan chooses between them in the
-  light of open question 1:
-  - (a) the run's statements share the lock's transaction, each under its own savepoint. Every lock
-    a creation or removal takes on `outbound_body` is then held until the run commits;
-  - (b) the lock's transaction stays open on a connection of its own while each statement runs and
-    commits in its own transaction on another. Each statement's locks are then released when it
+  on its own (FR-003-017). Two arrangements meet both:
+  - (a) a statement shares the lock's transaction, under its own savepoint. Every lock it takes on
+    `outbound_body` is then held until the run commits;
+  - (b) the lock's transaction stays open on a connection of its own while the statement runs and
+    commits in its own transaction on another. The statement's locks are then released when it
     commits.
 
-  The lock timeout bounds the wait for a lock, not how long it is held, so SC-003-013 is stated to
-  hold under both.
+  For removals the design decides (b): each `DROP` commits in its own short transaction while the
+  lock's transaction stays open on its own for the whole run (H35; FR-003-011). It does not say how
+  the run's other statements — the creations, the DEFAULT delete and the gauge's read — stand, so
+  the plan chooses (a) or (b) for them, within one constraint: while a removal runs, the lock's
+  transaction must hold no lock on `outbound_body` or on its DEFAULT partition. A `DROP` of a month
+  takes `ACCESS EXCLUSIVE` on both, so a creation, a DEFAULT delete or a DEFAULT count run earlier
+  in the lock's transaction makes every removal of that run give up after 5 s (checked against
+  PostgreSQL 15 on 2026-10-21); under (a), those statements would therefore run after the
+  removals. The lock timeout bounds the wait for a lock, not how long it is held, so SC-003-013 is
+  stated to hold whichever arrangement the plan chooses for creations.
 - **AS-14 — The failure causes are this spec's.** The design requires a sanitised ERROR line for
   every failure (§10.2; constitution Principle VI) and counts the job's failures by step only
   (§10.1); it names no causes. FR-003-017 closes the set so that "sanitised" can be tested. The
@@ -723,10 +756,9 @@ matching its attempt's `body_digest`.
   registry this slice adds to: the `probation_body_*` series and the `BodyMaintenanceStep` label set
   are registered in 002's shared core (FR-002-057, FR-002-072), and this slice only increments
   them. The names, bounds and create-if-absent rule of the monthly partitions are V1's (002's
-  FR-002-054). Open question 1 (FR-003-011) is put to the design owner before V1 is written: V1
-  keeps `outbound_body_default` (A3-63) unless the answer is option C, in which case V1 changes in
-  slice 002; an answer that arrives after V1 has been applied is a V2 migration, never an edit of
-  V1 (002's FR-002-054 and Assumptions).
+  FR-002-054). Open question 1 (FR-003-011) is answered, before V1 is written: option A (H35,
+  2026-10-21), a plain `DROP` of each expired month, so V1 is unchanged and keeps
+  `outbound_body_default` (A3-63; 002's FR-002-054 and Assumptions).
 - **Slice 006-production-readiness.** The §10.3 alert rule "Body partition maintenance", its routing
   and owner, and the dashboard; the alert links this slice's recovery procedure. How the rule combines
   the pods' readings depends on open question 2 (AS-15); until it is answered, the rule reads the
@@ -741,7 +773,7 @@ matching its attempt's `body_digest`.
 - **External.** Platform ask 5: the service's own database, owned by its role, on PostgreSQL ≥ 13 for
   V1's trigger (15 confirmed, row A3-105). The data owner and the DPIA, informed that bodies are held
   about six months and then removed (row A3-65; a note, not a gate). The design owner, for open
-  questions 1 and 2 (FR-003-011; AS-15).
+  question 2 (AS-15); open question 1 is answered (H35; FR-003-011).
 
 ## Out of Scope
 
@@ -770,16 +802,17 @@ matching its attempt's `body_digest`.
 | H23, A3-117 | Intake stays paused after a rollback until a full new cutover | FR-003-004 |
 | H28 | The sizing floor: at least ~24 KB a body on average, ~100 MB a day, ~20 GB held; the real figure from partition sizes after go-live | SC-003-012; AS-11 |
 | H34 | Body-retention failures page; known issues are counted | FR-003-023 |
+| H35 | An expired month removed by a plain `DROP`, each in its own short transaction under the 5 s lock timeout; the advisory lock on its own transaction for the whole run; a timed-out `DROP` retried on the next run; the DEFAULT partition, its alert and its recovery kept; V1 unchanged (answers open question 1; amends A3-64 (b)) | FR-003-002, FR-003-011, FR-003-012, FR-003-016, FR-003-017; SC-003-013; AS-13 |
 | A3-60 | Bodies never logged and never in a metric | FR-003-024; SC-003-009 |
 | A3-63 | Monthly partitions on UTC bounds, the DEFAULT partition, V1's three months; an in-place re-run replaces the body; "digest ⇒ body" is not a constraint | FR-003-006, FR-003-010, FR-003-013; Edge cases |
 | A3-64 | The job: schedule, single runner, creation ahead "if absent", removal, counts, the DEFAULT alert and the recovery step; every signal comes from a run | FR-003-001, FR-003-002, FR-003-003, FR-003-006, FR-003-007, FR-003-009, FR-003-014, FR-003-015, FR-003-018, FR-003-020, FR-003-021, FR-003-022, FR-003-025, FR-003-026, FR-003-028; AS-13, AS-15 |
 | A3-64 (a) | The cut-off in UTC; bounds read from the catalogue, never the name (the drop rule); the scheduler's zone UTC | FR-003-005, FR-003-009, FR-003-010; SC-003-010 |
-| A3-64 (b) | Lock timeout 5 s; concurrent detach then drop; a failed statement retried on the next run | FR-003-011, FR-003-012, FR-003-016, FR-003-017; SC-003-006, SC-003-013 |
+| A3-64 (b) | Lock timeout 5 s; a failed statement retried on the next run; removal by a plain `DROP` in its own short transaction, as amended by H35 (the concurrent detach then drop it first prescribed is refused while the DEFAULT partition exists) | FR-003-011, FR-003-012, FR-003-016, FR-003-017; SC-003-006, SC-003-013; AS-13 |
 | A3-64 (c) | DEFAULT rows older than the cut-off deleted; the alert fires while any remain | FR-003-014, FR-003-022 |
 | A3-64 (d) | Partitions created, and so owned, by the service's role | FR-003-008 |
 | A3-65 | After the purge, digest, version, status and metadata remain; investigations within the window | FR-003-013; Edge cases |
 | A3-98, A3-99 | The sizing floor's figures; no further measurement | SC-003-012; AS-11 |
-| A3-105 | PostgreSQL 15; the database owned by the service's role; the version fallback not needed | FR-003-008, FR-003-011; AS-3, AS-4 |
+| A3-105 | PostgreSQL 15; the database owned by the service's role; the PostgreSQL 13 fallback not needed for the version (H35 makes the plain `DROP` the removal on every version) | FR-003-008, FR-003-011; AS-3, AS-4 |
 | A3-115 | The alert set, "body partition maintenance" kept | FR-003-023 |
 | §4.1, §4.7 | One image, no batch job, one in-service scheduled task | FR-003-001 |
 | §4.6, Appendix B.2 | The database clock is the time authority; V1's partition names and bounds, and its creation of a month only if its name is absent (002's FR-002-054) | FR-003-005, FR-003-006, FR-003-007 |

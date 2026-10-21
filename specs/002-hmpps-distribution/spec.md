@@ -1088,10 +1088,10 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   V1 MUST create the current month's partition and the next two, by that rule. The service's
   database role creates the partitions, and so owns them. Maintaining them after that, and purging,
   is slice 003's, which creates later months by the same name, bounds and rule (003's FR-003-006,
-  FR-003-007). V1 keeps `outbound_body_default` (A3-63) unless 003's open question 1 (FR-003-011)
-  is answered with its option C, which removes it; that question goes to the design owner before
-  V1 is written (Assumptions; Dependencies). (H20; A3-63, A3-64, A3-105; digest §8; App. B.2;
-  FR-003-011)
+  FR-003-007). V1 keeps `outbound_body_default` (A3-63). 003's open question 1 (FR-003-011), whose
+  option C would have removed it, is answered: option A (H35, 2026-10-21), a plain `DROP` of each
+  expired month, so V1 is unchanged and the DEFAULT partition kept (Assumptions; Dependencies).
+  (H20; H35; A3-63, A3-64, A3-105; digest §8; App. B.2; FR-003-011)
 - **FR-002-055**: A schema test MUST assert on every build:
   - that the database's value sets equal the code's closed vocabularies: leg status, leg reason,
     leg, attempt origin, payload source, youth switch, completion reason and failure reason;
@@ -1444,10 +1444,9 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   for such a skip, so the outcome is raised with the design owner, as 001's Dependencies hand it
   over. It is an open item, not a marker: the outcome stands until the design owner says
   otherwise. Like any `rules-exception`, it reaches slice 006's leg-failed alert.
-- 003's open question 1 (FR-003-011: how an expired month is removed; its option C drops the
-  DEFAULT partition) is put to the design owner before V1 is written. V1 keeps
-  `outbound_body_default` (A3-63) unless the answer is C. An answer that arrives after V1 has been
-  applied is a V2 migration, never an edit of V1 (technical rules, Migrations).
+- 003's open question 1 (FR-003-011: how an expired month is removed; its option C would have
+  dropped the DEFAULT partition) is answered, before V1 is written: option A (H35, 2026-10-21), a
+  plain `DROP` of each expired month. V1 is unchanged and keeps `outbound_body_default` (A3-63).
 
 ## Dependencies
 
@@ -1461,9 +1460,9 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   here, and raised with the design owner (Edge Cases; Assumptions).
 - **003-body-retention** builds on V1's `outbound_body`. It keeps the months ahead, purges after
   `P6M`, and clears DEFAULT rows. Its open question 1 (FR-003-011: how an expired month is removed;
-  its option C drops the DEFAULT partition) is put to the design owner before V1 is written. V1
-  keeps `outbound_body_default` (A3-63) unless the answer is C; an answer that arrives after V1 has
-  been applied is a V2 migration, never an edit of V1 (FR-002-054; Assumptions).
+  its option C would have dropped the DEFAULT partition) is answered: option A (H35, 2026-10-21), a
+  plain `DROP` of each expired month, so V1 is unchanged and keeps `outbound_body_default` (A3-63)
+  (FR-002-054; Assumptions).
 - **004-recovery** builds on the guard, the runner, V1, the vocabularies and the registry. It
   replaces FR-002-008 with replay admission, and adds the replay and resend columns, their
   statements, and recovery after a resend (A2-38).
@@ -1574,7 +1573,7 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
 | P19 | FR-002-030, FR-002-074 |
 | P36 (the service-side half; the deployed alerting is slice 006's) | FR-002-063, FR-002-074, SC-002-010 |
 | 001 hand-off (`PF/index.js:9-11`): a parseable payload with no `hearing` | FR-002-030; Edge Cases; Assumptions; Dependencies (001) |
-| 003's open question 1 (FR-003-011): the DEFAULT partition, decided before V1 is written | FR-002-054; Assumptions; Dependencies (003) |
+| H35 (003's open question 1, FR-003-011, answered with option A before V1 is written): expired months removed by a plain `DROP`; V1 unchanged, the DEFAULT partition kept | FR-002-054; Assumptions; Dependencies (003) |
 | (not in the design; proposed by slice 005) — `probation_operations_failures_total` and its two label sets | FR-002-057, FR-002-072 |
 | §4.4 claim contract (f) | FR-002-040 |
 | §4.5 eligibility table, delivery column | FR-002-012 |

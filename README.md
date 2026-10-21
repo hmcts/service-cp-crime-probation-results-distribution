@@ -45,7 +45,7 @@ The design lives on Confluence and is the authority for what this service does a
 **[Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service)**
 (CRA space). It covers the as-is function app and gateway route, the to-be architecture, the
 producer increment in `cpp-context-results`, cutover and rollback, and the open questions. This
-repository follows its rev 3.6 (decisions H1–H34).
+repository follows its rev 3.6 (decisions H1–H34) and H35 (2026-10-21).
 
 This repository carries no design narrative of its own. What it does carry:
 

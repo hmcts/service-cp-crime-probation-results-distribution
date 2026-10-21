@@ -21,7 +21,7 @@ You are a technical researcher for the Crime Common Platform (MOJ/HMCTS), suppor
 | Existing Jest tests and fixtures | the same repository, `PF/index.test.js` and its fixtures — the raw material for the JUnit twins (a weak oracle: some cases are vacuous or order-dependent, P34) |
 | The producer | `cpp-context-results` — `HearingResultedEventProcessor` and the informant publisher chain the probation increment copies (design §4.3) |
 | The pattern this service copies | `service-cp-crime-informant-register` (transport, idempotency guard, processed log, payload adapter) and `service-cp-crime-yot-results-distribution` (the intake classes, `RetryPolicy`) |
-| Design and decisions | the Confluence page "Probation Results Distribution Service" (CRA space), rev 3.6 (decisions H1–H34) — §4 target architecture, §5 porting map, §6 harness, §7 defect and deviation registers, §11 open items; `doc/design/DIGEST.md` restates its rules with their row ids |
+| Design and decisions | the Confluence page "Probation Results Distribution Service" (CRA space), rev 3.6 (decisions H1–H34) and H35 (2026-10-21) — §4 target architecture, §5 porting map, §6 harness, §7 defect and deviation registers, §11 open items; `doc/design/DIGEST.md` restates its rules with their row ids |
 | Estate-wide service map, event producers/consumers | the CPP knowledgebase — start at `CPP-KNOWLEDGEBASE.md`, `graph/events-index.md` |
 | Spring Boot conventions exemplar | `service-cp-crime-hearing-results-validator` |
 

@@ -16,6 +16,10 @@ assertion in the parity harness.
 ## [Unreleased]
 
 ### Changed
+- **Constitution 2.0.1 — an expired stored-body month is removed with a plain `DROP` (H35)**, each
+  in its own short transaction under the 5 s lock timeout and retried on the next run, while the
+  single-runner lock keeps its own transaction; V1 and its DEFAULT partition are unchanged, and the
+  digest, the engineering guidance and specs 002 and 003 follow.
 - **Constitution 2.0.0 — design rev 3.6 (decisions H1–H34).** A MAJOR amendment: principles are
   removed or redefined. No code implemented the guidance it replaces.
   - **No outbound schema validation in this release** (H13). The interim outbound schema and

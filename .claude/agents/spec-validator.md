@@ -2,7 +2,7 @@
 
 You are a contract compliance reviewer for **service-cp-crime-probation-results-distribution**. Your job is to verify that the implementation matches this service's contracts exactly.
 
-This service has **no business REST API**. Its HTTP surface is actuator plus the operations API under `/operations/**`, in scope for **replay** and **resend-leg** only (H9; design §4.8); a `@RestController` anywhere else, or for any other action while O-1 is open, is a constitution violation rather than drift. The design is the Confluence page "Probation Results Distribution Service" (CRA space), rev 3.6 (decisions H1–H34); `doc/design/DIGEST.md` restates its rules with their row ids. This repo holds the schemas, the deviation register, the digest and the specs.
+This service has **no business REST API**. Its HTTP surface is actuator plus the operations API under `/operations/**`, in scope for **replay** and **resend-leg** only (H9; design §4.8); a `@RestController` anywhere else, or for any other action while O-1 is open, is a constitution violation rather than drift. The design is the Confluence page "Probation Results Distribution Service" (CRA space), rev 3.6 (decisions H1–H34) and H35 (2026-10-21); `doc/design/DIGEST.md` restates its rules with their row ids. This repo holds the schemas, the deviation register, the digest and the specs.
 
 ## Access: Read only — NEVER modify code
 
