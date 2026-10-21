@@ -152,10 +152,15 @@ Postgres, Redis, WireMock).
 ## Setup
 
 <!-- SPECKIT START -->
-All six features are specified (design rev 3.6 + H35, constitution v2.0.1); none is planned yet.
-Implement in dependency order: `001-parity-kernel` → `002-hmpps-distribution` (owns the shared core:
-Flyway V1, enums, state machine, ports, metric registry) → `003-body-retention` and `004-recovery`
-→ `005-operations-api` → `006-production-readiness`.
+All six features are specified (design rev 3.6 + H35, constitution v2.0.1). `001-parity-kernel` is
+planned: see `specs/001-parity-kernel/plan.md` (branch `001-parity-kernel`) for the active context —
+research.md, data-model.md, quickstart.md and tasks.md (49 tasks) alongside it; `/speckit-analyze`
+found no CRITICAL issues (2 HIGH findings pending remediation — see tasks.md Phase 6 gaps). Both
+`[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are resolved (spec.md Clarifications). The
+rest are specified but not planned yet. Implement in dependency order:
+`001-parity-kernel` → `002-hmpps-distribution` (owns the shared core: Flyway V1, enums, state
+machine, ports, metric registry) → `003-body-retention` and `004-recovery` → `005-operations-api` →
+`006-production-readiness`.
 
 To start a feature: branch from `main` with the spec's folder name (e.g. `git switch -c
 002-hmpps-distribution`) — the Spec Kit scripts resolve `specs/<NNN>-*` from the branch prefix —
