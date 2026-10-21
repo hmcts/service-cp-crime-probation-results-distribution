@@ -69,21 +69,23 @@ implementation starts before this phase is green.
   DV-18…DV-22, active rows included), `DV-27` named as the next free id, and entries for the carried
   defects (P17, P18, P19) and pending-external defects (P07, P21, P35, P36) per FR-001-035. Update
   the pointer in `README.md`'s artefact table (currently "not present yet") (FR-001-033, FR-001-034)
-- [ ] T004 [P] Write `CanonicalJsonMapperTest` in
+- [X] T004 [P] Write `CanonicalJsonMapperTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/CanonicalJsonMapperTest.java`:
   asserts `1`, `1.0` and `1.00` parse to numerically-equal `BigDecimal` nodes (red: the mapper class
   does not exist yet — a compile-safe stub throwing `UnsupportedOperationException` lands with this
   task) (research.md R3)
+  - RED: `CanonicalJsonMapper > parses 1, 1.0 and 1.00 ... FAILED` — `java.lang.UnsupportedOperationException: CanonicalJsonMapper.create() lands in T006`
 - [ ] T005 [P] Write `DomainTypesTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/domain/DomainTypesTest.java`:
   asserts `EffectiveSwitchState` has exactly `ACTIVE`/`INACTIVE`, and each `RedactionResult` variant
   (`Body`, `EmptiedByR1`, `EmptiedByR11`, `RulesFailure`) constructs and exposes its field(s) (red:
   compile-safe stub enum/sealed interface with no working accessors lands with this task)
   (data-model.md)
-- [ ] T006 [P] Implement `CanonicalJsonMapper` (Jackson 3 `ObjectMapper`, `USE_BIG_DECIMAL_FOR_FLOATS`
+- [X] T006 [P] Implement `CanonicalJsonMapper` (Jackson 3 `ObjectMapper`, `USE_BIG_DECIMAL_FOR_FLOATS`
   equivalent enabled) in
   `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/CanonicalJsonMapper.java`
   — makes T004 green
+  - GREEN: `CanonicalJsonMapper > parses 1, 1.0 and 1.00 ... PASSED`
 - [ ] T007 [P] Implement `EffectiveSwitchState`
   (`src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/domain/EffectiveSwitchState.java`),
   `RedactionResult`
