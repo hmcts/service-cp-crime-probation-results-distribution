@@ -517,9 +517,15 @@ mechanism is proven load-bearing, not decorative.
     includes`. Corrected to `--tests "*LegacyTwin*"` and annotated the twin/corpus filters with their
     class names. The other three filters (`pipeline.*`, `*ComparatorContractTest*`, `*CorpusParityIT*`)
     and the oracle harness's `npm test` run as documented
-- [ ] T050 [P] Confirm `./gradlew build` passes with this slice's new packages included in PMD,
+- [X] T050 [P] Confirm `./gradlew build` passes with this slice's new packages included in PMD,
   Checkstyle (`google_checks`, `maxWarnings=0`) and the JaCoCo gate (LINE ≥ 0.88, BRANCH ≥ 0.85) —
   no new exclusion beyond the existing `Application`/`config/**`
+  - `./gradlew jacocoTestReport check` BUILD SUCCESSFUL (the repo wires
+    `jacocoTestCoverageVerification` to read `build/jacoco/*.exec` directly, so the report is
+    generated explicitly for the gate to read). Coverage over the slice's production code: LINE
+    0.9897 (193 covered / 2 missed), BRANCH 1.0000 (150 / 0) — both above the gate. No new JaCoCo
+    exclusion added. PMD (`pmdMain`/`pmdTest`) and Checkstyle (`checkstyleMain`/`checkstyleTest`,
+    `google_checks`, `maxWarnings = 0`) pass over the new US5 classes
 - [ ] T051 Cross-check each of SC-001-001 … SC-001-013 against an actual passing test or report;
   for SC-001-007 specifically, disable one rule at a time in `HmppsRedaction` (a local, uncommitted
   edit) and confirm at least one twin or corpus case fails each time, then revert; note any gap in
