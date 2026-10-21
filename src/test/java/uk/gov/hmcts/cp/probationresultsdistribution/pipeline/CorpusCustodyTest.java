@@ -145,6 +145,9 @@ class CorpusCustodyTest {
                     .as("the malformed case must be named and reported as invalid JSON")
                     .anyMatch(v -> v.contains(CASE_DIR) && v.contains("is not valid JSON"));
             assertThat(violations)
+                    .as("files under an unverifiable case must be flagged, as for a missing meta.json")
+                    .anyMatch(v -> v.contains(CACHE_FILE) && v.contains(BELONGS_TO_NO_CASE));
+            assertThat(violations)
                     .as("no meta.json byte, parse position or Jackson text may appear")
                     .noneMatch(v -> v.contains(META_SENTINEL))
                     .noneMatch(v -> v.toLowerCase(Locale.ROOT).contains("unexpected")
