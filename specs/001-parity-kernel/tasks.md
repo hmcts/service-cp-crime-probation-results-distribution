@@ -233,11 +233,15 @@ else.
   `data-model.md` (`environment`, `captureDateRange`, `hearingCount`, `casesPerSwitchState`,
   `syntheticCount`, `excludedCases`, `comparatorVectorCount: 57`), empty case list initially
   (FR-001-029)
-- [ ] T027 [US3] Implement `CorpusCustodyChecker` (digest verification against `meta.json`,
+- [X] T027 [US3] Implement `CorpusCustodyChecker` (digest verification against `meta.json`,
   provenance-field completeness per FR-001-029, orphan-file detection under
   `src/test/resources/corpus/`) in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/CorpusCustodyChecker.java`
   — makes T024 and T025 green
+  - GREEN: all five `CorpusCustodyChecker` assertions PASSED (well-formed clean; digest mismatch,
+    missing provenance field and orphan file each named; no corpus value in any message). A
+    malformed `meta.json` is reported value-free, never as a Jackson parse-error snippet, so a bad
+    corpus file cannot leak content into a public CI log (FR-001-031)
 
 **Checkpoint**: User Story 3 is fully functional and independently testable with zero SIT cases
 committed.
