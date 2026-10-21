@@ -344,7 +344,7 @@ must exist before any case is committed).
 
 ### Tests for User Story 4 (write and run first) ⚠️
 
-- [ ] T029 [US4] Write `HmppsRedactionCorpusParityIT` in
+- [X] T029 [US4] Write `HmppsRedactionCorpusParityIT` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionCorpusParityIT.java`:
   runs `redact(...)` over every committed corpus case, in each switch state and form that has an
   expectation, compares via `ParityAssertions`; a case-state with no expectation
@@ -353,6 +353,12 @@ must exist before any case is committed).
   matches, cases derived by DV id, no-expectation case-states with reasons, case-13 derivations with
   no source expectation, excluded cases with reasons, and the unexplained-difference count (asserted
   zero) (FR-001-026, FR-001-039)
+  - RED: `every required blind-spot, R0 and P21 case is present ... FAILED` (empty corpus, 0 case
+    ids), `every compared case-state matches its expectation ... FAILED` (no case-state compared) and
+    `case 13 is derived under DV-25 for the corpus ... FAILED` (no derivations). Compile-safe seams
+    (`ParityCase.loadAll` returning empty, `Case13Derivation.derive` returning empty, the real
+    `CorpusParityHarness`/`ParityReport`) land with this task; the loader lands in T031, the corpus in
+    T032–T042 and the derivation in T043
 - [ ] T030 [P] [US4] Write `WholeCorpusChecksTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/WholeCorpusChecksTest.java`:
   every body produced over the corpus carries a non-null `hearing.id`; every carried guard (P19's
