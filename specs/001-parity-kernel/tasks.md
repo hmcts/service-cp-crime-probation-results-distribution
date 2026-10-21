@@ -177,9 +177,13 @@ inspect its message. Needs nothing from User Story 1.
 
 ### Tests for User Story 2 (write and run first) ⚠️
 
-- [ ] T020 [P] [US2] Run the copied `ComparatorContractTest` (T002) as-is against all 57 vectors,
+- [X] T020 [P] [US2] Run the copied `ComparatorContractTest` (T002) as-is against all 57 vectors,
   both directions; confirm 100% pass with no `UNSPECIFIED` verdict left unhandled (FR-001-014,
   SC-001-002)
+  - GREEN: `ComparatorContractTest$DecidedVectors` 114 tests, 0 failures, 0 skipped (57 vectors ×
+    both directions); `$VectorPack` 2 PASSED; `$UndecidedVectors` 0 invocations (no `UNSPECIFIED`
+    verdict left; the pack holds 42 `DIFFERENT` + 15 `EQUAL` = 57 decided). Copied test, already
+    green — a run-and-confirm task, no RED
 - [ ] T021 [US2] Write `ParityAssertionsTest` in
   `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/ParityAssertionsTest.java`:
   forces a mismatch between two labelled bodies and asserts the failure message names the case, the
@@ -188,8 +192,11 @@ inspect its message. Needs nothing from User Story 1.
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] If `ComparatorContractTest`'s binding point needs adjustment to call the copied
+- [X] T022 [US2] If `ComparatorContractTest`'s binding point needs adjustment to call the copied
   `JsonParity` in this package, make it — confirms T020
+  - No adjustment needed: the binding point (`comparatorSaysEqual`) already calls
+    `JsonParity.assertMatches` in the same `pipeline.support` package (no import), and T020's run is
+    green against it
 - [ ] T023 [US2] Implement `ParityAssertions.assertSameBody(caseId, form, switchState, expected,
   actual)` in
   `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/ParityAssertions.java`
