@@ -487,6 +487,16 @@ and 598/681 branches. The final spec-validator gate was COMPLIANT and the code-o
 no remaining implementation defect; the strict QA/code-review TDD verdict remains FAIL/NEEDS
 CHANGES because of the original commit's history and the retry seam's exception-based RED run.
 
+**Decision (2026-10-22, repo owner)**: accepted as a documented historical exception. The
+T065–T104 commit history does not and cannot retroactively demonstrate task-by-task TDD order;
+`59b4d26` is not reverted or reconstructed. This is accepted on the strength of the independent
+evidence above — a COMPLIANT spec-validator pass, a code-review pass finding no remaining defect,
+the four genuine defects this audit found and fixed with real observed red/green runs, and a green
+`jacocoTestReport check`/`build` — not on trust in the original commit. The constitution's
+Principle II (TDD, non-negotiable) governs new work from this point forward without exception;
+this entry records why this one historical gap is closed without reconstruction rather than
+asserting the principle was followed at the time.
+
 ---
 
 ## Dependencies & Execution Order
