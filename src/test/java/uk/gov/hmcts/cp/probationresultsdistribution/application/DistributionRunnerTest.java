@@ -397,6 +397,8 @@ class DistributionRunnerTest {
         assertThat(runner.run(command, AttemptOrigin.QUEUE, CLAIM, false).recorded()).isFalse();
         assertThat(meter.find("probation_leg_outcomes_total").counter()).isNull();
         assertThat(meter.find("probation_gateway_recovered_total").counter()).isNull();
+        assertThat(meter.get("probation_youth_switch_state").tag("state", "ACTIVE")
+                .gauge().value()).isZero();
     }
 
     @Test

@@ -10,6 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -25,6 +26,8 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.HmppsSender.SentBody;
+import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
 
@@ -268,6 +271,8 @@ class HmppsPublisherTest {
     @Test
     @DisplayName("retries a refused connection when the gateway becomes reachable")
     void retries_connection_refusal_until_gateway_is_reachable() throws Exception {
+        final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        final MetricRegistry metrics = new MetricRegistry(meters);
         final int port;
         try (ServerSocket reservation = new ServerSocket(0)) {
             port = reservation.getLocalPort();
@@ -283,7 +288,7 @@ class HmppsPublisherTest {
             final HmppsPublisher retrying = new HmppsPublisher(
                     "http://127.0.0.1:" + port + PATH, KEY,
                     Duration.ofSeconds(1), Duration.ofSeconds(2), 3,
-                    Duration.ofMillis(500), Duration.ofSeconds(10), Duration.ofSeconds(10));
+                    Duration.ofSeconds(2), Duration.ofSeconds(2), Duration.ofSeconds(10), metrics);
             final long started = System.nanoTime();
 
             try {
@@ -291,8 +296,13 @@ class HmppsPublisherTest {
                 final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
 
                 assertThat(result.outcome()).isInstanceOf(PublishOutcome.Sent.class);
-                assertThat(elapsedMillis).isBetween(450L, 5_000L);
+                assertThat(elapsedMillis).isBetween(1_900L, 5_000L);
                 assertThat(recoveringGateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(1);
+                assertThat(meters.get("probation_gateway_request_duration")
+                        .tag("leg", Leg.HMPPS.wireValue()).timer().count()).isEqualTo(2L);
+                assertThat(meters.get("probation_gateway_request_duration")
+                        .tag("leg", Leg.HMPPS.wireValue()).timer().totalTime(TimeUnit.MILLISECONDS))
+                        .isLessThan(1_500.0d);
             } finally {
                 recoveringGateway.stop();
             }
