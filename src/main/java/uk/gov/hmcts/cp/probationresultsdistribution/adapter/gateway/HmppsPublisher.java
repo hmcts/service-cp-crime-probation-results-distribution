@@ -34,6 +34,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
  * {@code Sent}; a 4xx other than 408 and 429 is {@code FailedNonTransient}; a 5xx, a 408, a 429, a
  * 3xx, any other status and a transport failure are {@code TransientExhausted}.
  */
+// The retry loop's distinct exits (a 2xx, a non-retryable status, budget exhaustion, an interrupted
+// wait) read more clearly as early returns than funnelled through a single result variable.
 @SuppressWarnings("PMD.OnlyOneReturn")
 public final class HmppsPublisher implements HmppsSender {
 
