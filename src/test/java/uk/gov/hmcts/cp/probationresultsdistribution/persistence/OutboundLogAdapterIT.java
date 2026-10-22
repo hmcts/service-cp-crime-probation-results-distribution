@@ -86,6 +86,37 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
     }
 
     @Test
+    @DisplayName("writes a PARKED(gateway-transient) outcome storing the same body and digest")
+    void writes_a_parked_gateway_transient_outcome_and_body() {
+        final UUID requestId = UUID.randomUUID();
+        final UUID hearingId = UUID.randomUUID();
+        final RunClaim claim = RunClaim.fresh();
+        seedPendingAttempt(requestId, hearingId, claim);
+        final DistributionCommand command = new DistributionCommand(SOURCE, requestId, hearingId,
+                LocalDate.parse("2026-08-19"), Instant.parse("2026-08-19T16:42:07.512Z"),
+                "Hearing_Resulted", Optional.empty());
+        final LegOutcome outcome = new LegOutcome(command, AttemptOrigin.QUEUE, LegStatus.PARKED,
+                Optional.of(uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason
+                        .GATEWAY_TRANSIENT),
+                Optional.of(YouthSwitchRecordedValue.ACTIVE), Optional.of(PayloadSource.CACHE_DAY),
+                Optional.of(Instant.parse("2026-08-19T16:42:07.512Z")), Optional.of(sha256(BODY)),
+                OptionalInt.of(503), Optional.of(BODY));
+
+        assertThat(adapter.record(outcome, claim)).isTrue();
+        final java.util.Map<String, Object> row = jdbc().sql(
+                        "SELECT oml.status, oml.reason, oml.http_status, oml.body_digest, ob.body "
+                        + "FROM outbound_message_latest oml "
+                        + "LEFT JOIN outbound_body ob ON ob.outbound_message_id = oml.id "
+                        + "WHERE oml.source = :s AND oml.request_id = :r")
+                .param("s", SOURCE).param("r", requestId).query().singleRow();
+        assertThat(row.get("status")).isEqualTo("PARKED");
+        assertThat(row.get("reason")).isEqualTo("gateway-transient");
+        assertThat(row.get("http_status")).isEqualTo(503);
+        assertThat(row.get("body")).isEqualTo(BODY);
+        assertThat(sha256(BODY)).isEqualTo(row.get("body_digest"));
+    }
+
+    @Test
     @DisplayName("returns false and writes nothing when the claim no longer matches (stale runner)")
     void returns_false_for_a_stale_claim() {
         final UUID requestId = UUID.randomUUID();
