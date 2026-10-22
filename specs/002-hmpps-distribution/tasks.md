@@ -464,6 +464,29 @@ description: "Task list for HMPPS distribution (slice 002)"
 - [x] T103 Run `./gradlew jacocoTestReport check` and confirm LINE ≥ 0.88 / BRANCH ≥ 0.85 (excluding `Application` and `config/**`), zero PMD/Checkstyle warnings — passed; JaCoCo reports 97% instruction / 87% branch overall, and the configured excluded-class threshold checks passed (SC-002-012, constitution Principle VIII)
 - [x] T104 Run `./gradlew build` end to end and confirm every schema-vocabulary, parity (slice 001), and this slice's test suites are green together — passed; final gate before PR to `main`
 
+### Remediation audit (2026-10-22)
+
+The T065–T104 checkboxes describe implemented behaviour, **not a passed process gate**.
+Commit `59b4d26` combined their tests and production changes without recorded assertion-failing
+RED runs or the required task-sized commits. Later passing tests cannot establish that those
+original tasks were implemented test first. The QA and code-review TDD gates therefore remain open.
+
+Subsequent, separately audited fixes have this observed evidence:
+
+| Test commit | Observed RED | Fix commit and GREEN |
+| --- | --- | --- |
+| `a2f0377` | `DistributionRunnerTest`: 6 tests, 1 assertion failure; an unrecorded outcome still incremented its counter | `6ed1036`: focused runner tests and main Checkstyle/PMD passed |
+| `802ba27` | `EndToEndSentIT` assertion failed because the gateway duration timer was absent | `09038cd`: focused IT and main/test Checkstyle/PMD passed |
+| `6225542` | `RetryPolicyTest`: 3 failures raised `UnsupportedOperationException` at the compile-safe seam; this **does not satisfy** Principle II's assertion-failure rule | `0aa4371`: `RetryPolicyTest` and `HmppsPublisherTest` passed with Checkstyle/PMD |
+| `732dd0a` | Separate focused runs failed at assertions: stale switch gauge expected 0 but was 1; POST timer expected under 1,500 ms but measured 2,186.7 ms including retry sleep | `3a20e97`: focused runner/publisher/label/readiness tests and main/test Checkstyle/PMD passed |
+
+`e45c793` added database-backed age and HTTP readiness regression tests; both passed on the
+existing implementation. At `3a20e97`, `./gradlew jacocoTestReport check --console=plain --quiet`
+and `./gradlew build --console=plain --quiet` both exited 0. JaCoCo covered 1,711/1,780 lines
+and 598/681 branches. The final spec-validator gate was COMPLIANT and the code-only review found
+no remaining implementation defect; the strict QA/code-review TDD verdict remains FAIL/NEEDS
+CHANGES because of the original commit's history and the retry seam's exception-based RED run.
+
 ---
 
 ## Dependencies & Execution Order
