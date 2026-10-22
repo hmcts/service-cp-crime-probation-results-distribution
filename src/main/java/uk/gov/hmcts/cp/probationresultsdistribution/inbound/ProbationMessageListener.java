@@ -200,16 +200,16 @@ public final class ProbationMessageListener {
     }
 
     /**
-     * Whether the queue will deliver this message again after this delivery. The broker counts prior
-     * unsuccessful deliveries, so the first delivery carries {@code 0} and the last one a message is
-     * entitled to carries {@code maxDeliveryCount - 1}; the comparison is {@code >=} so a message that
+     * Whether this is the final delivery the broker will permit (FR-002-048). Azure counts deliveries
+     * from one, so the first delivery carries {@code 1} and the final permitted delivery is the one
+     * whose count reaches {@code maxDeliveryCount}; the comparison is {@code >=} so a message that
      * somehow arrives past the budget is still recognised as final.
      *
      * @param deliveryCount the broker delivery count
      * @return whether this is the final permitted delivery
      */
     private boolean isFinalPermittedDelivery(final long deliveryCount) {
-        return deliveryCount >= (long) maxDeliveryCount - 1;
+        return deliveryCount >= maxDeliveryCount;
     }
 
     @SuppressWarnings("PMD.OnlyOneReturn")
