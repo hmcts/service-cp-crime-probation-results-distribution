@@ -118,7 +118,18 @@ description: "Task list for HMPPS distribution (slice 002)"
 > resolvable on this classpath, so the contract is pinned against the parser directly; the vendored
 > `distribution-command.schema.json` remains the documented authority.
 - [ ] T036 [P] [US1] Implement `adapter/payload/CachedHearingPayloadAdapter.java` (dated-key read only, for this story's happy path; undated/query fallback lands in US3) implementing `HearingPayloadSource`, with `payload_source=cache-day` recorded — partial implementation toward FR-002-015
-- [ ] T037 [P] [US1] Implement `adapter/usersgroups/FeaturePermissionClient.java` (happy-path `ACTIVE`/`INACTIVE` decision only; retry/timeout/unreadable branches land in US4) implementing `YouthFilterSource` per contracts/consumed-reads.md
+- [x] T037 [P] [US1] Implement `adapter/usersgroups/FeaturePermissionClient.java` (happy-path `ACTIVE`/`INACTIVE` decision only; retry/timeout/unreadable branches land in US4) implementing `YouthFilterSource` per contracts/consumed-reads.md
+
+> T037 driven test-first by `adapter/usersgroups/FeaturePermissionClientTest` (WireMock,
+> `dynamicPort()`), scoped to the US1 happy path; US4's T065 extends this file with the retry/timeout/
+> unreadable-cause/ambiguity matrix. RED: with the constructor and `read` stubbed to throw
+> `UnsupportedOperationException`, `6 tests completed, 6 failed` (18 `UnsupportedOperationException`
+> hits across setUp+body). GREEN: with the 2xx JavaScript-truthy decision over `permissions[0].active`
+> (first-permission-decides, a non-object non-null first entry INACTIVE, missing/empty/null first
+> entry UNREADABLE(EMPTY_PERMISSIONS), unparseable UNREADABLE(UNPARSEABLE)) and the `Accept` +
+> `CJSCPPUID` headers, all 6 pass (checkstyle/pmd main+test clean). The single read maps any non-2xx
+> or transport failure to UNREADABLE(HTTP_FAILURE); the legacy 3x1s retry and the TIMEOUT cause are
+> US4's.
 - [x] T038 [US1] Implement `adapter/gateway/HmppsPublisher.java` implementing `HmppsSender`: one serialization to UTF-8 bytes, POST with the two required headers, no redirect following, maps a 2xx to `Sent(status)` — makes T029 pass (FR-002-032, FR-002-033, FR-002-037, FR-002-039)
 
 > T029/T038 driven test-first by `adapter/gateway/HmppsPublisherTest` (WireMock, `dynamicPort()`).
