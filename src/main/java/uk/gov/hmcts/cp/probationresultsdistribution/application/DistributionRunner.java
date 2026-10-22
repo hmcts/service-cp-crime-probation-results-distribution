@@ -17,6 +17,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchDecision;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 
@@ -68,26 +69,30 @@ public final class DistributionRunner {
      *
      * @param command   the admitted command
      * @param runOrigin the run origin captured at admission
+     * @param claim     the request claim the run's writes are fenced by
      * @return the run result for the listener to settle on
      */
-    public RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin) {
+    public RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,
+                         final RunClaim claim) {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(runOrigin, "runOrigin");
+        Objects.requireNonNull(claim, "claim");
         final Optional<FetchedPayload> fetched = payloadSource.fetch(command);
         final RunResult result;
         if (fetched.isEmpty()) {
-            result = park(command, runOrigin);
+            result = park(command, runOrigin, claim);
         } else {
-            result = runLeg(command, runOrigin, fetched.get());
+            result = runLeg(command, runOrigin, claim, fetched.get());
         }
         return result;
     }
 
-    private RunResult park(final DistributionCommand command, final AttemptOrigin runOrigin) {
+    private RunResult park(final DistributionCommand command, final AttemptOrigin runOrigin,
+                           final RunClaim claim) {
         final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.PARKED,
                 Optional.of(LegReason.PAYLOAD_UNAVAILABLE), Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty(), OptionalInt.empty(), Optional.empty());
-        final boolean recorded = outboundLog.record(outcome);
+        final boolean recorded = outboundLog.record(outcome, claim);
         LOG.error("HMPPS leg PARKED(payload-unavailable) requestId={} origin={}",
                 command.requestId(), runOrigin);
         return new RunResult(runOrigin, LegStatus.PARKED,
@@ -95,7 +100,7 @@ public final class DistributionRunner {
     }
 
     private RunResult runLeg(final DistributionCommand command, final AttemptOrigin runOrigin,
-                             final FetchedPayload fetched) {
+                             final RunClaim claim, final FetchedPayload fetched) {
         final YouthSwitchDecision decision = youthFilterSource.read(command);
         final YouthSwitchRecordedValue recordedSwitch = applyDefault(decision);
         // Slice 001's HmppsRedaction is wired in before the send by US1 (T040); the orchestration
@@ -107,7 +112,7 @@ public final class DistributionRunner {
                 mapped.reason(), Optional.of(recordedSwitch), Optional.of(fetched.source()),
                 fetched.sharedTime(), Optional.of(digest), mapped.httpStatus(),
                 Optional.of(sent.body()));
-        final boolean recorded = outboundLog.record(outcome);
+        final boolean recorded = outboundLog.record(outcome, claim);
         LOG.info("HMPPS leg {} requestId={} origin={} youthSwitch={} bodyDigest={}",
                 mapped.status(), command.requestId(), runOrigin, recordedSwitch, digest);
         return new RunResult(runOrigin, mapped.status(), mapped.reason(), recorded);
