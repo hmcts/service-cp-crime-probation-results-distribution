@@ -44,6 +44,8 @@ public final class DistributionRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(DistributionRunner.class);
     private static final int HTTP_OK = 200;
+    private static final String HEARING = "hearing";
+    private static final String PROSECUTION_CASES = "prosecutionCases";
 
     private final HearingPayloadSource payloadSource;
     private final YouthFilterSource youthFilterSource;
@@ -147,8 +149,7 @@ public final class DistributionRunner {
         final SentBody sent = hmppsSender.send(redactedBody);
         final String digest = sha256Hex(sent.body());
         final MappedOutcome mapped = mapOutcome(sent.outcome());
-        // T041 derives application-only vs case from the redacted body; every body is case until then.
-        final BodyShape shape = BodyShape.CASE;
+        final BodyShape shape = shapeOf(redactedBody);
         final LegOutcome outcome = new LegOutcome(command, runOrigin, mapped.status(),
                 mapped.reason(), Optional.of(recordedSwitch), Optional.of(fetched.source()),
                 fetched.sharedTime(), Optional.of(digest), mapped.httpStatus(),
@@ -201,6 +202,28 @@ public final class DistributionRunner {
                 outcome.youthSwitch().orElse(null),
                 outcome.reason().map(LegReason::wireValue).orElse(null));
         return new RunResult(runOrigin, outcome.status(), outcome.reason(), recorded);
+    }
+
+    /**
+     * The body shape label (FR-002-059, research R7): {@code application-only} when the redacted body
+     * carries court applications and no prosecution case; {@code case} otherwise. Redaction's R11
+     * guarantees a {@code Body} carries at least one of the two, so an absent or empty
+     * {@code prosecutionCases} means a court-application-only body.
+     *
+     * @param redactedBody the redacted hearing tree being sent
+     * @return the body shape
+     */
+    private static BodyShape shapeOf(final JsonNode redactedBody) {
+        return hasNonEmptyArray(redactedBody.get(HEARING), PROSECUTION_CASES)
+                ? BodyShape.CASE : BodyShape.APPLICATION_ONLY;
+    }
+
+    private static boolean hasNonEmptyArray(final JsonNode hearing, final String member) {
+        if (hearing == null) {
+            return false;
+        }
+        final JsonNode node = hearing.get(member);
+        return node != null && node.isArray() && !node.isEmpty();
     }
 
     private static HttpStatusBucket httpBucket(final OptionalInt status) {

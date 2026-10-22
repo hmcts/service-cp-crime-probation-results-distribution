@@ -187,7 +187,13 @@ description: "Task list for HMPPS distribution (slice 002)"
 > each emitting `probation_leg_outcomes_total` and, where apt, the non-200/parked/unreadable-switch
 > counters): `13 tests` pass. The `service_version` is written by the persistence layer with the
 > digest (H19); `body_digest` is the SHA-256 of the exact bytes the sender returns.
-- [ ] T041 [US1] Implement `shape` derivation (`application-only` vs `case`, reading `hearing.courtApplications`/`hearing.prosecutionCases` presence) and wire it into the `probation_leg_outcomes_total` label — makes T032 pass (FR-002-059, research.md R7)
+- [x] T041 [US1] Implement `shape` derivation (`application-only` vs `case`, reading `hearing.courtApplications`/`hearing.prosecutionCases` presence) and wire it into the `probation_leg_outcomes_total` label — makes T032 pass (FR-002-059, research.md R7)
+
+> Driven test-first by two `DistributionRunnerTest` cases (`counts_application_only_shape`,
+> `counts_case_shape`). RED (the `shapeOf` placeholder labelling every body `case`):
+> `15 tests completed, 1 failed` — the application-only assertion has no matching counter. GREEN
+> (`shapeOf` reading the redacted body: a non-empty `hearing.prosecutionCases` is `case`, otherwise —
+> since R11 guarantees a `Body` carries at least one of the two — `application-only`): all 15 pass.
 - [ ] T042 [US1] Implement `inbound/ProbationMessageListener.java` and its `ServiceBusProcessorClient`/`ServiceBusConsumerConfig` wiring in `config/`: peek-lock mode (never `ReceiveAndDelete`), auto-complete disabled, `distribution.consumer.concurrency` (default 2) concurrent calls, lock duration and claim-lease ordering per `distribution.servicebus.max-delivery-count`; parse via T035, call the guard then the runner, exactly one explicit settlement per delivery — makes T030's end-to-end settlement assertion pass (FR-002-001, FR-002-046, FR-002-048)
 - [x] T043 [US1] Build the support-lookup query against `outbound_message_latest` plus `outbound_body` in `persistence/` (a repository method, no HTTP endpoint — this is a support capability, not an API) — makes T034 pass (FR-002-053, SC-002-008)
 

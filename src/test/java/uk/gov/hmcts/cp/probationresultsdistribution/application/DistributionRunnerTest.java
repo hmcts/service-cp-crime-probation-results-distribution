@@ -228,6 +228,36 @@ class DistributionRunnerTest {
     }
 
     @Test
+    @DisplayName("labels a court-application-only body with shape=application-only")
+    void counts_application_only_shape() {
+        givenPayload("{\"hearing\":{\"courtApplications\":[{\"subject\":"
+                + "{\"masterDefendant\":{\"isYouth\":false}}}]}}");
+        when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
+        when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
+        when(outboundLog.record(any(), any())).thenReturn(true);
+
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+
+        assertThat(captureOutcome().status()).isEqualTo(LegStatus.SENT);
+        assertThat(meter.find("probation_leg_outcomes_total")
+                .tag("shape", "application-only").counter().count()).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("labels a prosecution-case body with shape=case")
+    void counts_case_shape() {
+        givenPayload(CASE_PAYLOAD);
+        when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
+        when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
+        when(outboundLog.record(any(), any())).thenReturn(true);
+
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+
+        assertThat(meter.find("probation_leg_outcomes_total")
+                .tag("shape", "case").counter().count()).isEqualTo(1.0d);
+    }
+
+    @Test
     @DisplayName("parks when no source yields a payload, without reading the switch or sending")
     void parks_when_no_payload() {
         when(payloadSource.fetch(command)).thenReturn(Optional.empty());
