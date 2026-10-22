@@ -161,7 +161,18 @@ description: "Task list for HMPPS distribution (slice 002)"
 > `HttpClient` carries a justified `PMD.CloseResource` suppression). The in-run connection/429 retry
 > loop and the full 4xx/5xx/3xx recorded mapping belong to US5 (T080-T086); this publisher does one
 > POST and already maps every answer so it never throws.
-- [ ] T039 [US1] Implement `persistence/OutboundLogAdapter.java` implementing `OutboundLog`: the one-UPDATE outcome write (status, reason, youth_switch, http_status, payload_source, payload_shared_time, body_digest, sent_at, service_version, note) plus the `outbound_body` insert in the same transaction — depends on T021
+- [x] T039 [US1] Implement `adapter/persistence/OutboundLogAdapter.java` implementing `OutboundLog`: the one-UPDATE outcome write (status, reason, youth_switch, http_status, payload_source, payload_shared_time, body_digest, sent_at, service_version, note) plus the `outbound_body` insert in the same transaction — depends on T021
+
+> The adapter lives in `adapter/persistence/`, not `persistence/`: `persistence`'s `package-info`
+> declares it never imports from `application`, so the thing that implements the `application`-owned
+> `OutboundLog` port against `persistence.OutboundMessageRepository` sits outside `persistence` (the
+> `package-info` explicitly permits "an adapter outside this package"). Driven test-first by
+> `persistence/OutboundLogAdapterIT` (Postgres Testcontainers over the shared `SchemaTestSupport`,
+> which is package-private, so the IT lives in the `persistence` test package). RED (seam throwing):
+> `2 tests completed, 2 failed`, both `UnsupportedOperationException` at `record`. GREEN (the write
+> delegating to `OutboundMessageRepository.writeOutcome(outcome, claim, PENDING)` and returning
+> whether one row was written): both pass — the SENT row carries the stored body hashing to the
+> digest, and a stale claim writes nothing and returns false.
 - [ ] T040 [US1] Wire `DistributionRunner` to call slice 001's `pipeline.HmppsRedaction` with the effective switch state, handle the `NOT_APPLICABLE`/rules-failure/success result kinds, compute `body_digest` and read `service_version` once at startup — makes T030, T031, T033 pass (FR-002-028 to FR-002-030, FR-002-033)
 - [ ] T041 [US1] Implement `shape` derivation (`application-only` vs `case`, reading `hearing.courtApplications`/`hearing.prosecutionCases` presence) and wire it into the `probation_leg_outcomes_total` label — makes T032 pass (FR-002-059, research.md R7)
 - [ ] T042 [US1] Implement `inbound/ProbationMessageListener.java` and its `ServiceBusProcessorClient`/`ServiceBusConsumerConfig` wiring in `config/`: peek-lock mode (never `ReceiveAndDelete`), auto-complete disabled, `distribution.consumer.concurrency` (default 2) concurrent calls, lock duration and claim-lease ordering per `distribution.servicebus.max-delivery-count`; parse via T035, call the guard then the runner, exactly one explicit settlement per delivery — makes T030's end-to-end settlement assertion pass (FR-002-001, FR-002-046, FR-002-048)
