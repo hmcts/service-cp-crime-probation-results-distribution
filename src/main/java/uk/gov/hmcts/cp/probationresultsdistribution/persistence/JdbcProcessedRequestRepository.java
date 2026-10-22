@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
@@ -148,6 +149,26 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "WHERE source = :source AND request_id = :requestId "
                         + "AND status IN ('RECEIVED', 'RETRYING') "
                         + "AND claim_owner = :owner AND claim_token = :token")
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+        return rows > 0;
+    }
+
+    @Override
+    public boolean markFailed(final String source, final UUID requestId, final RunClaim claim,
+                              final FailureReason reason, final String exhaustedMessageId) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'FAILED', "
+                        + "failure_reason = :reason, exhausted_message_id = :exhaustedMessageId, "
+                        + "completion_reason = NULL, claim_owner = NULL, claim_token = NULL, "
+                        + "claim_expires_at = NULL, updated_at = now() "
+                        + "WHERE source = :source AND request_id = :requestId "
+                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + "AND claim_owner = :owner AND claim_token = :token")
+                .param("reason", reason.wireValue())
+                .param("exhaustedMessageId", exhaustedMessageId)
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
                 .param(SOURCE, source)

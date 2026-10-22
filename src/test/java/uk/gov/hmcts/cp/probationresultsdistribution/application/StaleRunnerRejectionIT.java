@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,7 +45,7 @@ class StaleRunnerRejectionIT extends EndToEndTestSupport {
         final UUID requestId = UUID.randomUUID();
         final SimpleMeterRegistry meter = new SimpleMeterRegistry();
         final DistributionRunner runner = mock(DistributionRunner.class);
-        when(runner.run(any(), any(), any())).thenThrow(new IllegalStateException("boom"));
+        when(runner.run(any(), any(), any(), anyBoolean())).thenThrow(new IllegalStateException("boom"));
         startProcessorWith(listenerWith(meter, runner, mock(ProcessedRequestRepository.class)), 1);
 
         sendCommand(requestId, "{\"ignored\":\"by the stubbed parser\"}");
@@ -62,7 +63,7 @@ class StaleRunnerRejectionIT extends EndToEndTestSupport {
         final DistributionRunner runner = mock(DistributionRunner.class);
         final RunResult stale =
                 new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), false);
-        when(runner.run(any(), any(), any())).thenReturn(stale);
+        when(runner.run(any(), any(), any(), anyBoolean())).thenReturn(stale);
         startProcessorWith(listenerWith(meter, runner, repo), 1);
 
         sendCommand(requestId, "{\"ignored\":\"by the stubbed parser\"}");

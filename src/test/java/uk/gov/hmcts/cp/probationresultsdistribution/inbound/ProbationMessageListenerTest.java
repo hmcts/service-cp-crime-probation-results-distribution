@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.inbound;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -106,7 +107,7 @@ class ProbationMessageListenerTest {
         final Settlement settlement = listener.decide(BODY, 1L);
 
         assertThat(settlement).isInstanceOf(Complete.class);
-        verify(runner, never()).run(any(), any(), any());
+        verify(runner, never()).run(any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -116,7 +117,7 @@ class ProbationMessageListenerTest {
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Abandon());
 
         assertThat(listener.decide(BODY, 1L)).isInstanceOf(Abandon.class);
-        verify(runner, never()).run(any(), any(), any());
+        verify(runner, never()).run(any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -138,7 +139,7 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim))
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
         when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
                 CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
@@ -157,7 +158,7 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim)).thenReturn(new RunResult(
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(new RunResult(
                 AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
         when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
                 .thenReturn(true);
@@ -175,7 +176,7 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim)).thenReturn(
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(
                 new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), false));
 
         final Settlement settlement = listener.decide(BODY, 1L);
@@ -191,7 +192,7 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim))
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
         when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
                 CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(false);
@@ -209,7 +210,7 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim)).thenReturn(new RunResult(
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(new RunResult(
                 AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
         when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
                 .thenReturn(false);
@@ -254,7 +255,7 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim))
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
         when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
                 CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
@@ -287,7 +288,7 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim))
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
         when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
                 CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);

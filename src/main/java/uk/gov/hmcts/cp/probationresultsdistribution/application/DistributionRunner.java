@@ -84,20 +84,24 @@ public final class DistributionRunner {
     /**
      * Runs the HMPPS pipeline for one admitted delivery, in the fixed order of FR-002-011.
      *
-     * @param command   the admitted command
-     * @param runOrigin the run origin captured at admission
-     * @param claim     the request claim the run's writes are fenced by
+     * @param command                the admitted command
+     * @param runOrigin              the run origin captured at admission
+     * @param claim                  the request claim the run's writes are fenced by
+     * @param finalPermittedDelivery whether this is the final delivery the broker will permit, so a
+     *                               transient miss fails the leg instead of parking it (FR-002-018)
      * @return the run result for the listener to settle on
      */
     public RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,
-                         final RunClaim claim) {
+                         final RunClaim claim, final boolean finalPermittedDelivery) {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(runOrigin, "runOrigin");
         Objects.requireNonNull(claim, "claim");
         final Optional<FetchedPayload> fetched = payloadSource.fetch(command);
         final RunResult result;
         if (fetched.isEmpty()) {
-            result = park(command, runOrigin, claim);
+            result = finalPermittedDelivery
+                    ? failPayloadUnavailable(command, runOrigin, claim)
+                    : park(command, runOrigin, claim);
         } else {
             result = runLeg(command, runOrigin, claim, fetched.get());
         }
@@ -112,6 +116,20 @@ public final class DistributionRunner {
         metrics.legOutcome(Leg.HMPPS, LegStatus.PARKED, Optional.of(LegReason.PAYLOAD_UNAVAILABLE),
                 runOrigin, false, BodyShape.CASE, HttpStatusBucket.NONE);
         metrics.parked(Leg.HMPPS, LegReason.PAYLOAD_UNAVAILABLE);
+        LOG.error("HMPPS leg PARKED(payload-unavailable) requestId={} origin={}",
+                command.requestId(), runOrigin);
+        return record(command, runOrigin, claim, outcome);
+    }
+
+    private RunResult failPayloadUnavailable(final DistributionCommand command,
+                                             final AttemptOrigin runOrigin, final RunClaim claim) {
+        final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.FAILED,
+                Optional.of(LegReason.PAYLOAD_UNAVAILABLE), Optional.empty(), Optional.empty(),
+                Optional.empty(), Optional.empty(), OptionalInt.empty(), Optional.empty());
+        metrics.legOutcome(Leg.HMPPS, LegStatus.FAILED, Optional.of(LegReason.PAYLOAD_UNAVAILABLE),
+                runOrigin, false, BodyShape.CASE, HttpStatusBucket.NONE);
+        LOG.error("HMPPS leg FAILED(payload-unavailable) on the final permitted delivery "
+                + "requestId={} origin={}", command.requestId(), runOrigin);
         return record(command, runOrigin, claim, outcome);
     }
 

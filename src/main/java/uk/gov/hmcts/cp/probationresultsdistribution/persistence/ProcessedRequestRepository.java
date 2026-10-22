@@ -5,6 +5,7 @@ import java.util.Optional;
 import java.util.UUID;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
@@ -72,6 +73,23 @@ public interface ProcessedRequestRepository {
      *     matches
      */
     boolean markRetrying(String source, UUID requestId, RunClaim claim);
+
+    /**
+     * Moves a {@code RECEIVED}/{@code RETRYING} request to {@code FAILED} with its failure reason and,
+     * for {@code leg-exhausted}, the final delivery's {@code messageId}, guarded by the claim, and
+     * releases the claim (FR-002-047).
+     *
+     * @param source             the command source
+     * @param requestId          the request id
+     * @param claim              the claim fencing the transition
+     * @param reason             the failure reason
+     * @param exhaustedMessageId the final delivery's {@code messageId}, recorded with
+     *                           {@code leg-exhausted}
+     * @return {@code true} when the transition took effect; {@code false} when the claim no longer
+     *     matches
+     */
+    boolean markFailed(String source, UUID requestId, RunClaim claim, FailureReason reason,
+                       String exhaustedMessageId);
 
     /**
      * A request's current state as the guard needs it.

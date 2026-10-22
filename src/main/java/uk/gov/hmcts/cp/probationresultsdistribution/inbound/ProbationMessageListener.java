@@ -13,9 +13,12 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.RunResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MdcFields;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
+import java.util.Optional;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
@@ -227,20 +230,14 @@ public final class ProbationMessageListener {
     @SuppressWarnings("PMD.OnlyOneReturn")
     private Settlement runAndSettle(final DistributionCommand command, final RunClaim claim,
                                     final long deliveryCount) {
-        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, claim);
+        final boolean finalDelivery = isFinalPermittedDelivery(deliveryCount);
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, claim, finalDelivery);
         if (!result.recorded()) {
             return staleRunnerRejection(deliveryCount);
         }
         return switch (result.status()) {
-            case SENT, NOT_APPLICABLE, FAILED -> {
-                final boolean recorded = processedRequests.markCompleted(command.source(),
-                        command.requestId(), claim, CompletionReason.BOTH_LEGS_TERMINAL);
-                if (!recorded) {
-                    yield staleRunnerRejection(deliveryCount);
-                }
-                metrics.processed("COMPLETED");
-                yield new Complete();
-            }
+            case SENT, NOT_APPLICABLE -> completeTerminal(command, claim, deliveryCount);
+            case FAILED -> settleFailed(command, claim, deliveryCount, result.reason());
             case PARKED -> {
                 final boolean recorded =
                         processedRequests.markRetrying(command.source(), command.requestId(), claim);
@@ -248,6 +245,59 @@ public final class ProbationMessageListener {
             }
             case PENDING -> throw new IllegalStateException("a run never ends PENDING");
         };
+    }
+
+    /**
+     * Settles a terminal leg ({@code SENT}, {@code NOT_APPLICABLE}, or a {@code FAILED} whose reason
+     * is terminal) by completing the request {@code both-legs-terminal} and completing the message.
+     *
+     * @param command       the admitted command
+     * @param claim         the request claim fencing the transition
+     * @param deliveryCount the broker delivery count, for a stale-runner hand-back
+     * @return the settlement to apply
+     */
+    private Settlement completeTerminal(final DistributionCommand command, final RunClaim claim,
+                                        final long deliveryCount) {
+        final boolean recorded = processedRequests.markCompleted(command.source(),
+                command.requestId(), claim, CompletionReason.BOTH_LEGS_TERMINAL);
+        if (!recorded) {
+            return staleRunnerRejection(deliveryCount);
+        }
+        metrics.processed("COMPLETED");
+        return new Complete();
+    }
+
+    /**
+     * Settles a {@code FAILED} leg. A terminal reason ({@code receiver-rejected},
+     * {@code rules-exception}) completes the request {@code both-legs-terminal}. An exhaustion reason
+     * ({@code payload-unavailable}, {@code gateway-transient}) is only ever produced on the final
+     * permitted delivery, so the request is failed {@code leg-exhausted} and the message is
+     * dead-lettered {@code leg-exhausted} (FR-002-047).
+     *
+     * @param command       the admitted command
+     * @param claim         the request claim fencing the transition
+     * @param deliveryCount the broker delivery count, for a stale-runner hand-back
+     * @param reason        the leg's failure reason
+     * @return the settlement to apply
+     */
+    private Settlement settleFailed(final DistributionCommand command, final RunClaim claim,
+                                    final long deliveryCount, final Optional<LegReason> reason) {
+        if (!isExhaustionReason(reason)) {
+            return completeTerminal(command, claim, deliveryCount);
+        }
+        final boolean recorded = processedRequests.markFailed(command.source(), command.requestId(),
+                claim, FailureReason.LEG_EXHAUSTED, "RESULTS:" + command.requestId());
+        if (!recorded) {
+            return staleRunnerRejection(deliveryCount);
+        }
+        metrics.deadLettered(DeadLetterReason.LEG_EXHAUSTED);
+        metrics.processed("FAILED");
+        return new DeadLetter(DeadLetterReason.LEG_EXHAUSTED);
+    }
+
+    private static boolean isExhaustionReason(final Optional<LegReason> reason) {
+        return reason.filter(r -> r == LegReason.PAYLOAD_UNAVAILABLE
+                || r == LegReason.GATEWAY_TRANSIENT).isPresent();
     }
 
     /**

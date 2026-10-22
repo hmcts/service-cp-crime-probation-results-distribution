@@ -84,7 +84,7 @@ class DistributionRunnerTest {
         when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         final InOrder order = inOrder(payloadSource, youthFilterSource, hmppsSender, outboundLog);
         order.verify(payloadSource).fetch(command);
@@ -113,7 +113,7 @@ class DistributionRunnerTest {
         when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         final ArgumentCaptor<JsonNode> sent = ArgumentCaptor.forClass(JsonNode.class);
         verify(hmppsSender).send(sent.capture());
@@ -127,7 +127,7 @@ class DistributionRunnerTest {
         when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         verify(hmppsSender, never()).send(any());
         final LegOutcome recorded = captureOutcome();
@@ -147,7 +147,7 @@ class DistributionRunnerTest {
         when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         verify(hmppsSender, never()).send(any());
         assertThat(captureOutcome().reason()).contains(LegReason.NOTHING_LEFT_AFTER_REDACTION);
@@ -160,7 +160,7 @@ class DistributionRunnerTest {
         when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         verify(hmppsSender, never()).send(any());
         final LegOutcome recorded = captureOutcome();
@@ -183,7 +183,7 @@ class DistributionRunnerTest {
                 .thenReturn(new SentBody(new PublishOutcome.FailedNonTransient(400), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         assertThat(result.status()).isEqualTo(LegStatus.FAILED);
         assertThat(result.reason()).contains(LegReason.RECEIVER_REJECTED);
@@ -204,7 +204,7 @@ class DistributionRunnerTest {
                 new SentBody(new PublishOutcome.TransientExhausted(OptionalInt.of(503)), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         assertThat(result.status()).isEqualTo(LegStatus.PARKED);
         assertThat(result.reason()).contains(LegReason.GATEWAY_TRANSIENT);
@@ -220,7 +220,7 @@ class DistributionRunnerTest {
         when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(202), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         assertThat(captureOutcome().status()).isEqualTo(LegStatus.SENT);
         assertThat(meter.find("probation_gateway_non200_success_total")
@@ -236,7 +236,7 @@ class DistributionRunnerTest {
         when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         assertThat(captureOutcome().status()).isEqualTo(LegStatus.SENT);
         assertThat(meter.find("probation_leg_outcomes_total")
@@ -251,7 +251,7 @@ class DistributionRunnerTest {
         when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         assertThat(meter.find("probation_leg_outcomes_total")
                 .tag("shape", "case").counter().count()).isEqualTo(1.0d);
@@ -263,7 +263,7 @@ class DistributionRunnerTest {
         when(payloadSource.fetch(command)).thenReturn(Optional.empty());
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         verify(youthFilterSource, never()).read(any());
         verify(hmppsSender, never()).send(any());
@@ -288,7 +288,7 @@ class DistributionRunnerTest {
         when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         assertThat(captureOutcome().youthSwitch()).contains(YouthSwitchRecordedValue.INACTIVE);
     }
@@ -302,7 +302,7 @@ class DistributionRunnerTest {
         when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         assertThat(captureOutcome().youthSwitch())
                 .contains(YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_ACTIVE);
@@ -321,7 +321,7 @@ class DistributionRunnerTest {
         when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
         when(outboundLog.record(any(), any())).thenReturn(true);
 
-        runner.run(command, AttemptOrigin.QUEUE, CLAIM);
+        runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
 
         assertThat(captureOutcome().youthSwitch())
                 .contains(YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_INACTIVE);
@@ -335,7 +335,31 @@ class DistributionRunnerTest {
         when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
         when(outboundLog.record(any(), any())).thenReturn(false);
 
-        assertThat(runner.run(command, AttemptOrigin.QUEUE, CLAIM).recorded()).isFalse();
+        assertThat(runner.run(command, AttemptOrigin.QUEUE, CLAIM, false).recorded()).isFalse();
+    }
+
+    @Test
+    @DisplayName("fails payload-unavailable on the final permitted delivery, without reading the switch")
+    void fails_payload_unavailable_on_the_final_permitted_delivery() {
+        when(payloadSource.fetch(command)).thenReturn(Optional.empty());
+        when(outboundLog.record(any(), any())).thenReturn(true);
+
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, true);
+
+        verify(youthFilterSource, never()).read(any());
+        verify(hmppsSender, never()).send(any());
+        final LegOutcome recorded = captureOutcome();
+        assertThat(recorded.status()).isEqualTo(LegStatus.FAILED);
+        assertThat(recorded.reason()).contains(LegReason.PAYLOAD_UNAVAILABLE);
+        assertThat(recorded.youthSwitch()).isEmpty();
+        assertThat(recorded.payloadSource()).isEmpty();
+        assertThat(recorded.bodyDigest()).isEmpty();
+        assertThat(result.status()).isEqualTo(LegStatus.FAILED);
+        assertThat(result.reason()).contains(LegReason.PAYLOAD_UNAVAILABLE);
+        assertThat(meter.find("probation_leg_outcomes_total")
+                .tag("status", "FAILED").tag("reason", "payload-unavailable").counter().count())
+                .isEqualTo(1.0d);
+        assertThat(meter.find("probation_parked_total").counter()).isNull();
     }
 
     private void givenPayload(final String json) {

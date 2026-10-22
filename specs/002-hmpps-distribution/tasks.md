@@ -284,9 +284,9 @@ description: "Task list for HMPPS distribution (slice 002)"
 
 - [x] T053 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/CachedHearingPayloadAdapterTest.java`: dated-absent/undated-present → `payload_source=cache-nullday`; cache unreachable/timeout/blank/null/unparseable → each a miss, not a failure — fails first (Acceptance Scenarios 1–3, DV-07, DV-13)
 - [x] T054 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/ResultsQueryExternalHearingClientTest.java` (WireMock): empty body/`{}`/non-JSON 2xx → miss; 503-then-200 retried with doubling backoff honouring `Retry-After`, sent on recovery; 404 not retried; fallback form `{hearing, sharedTime}` passed through unexpanded; `CJSCPPUID` = command `userId` or system user when absent — fails first (Acceptance Scenarios 4–7, DV-10, DV-17, DV-23)
-- [ ] T055 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadUnavailableParkIT.java`: every source missing on a non-final delivery → `PARKED(payload-unavailable)`, switch not read, no body, request `RETRYING`, message abandoned, `probation_parked_total` incremented, ERROR line — fails first (Acceptance Scenario 8)
+- [x] T055 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadUnavailableParkIT.java`: every source missing on a non-final delivery → `PARKED(payload-unavailable)`, switch not read, no body, request `RETRYING`, message abandoned, `probation_parked_total` incremented, ERROR line — fails first (Acceptance Scenario 8)
 - [ ] T056 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadRerunInPlaceIT.java`: payload now available on redelivery → same attempt-1 row re-run in place, no new `PENDING`, `attempts` incremented, `note=prev=PARKED/payload-unavailable`, outcome `SENT`, request `COMPLETED` — fails first (Acceptance Scenario 9, FR-002-041)
-- [ ] T057 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadExhaustedIT.java`: every source misses on the final permitted delivery → leg `FAILED(payload-unavailable)`, request `FAILED(leg-exhausted)` with `exhausted_message_id`, message dead-lettered `leg-exhausted` and counted — fails first (Acceptance Scenario 10)
+- [x] T057 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadExhaustedIT.java`: every source misses on the final permitted delivery → leg `FAILED(payload-unavailable)`, request `FAILED(leg-exhausted)` with `exhausted_message_id`, message dead-lettered `leg-exhausted` and counted — fails first (Acceptance Scenario 10)
 - [x] T058 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/config/PayloadStageBudgetTest.java`: an attempt whose worst case (with wait) no longer fits the 60s payload budget is not started, stage ends `payload-unavailable`; a `sharedTime` that fails to parse leaves `payload_shared_time` empty without failing the leg — fails first (Acceptance Scenarios 11–12, SC-002-005)
 
 ### Implementation for User Story 3
@@ -332,7 +332,22 @@ description: "Task list for HMPPS distribution (slice 002)"
 > (checkstyle/pmd main+test clean). T064's defensive `sharedTime` parse is the `SharedTimes` util
 > extracted in T059's commit (any offset via `OffsetDateTime.parse`, empty on a parse failure),
 > pinned by `PayloadStageBudgetTest.parses_sharedtime_defensively`.
-- [ ] T062 [US3] Implement the `PARKED(payload-unavailable)`/final-delivery `FAILED(payload-unavailable)` settlement path in `DistributionRunner`/`ProcessedRequestRepository`, with the switch stage skipped entirely when the payload is unavailable — makes T055, T057 pass (FR-002-018, FR-002-047, FR-002-048)
+- [x] T062 [US3] Implement the `PARKED(payload-unavailable)`/final-delivery `FAILED(payload-unavailable)` settlement path in `DistributionRunner`/`ProcessedRequestRepository`, with the switch stage skipped entirely when the payload is unavailable — makes T055, T057 pass (FR-002-018, FR-002-047, FR-002-048)
+
+> T055/T057/T062. `DistributionRunner.run` takes a `finalPermittedDelivery` flag: a payload miss on a
+> non-final delivery parks `PARKED(payload-unavailable)` (as before), and on the final permitted
+> delivery fails the leg `FAILED(payload-unavailable)` with the switch never read, the leg-failed
+> metric counted and no parked metric. The listener passes `isFinalPermittedDelivery(deliveryCount)`
+> into the run, and routes a `FAILED` result by reason: a terminal reason
+> (`receiver-rejected`/`rules-exception`) completes `both-legs-terminal`, while an exhaustion reason
+> (`payload-unavailable`/`gateway-transient`) fails the request `leg-exhausted` via a new
+> `ProcessedRequestRepository.markFailed` (recording `exhausted_message_id = RESULTS:{requestId}`) and
+> dead-letters `leg-exhausted`, counted. RED: `PayloadUnavailableParkIT` is green on arrival (the park
+> path pre-dates this task), and `PayloadExhaustedIT` fails against the pre-T062 listener
+> (`2 tests completed, 1 failed`, the leg observed `PARKED`, no `leg-exhausted` dead-letter). GREEN
+> after T062: both pass; `DistributionRunnerTest` gains a final-delivery-FAILED case and its 15
+> existing `run(...)` calls take `, false`; `EndToEndReceiverRejectedIT`/`EndToEndRulesExceptionIT`
+> (terminal FAILED → `COMPLETED`) stay green (checkstyle/pmd main+test clean).
 - [ ] T063 [US3] Implement in-place re-run (FR-002-012 eligibility column, FR-002-041 note rewrite) for a `PARKED` or claim-reclaimed `PENDING` attempt-1 row — makes T056 pass
 - [x] T064 [US3] Parse `sharedTime` defensively (ISO-8601 instant, any offset) leaving `payload_shared_time` NULL on a parse failure without failing the leg — makes T058's sharedTime assertion pass (FR-002-019)
 
