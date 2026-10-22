@@ -13,7 +13,7 @@ import tools.jackson.databind.JsonNode;
  * {@code payload_shared_time} empty, and the leg carries on. The payload is never failed for a
  * {@code sharedTime} that will not parse.
  */
-final class SharedTimes {
+public final class SharedTimes {
 
     private static final String SHARED_TIME = "sharedTime";
 
@@ -26,7 +26,7 @@ final class SharedTimes {
      * @param tree the payload tree
      * @return the parsed instant, or empty when it is absent, not a string, or unparseable
      */
-    static Optional<Instant> parse(final JsonNode tree) {
+    public static Optional<Instant> parse(final JsonNode tree) {
         final JsonNode node = tree.get(SHARED_TIME);
         Optional<Instant> result = Optional.empty();
         if (node != null && node.isString()) {
@@ -41,7 +41,7 @@ final class SharedTimes {
      * @param value the candidate instant string
      * @return the parsed instant, or empty when it does not parse
      */
-    static Optional<Instant> parse(final String value) {
+    public static Optional<Instant> parse(final String value) {
         Optional<Instant> result;
         try {
             result = Optional.of(OffsetDateTime.parse(value).toInstant());

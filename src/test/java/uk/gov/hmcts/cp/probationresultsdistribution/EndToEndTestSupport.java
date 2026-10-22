@@ -49,6 +49,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway.HmppsPublisher;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.CachedHearingPayloadAdapter;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ChainedHearingPayloadSource;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ResultsQueryExternalHearingClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
@@ -254,8 +256,7 @@ public class EndToEndTestSupport {
         final OutboundMessageRepository outboundMessages =
                 new OutboundMessageRepository(jdbc(), tx, "test-version");
         final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
-        final CachedHearingPayloadAdapter payload =
-                new CachedHearingPayloadAdapter(redisConnection, CACHE_PREFIX);
+        final ChainedHearingPayloadSource payload = chainedPayloadSource();
         final FeaturePermissionClient youthFilter = new FeaturePermissionClient(
                 usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
                 Duration.ofSeconds(2), Duration.ofSeconds(5));
@@ -267,6 +268,22 @@ public class EndToEndTestSupport {
         return new ProbationMessageListener(new DistributionCommandParser(),
                 new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
                 processedRequests, registry, alwaysAvailableStore(), MAX_DELIVERY_COUNT);
+    }
+
+    /**
+     * The payload-fetch chain over the shared Redis cache and a results-query client pointed at the
+     * shared WireMock. For the US1/US2 suites the cache always hits, so the query is never called; the
+     * US3 suites drive the cache-miss, undated-fallback and query branches.
+     *
+     * @return the chained payload source
+     */
+    private ChainedHearingPayloadSource chainedPayloadSource() {
+        final CachedHearingPayloadAdapter cache =
+                new CachedHearingPayloadAdapter(redisConnection, CACHE_PREFIX);
+        final ResultsQueryExternalHearingClient query = new ResultsQueryExternalHearingClient(
+                wireMock.baseUrl(), SYSTEM_USER_ID, Duration.ofSeconds(5), Duration.ofSeconds(30),
+                4, Duration.ofMillis(500), Duration.ofSeconds(20));
+        return new ChainedHearingPayloadSource(cache, query, Duration.ofSeconds(60));
     }
 
     /**
@@ -310,8 +327,7 @@ public class EndToEndTestSupport {
         final OutboundMessageRepository outboundMessages =
                 new OutboundMessageRepository(JdbcClient.create(store), tx, "test-version");
         final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
-        final CachedHearingPayloadAdapter payload =
-                new CachedHearingPayloadAdapter(redisConnection, CACHE_PREFIX);
+        final ChainedHearingPayloadSource payload = chainedPayloadSource();
         final FeaturePermissionClient youthFilter = new FeaturePermissionClient(
                 usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
                 Duration.ofSeconds(2), Duration.ofSeconds(5));
@@ -489,6 +505,30 @@ public class EndToEndTestSupport {
                                               final String payload) {
         redisConnection.sync().set(
                 CACHE_PREFIX + hearingId + "_" + hearingDay + "_result_", payload);
+    }
+
+    /**
+     * Writes a payload under the undated cache key for a hearing.
+     *
+     * @param hearingId the hearing id
+     * @param payload   the payload JSON text
+     */
+    protected final void putUndatedCachePayload(final UUID hearingId, final String payload) {
+        redisConnection.sync().set(CACHE_PREFIX + hearingId + "_result_", payload);
+    }
+
+    /**
+     * Stubs the results query-API hearing-details route to answer a fixed status and body.
+     *
+     * @param hearingId the hearing id in the path
+     * @param status    the HTTP status to answer
+     * @param body      the response body
+     */
+    protected final void stubResultsQuery(final UUID hearingId, final int status, final String body) {
+        wireMock.stubFor(get(urlPathEqualTo(
+                "/results-query-api/query/api/rest/results/hearingDetails/" + hearingId))
+                .willReturn(aResponse().withStatus(status)
+                        .withHeader("Content-Type", "application/json").withBody(body)));
     }
 
     /**

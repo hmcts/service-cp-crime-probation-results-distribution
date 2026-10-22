@@ -287,7 +287,7 @@ description: "Task list for HMPPS distribution (slice 002)"
 - [ ] T055 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadUnavailableParkIT.java`: every source missing on a non-final delivery → `PARKED(payload-unavailable)`, switch not read, no body, request `RETRYING`, message abandoned, `probation_parked_total` incremented, ERROR line — fails first (Acceptance Scenario 8)
 - [ ] T056 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadRerunInPlaceIT.java`: payload now available on redelivery → same attempt-1 row re-run in place, no new `PENDING`, `attempts` incremented, `note=prev=PARKED/payload-unavailable`, outcome `SENT`, request `COMPLETED` — fails first (Acceptance Scenario 9, FR-002-041)
 - [ ] T057 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadExhaustedIT.java`: every source misses on the final permitted delivery → leg `FAILED(payload-unavailable)`, request `FAILED(leg-exhausted)` with `exhausted_message_id`, message dead-lettered `leg-exhausted` and counted — fails first (Acceptance Scenario 10)
-- [ ] T058 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/config/PayloadStageBudgetTest.java`: an attempt whose worst case (with wait) no longer fits the 60s payload budget is not started, stage ends `payload-unavailable`; a `sharedTime` that fails to parse leaves `payload_shared_time` empty without failing the leg — fails first (Acceptance Scenarios 11–12, SC-002-005)
+- [x] T058 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/config/PayloadStageBudgetTest.java`: an attempt whose worst case (with wait) no longer fits the 60s payload budget is not started, stage ends `payload-unavailable`; a `sharedTime` that fails to parse leaves `payload_shared_time` empty without failing the leg — fails first (Acceptance Scenarios 11–12, SC-002-005)
 
 ### Implementation for User Story 3
 
@@ -313,10 +313,28 @@ description: "Task list for HMPPS distribution (slice 002)"
 > miss, the 404-and-other-4xx immediate miss, the `{hearing, sharedTime}` pass-through with
 > `payload_source=query`, and `CJSCPPUID` = the command's `userId` or the system user: all 7 pass
 > (checkstyle/pmd main+test clean).
-- [ ] T061 [US3] Compose the three-source chain (dated → undated → query) in the payload-fetch stage of `DistributionRunner`, recording `payload_source` and the attempt-fits rule against the 60s budget — makes T058's budget check and the chain-selection scenarios pass (FR-002-015, FR-002-013)
+- [x] T061 [US3] Compose the three-source chain (dated → undated → query) in the payload-fetch stage of `DistributionRunner`, recording `payload_source` and the attempt-fits rule against the 60s budget — makes T058's budget check and the chain-selection scenarios pass (FR-002-015, FR-002-013)
+
+> T058/T061/T064 landed together. `application/StageBudget` is the pure stage-budget value (a
+> deadline instant, `attemptFits(now, worstCase)`); `adapter/payload/SharedTimes` (extracted in
+> T059's commit) is the shared defensive `sharedTime` parse (any offset, empty on a parse failure);
+> `adapter/payload/ChainedHearingPayloadSource` is the runner's payload-fetch stage, composing
+> cache(dated→undated)→query and opening the 60 s `StageBudget` at the stage start so the cache reads
+> and the query retries share it. The runner keeps its single owned `HearingPayloadSource` port; the
+> chain is wired behind it in `ServiceBusConsumerConfig` and the IT harness, and the `StageBudget` is
+> threaded into `ResultsQueryExternalHearingClient.fetch` (its T054 callers pass
+> `StageBudget.startingNow(60s)`). RED: `config/PayloadStageBudgetTest` against the `StageBudget` seam
+> (`4 tests completed, 3 failed`, the three budget assertions hitting `UnsupportedOperationException`;
+> the `SharedTimes` any-offset assertion green on arrival, since T064's defensive parse is the
+> extracted `SharedTimes`); `adapter/payload/ChainedHearingPayloadSourceTest` against a chain stub
+> returning empty (`3 failed`, strict-stubbing on the unexercised cache/query mocks). GREEN: with the
+> real `StageBudget` and chain, all pass; `EndToEndSentIT` stays green through the new wiring
+> (checkstyle/pmd main+test clean). T064's defensive `sharedTime` parse is the `SharedTimes` util
+> extracted in T059's commit (any offset via `OffsetDateTime.parse`, empty on a parse failure),
+> pinned by `PayloadStageBudgetTest.parses_sharedtime_defensively`.
 - [ ] T062 [US3] Implement the `PARKED(payload-unavailable)`/final-delivery `FAILED(payload-unavailable)` settlement path in `DistributionRunner`/`ProcessedRequestRepository`, with the switch stage skipped entirely when the payload is unavailable — makes T055, T057 pass (FR-002-018, FR-002-047, FR-002-048)
 - [ ] T063 [US3] Implement in-place re-run (FR-002-012 eligibility column, FR-002-041 note rewrite) for a `PARKED` or claim-reclaimed `PENDING` attempt-1 row — makes T056 pass
-- [ ] T064 [US3] Parse `sharedTime` defensively (ISO-8601 instant, any offset) leaving `payload_shared_time` NULL on a parse failure without failing the leg — makes T058's sharedTime assertion pass (FR-002-019)
+- [x] T064 [US3] Parse `sharedTime` defensively (ISO-8601 instant, any offset) leaving `payload_shared_time` NULL on a parse failure without failing the leg — makes T058's sharedTime assertion pass (FR-002-019)
 
 **Checkpoint**: User Stories 1–3 all work independently.
 

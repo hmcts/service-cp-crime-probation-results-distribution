@@ -23,6 +23,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway.HmppsPublisher;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.CachedHearingPayloadAdapter;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ChainedHearingPayloadSource;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ResultsQueryExternalHearingClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
@@ -118,6 +120,23 @@ public class ServiceBusConsumerConfig {
     }
 
     /* default */ @Bean
+    ResultsQueryExternalHearingClient resultsQueryExternalHearingClient(
+            final DistributionProperties properties) {
+        return new ResultsQueryExternalHearingClient(properties.results().baseUrl(),
+                properties.results().systemUserId(), properties.results().connectTimeout(),
+                properties.results().readTimeout(), properties.results().maxAttempts(),
+                properties.results().initialBackoff(), properties.results().maxBackoff());
+    }
+
+    /* default */ @Bean
+    ChainedHearingPayloadSource chainedHearingPayloadSource(
+            final CachedHearingPayloadAdapter cache,
+            final ResultsQueryExternalHearingClient query,
+            final DistributionProperties properties) {
+        return new ChainedHearingPayloadSource(cache, query, properties.budget().payload());
+    }
+
+    /* default */ @Bean
     FeaturePermissionClient featurePermissionClient(final DistributionProperties properties,
             @Value("${distribution.usersgroups.youth-filter-key}") final String youthFilterKey) {
         return new FeaturePermissionClient(properties.usersgroups().baseUrl(),
@@ -133,7 +152,7 @@ public class ServiceBusConsumerConfig {
     }
 
     /* default */ @Bean
-    DistributionRunner distributionRunner(final CachedHearingPayloadAdapter payload,
+    DistributionRunner distributionRunner(final ChainedHearingPayloadSource payload,
             final FeaturePermissionClient youthFilter, final HmppsPublisher publisher,
             final OutboundLogAdapter outboundLog, final DistributionProperties properties,
             final MetricRegistry metrics) {

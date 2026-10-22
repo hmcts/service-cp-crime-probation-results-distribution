@@ -19,6 +19,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.HearingPayloadSource.FetchedPayload;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.StageBudget;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 
@@ -54,8 +55,8 @@ class ResultsQueryExternalHearingClientTest {
                 Instant.parse("2026-08-19T16:42:07.512Z"), "Hearing_Resulted", userId);
     }
 
-    private Instant deadline() {
-        return Instant.now().plusSeconds(60);
+    private StageBudget deadline() {
+        return StageBudget.startingNow(Duration.ofSeconds(60));
     }
 
     @Test

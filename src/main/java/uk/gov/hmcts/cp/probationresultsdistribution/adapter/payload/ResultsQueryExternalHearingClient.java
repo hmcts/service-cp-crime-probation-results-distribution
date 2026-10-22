@@ -14,6 +14,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.HearingPayloadSource.FetchedPayload;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.StageBudget;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 
@@ -89,22 +90,22 @@ public final class ResultsQueryExternalHearingClient {
 
     /**
      * Reads the hearing payload from the results query API, retrying the retryable answers within the
-     * stage deadline.
+     * payload stage budget.
      *
-     * @param command       the admitted command
-     * @param stageDeadline the instant the payload stage must finish by
+     * @param command the admitted command
+     * @param budget  the payload stage budget the retries run within
      * @return the fetched payload with {@code payload_source = query}, or empty when every answer
      *     misses or the stage budget runs out
      */
     public Optional<FetchedPayload> fetch(final DistributionCommand command,
-                                          final Instant stageDeadline) {
+                                          final StageBudget budget) {
         final String url = baseUrl + PATH + command.hearingId()
                 + "?hearingDate=" + command.hearingDay();
         final String user = command.userId().map(java.util.UUID::toString).orElse(systemUserId);
         Duration backoff = initialBackoff;
         Optional<FetchedPayload> result = Optional.empty();
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-            if (!attemptFits(stageDeadline, Duration.ZERO)) {
+            if (!attemptFits(budget, Duration.ZERO)) {
                 break;
             }
             final Attempt outcome = tryOnce(url, user);
@@ -116,7 +117,7 @@ public final class ResultsQueryExternalHearingClient {
                 break;
             }
             final Duration wait = waitFor(((Attempt.Retryable) outcome).retryAfterSeconds(), backoff);
-            if (attempt == maxAttempts || !attemptFits(stageDeadline, wait)) {
+            if (attempt == maxAttempts || !attemptFits(budget, wait)) {
                 break;
             }
             sleep(wait);
@@ -125,8 +126,8 @@ public final class ResultsQueryExternalHearingClient {
         return result;
     }
 
-    private boolean attemptFits(final Instant stageDeadline, final Duration wait) {
-        return !Instant.now().plus(wait).plus(connectTimeout).plus(readTimeout).isAfter(stageDeadline);
+    private boolean attemptFits(final StageBudget budget, final Duration wait) {
+        return budget.attemptFits(Instant.now(), wait.plus(connectTimeout).plus(readTimeout));
     }
 
     private Duration waitFor(final OptionalLong retryAfterSeconds, final Duration backoff) {
