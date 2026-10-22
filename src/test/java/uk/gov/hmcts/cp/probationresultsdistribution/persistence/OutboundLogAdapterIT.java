@@ -19,6 +19,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.Outbound
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
@@ -72,8 +73,7 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
                         Instant.parse("2026-08-19T16:42:07.512Z"), "Hearing_Resulted",
                         Optional.empty()),
                 AttemptOrigin.QUEUE, LegStatus.NOT_APPLICABLE,
-                Optional.of(uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason
-                        .SJP_OR_BOX_HEARING),
+                Optional.of(LegReason.SJP_OR_BOX_HEARING),
                 Optional.of(YouthSwitchRecordedValue.ACTIVE), Optional.of(PayloadSource.CACHE_DAY),
                 Optional.of(Instant.parse("2026-08-19T16:42:07.512Z")), Optional.empty(),
                 OptionalInt.empty(), Optional.empty());
@@ -96,8 +96,7 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
                 LocalDate.parse("2026-08-19"), Instant.parse("2026-08-19T16:42:07.512Z"),
                 "Hearing_Resulted", Optional.empty());
         final LegOutcome outcome = new LegOutcome(command, AttemptOrigin.QUEUE, LegStatus.PARKED,
-                Optional.of(uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason
-                        .GATEWAY_TRANSIENT),
+                Optional.of(LegReason.GATEWAY_TRANSIENT),
                 Optional.of(YouthSwitchRecordedValue.ACTIVE), Optional.of(PayloadSource.CACHE_DAY),
                 Optional.of(Instant.parse("2026-08-19T16:42:07.512Z")), Optional.of(sha256(BODY)),
                 OptionalInt.of(503), Optional.of(BODY));
