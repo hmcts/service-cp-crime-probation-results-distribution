@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.OptionalLong;
+import java.util.UUID;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
@@ -101,7 +102,7 @@ public final class ResultsQueryExternalHearingClient {
                                           final StageBudget budget) {
         final String url = baseUrl + PATH + command.hearingId()
                 + "?hearingDate=" + command.hearingDay();
-        final String user = command.userId().map(java.util.UUID::toString).orElse(systemUserId);
+        final String user = command.userId().map(UUID::toString).orElse(systemUserId);
         Duration backoff = initialBackoff;
         Optional<FetchedPayload> result = Optional.empty();
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {

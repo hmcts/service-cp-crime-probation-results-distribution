@@ -18,6 +18,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
@@ -247,7 +248,7 @@ public final class ProbationMessageListener {
             return staleRunnerRejection(deliveryCount);
         }
         if (gatewayParked && result.status() == LegStatus.SENT) {
-            metrics.gatewayRecovered(uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery.FIVE_XX_REDELIVERY);
+            metrics.gatewayRecovered(GatewayRecovery.FIVE_XX_REDELIVERY);
         }
         return switch (result.status()) {
             case SENT, NOT_APPLICABLE -> completeTerminal(command, claim, deliveryCount);
