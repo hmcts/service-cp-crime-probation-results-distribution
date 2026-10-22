@@ -138,10 +138,16 @@ public final class ProbationMessageListener {
      * @return the settlement to apply
      */
     private Settlement storeUnavailable(final long deliveryCount) {
-        LOG.error("the processed log could not be reached, so the delivery was not examined; "
-                + "returning it and asking for intake to stop; reason={}",
-                DeadLetterReason.EXHAUSTED.wireValue());
-        return handBack(deliveryCount);
+        final Settlement settlement = handBack(deliveryCount);
+        if (settlement instanceof DeadLetter) {
+            LOG.error("the processed log could not be reached, so the delivery was not examined; this "
+                    + "was its final permitted delivery, so it is dead-lettered and intake is asked to "
+                    + "stop; reason={}", DeadLetterReason.EXHAUSTED.wireValue());
+        } else {
+            LOG.error("the processed log could not be reached, so the delivery was not examined; it is "
+                    + "returned for redelivery and intake is asked to stop");
+        }
+        return settlement;
     }
 
     /**
