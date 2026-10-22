@@ -129,17 +129,16 @@ public final class DistributionRunner {
                 ? EffectiveSwitchState.ACTIVE : EffectiveSwitchState.INACTIVE;
         final RedactionResult redacted = redaction.redact(fetched.payload(), effective);
         return switch (redacted) {
-            case RedactionResult.Body body ->
-                    send(command, runOrigin, claim, recordedSwitch, fetched, body.payload());
-            case RedactionResult.EmptiedByR1 ignored ->
-                    notApplicable(command, runOrigin, claim, recordedSwitch, fetched,
-                            LegReason.SJP_OR_BOX_HEARING);
-            case RedactionResult.EmptiedByR11 ignored ->
-                    notApplicable(command, runOrigin, claim, recordedSwitch, fetched,
-                            LegReason.NOTHING_LEFT_AFTER_REDACTION);
-            case RedactionResult.RulesFailure failure ->
-                    rulesFailure(command, runOrigin, claim, recordedSwitch, fetched,
-                            failure.ruleId());
+            case RedactionResult.Body body -> send(
+                    command, runOrigin, claim, recordedSwitch, fetched, body.payload());
+            case RedactionResult.EmptiedByR1 ignored -> notApplicable(
+                    command, runOrigin, claim, recordedSwitch, fetched,
+                    LegReason.SJP_OR_BOX_HEARING);
+            case RedactionResult.EmptiedByR11 ignored -> notApplicable(
+                    command, runOrigin, claim, recordedSwitch, fetched,
+                    LegReason.NOTHING_LEFT_AFTER_REDACTION);
+            case RedactionResult.RulesFailure failure -> rulesFailure(
+                    command, runOrigin, claim, recordedSwitch, fetched, failure.ruleId());
         };
     }
 
@@ -219,18 +218,12 @@ public final class DistributionRunner {
     }
 
     private static boolean hasNonEmptyArray(final JsonNode hearing, final String member) {
-        if (hearing == null) {
-            return false;
-        }
-        final JsonNode node = hearing.get(member);
+        final JsonNode node = hearing == null ? null : hearing.get(member);
         return node != null && node.isArray() && !node.isEmpty();
     }
 
     private static HttpStatusBucket httpBucket(final OptionalInt status) {
-        if (status.isEmpty()) {
-            return HttpStatusBucket.NONE;
-        }
-        return switch (status.getAsInt()) {
+        return status.isEmpty() ? HttpStatusBucket.NONE : switch (status.getAsInt()) {
             case HTTP_OK -> HttpStatusBucket.OK_200;
             case 400 -> HttpStatusBucket.BAD_REQUEST_400;
             case 401 -> HttpStatusBucket.UNAUTHORIZED_401;

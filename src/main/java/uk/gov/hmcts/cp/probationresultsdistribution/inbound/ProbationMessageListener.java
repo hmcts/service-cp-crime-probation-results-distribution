@@ -71,6 +71,11 @@ public final class ProbationMessageListener {
      *
      * @param context the delivery
      */
+    // The listener must settle every delivery exactly once: any unexpected runtime failure is mapped
+    // to an abandon here rather than left to the processor's default handling, which would leave the
+    // delivery unsettled. Catching the generic type is deliberate and never swallows — it logs,
+    // counts and abandons.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void processMessage(final ServiceBusReceivedMessageContext context) {
         final ServiceBusReceivedMessage message = context.getMessage();
         final String body = message.getBody().toString();
@@ -96,7 +101,10 @@ public final class ProbationMessageListener {
      * @param deliveryCount the broker delivery count
      * @return the settlement to apply
      */
-    Settlement decide(final String body, final long deliveryCount) {
+    // The early return on a contract-invalid body and the switch's single return are the two exits a
+    // parse-then-decide naturally has; funnelling them through one variable would not read more clearly.
+    @SuppressWarnings("PMD.OnlyOneReturn")
+    /* default */ Settlement decide(final String body, final long deliveryCount) {
         final DistributionCommand command;
         try {
             command = parser.parse(body);
@@ -119,6 +127,7 @@ public final class ProbationMessageListener {
         };
     }
 
+    @SuppressWarnings("PMD.OnlyOneReturn")
     private Settlement runAndSettle(final DistributionCommand command, final RunClaim claim) {
         final RunResult result = runner.run(command, AttemptOrigin.QUEUE, claim);
         if (!result.recorded()) {
@@ -156,7 +165,6 @@ public final class ProbationMessageListener {
             case Abandon ignored -> context.abandon();
             case DeadLetter deadLetter -> context.deadLetter(
                     new DeadLetterOptions().setDeadLetterReason(deadLetter.reason().wireValue()));
-            default -> throw new IllegalStateException("unknown settlement");
         }
     }
 

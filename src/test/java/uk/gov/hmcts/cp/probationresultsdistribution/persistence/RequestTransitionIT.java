@@ -31,7 +31,7 @@ class RequestTransitionIT extends SchemaTestSupport {
                 CompletionReason.BOTH_LEGS_TERMINAL);
 
         assertThat(moved).isTrue();
-        final var row = status(requestId);
+        final java.util.Map<String, Object> row = status(requestId);
         assertThat(row.get("status")).isEqualTo("COMPLETED");
         assertThat(row.get("completion_reason")).isEqualTo("both-legs-terminal");
         assertThat(row.get("claim_owner")).isNull();
@@ -60,7 +60,7 @@ class RequestTransitionIT extends SchemaTestSupport {
         final boolean moved = repository.markRetrying(SOURCE, requestId, claim);
 
         assertThat(moved).isTrue();
-        final var row = status(requestId);
+        final java.util.Map<String, Object> row = status(requestId);
         assertThat(row.get("status")).isEqualTo("RETRYING");
         assertThat(row.get("claim_owner")).isNull();
     }

@@ -9,6 +9,8 @@ import static org.mockito.Mockito.when;
 import com.azure.core.util.BinaryData;
 import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
 import com.azure.messaging.servicebus.ServiceBusReceivedMessageContext;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.search.Search;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -183,6 +185,20 @@ class ProbationMessageListenerTest {
     }
 
     @Test
+    @DisplayName("processMessage dead-letters a contract-invalid delivery exactly once")
+    void process_message_dead_letters_invalid() {
+        when(parser.parse(BODY)).thenThrow(
+                new CommandValidationException(CommandValidationException.Kind.UNKNOWN_FIELD));
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+
+        listener.processMessage(context);
+
+        verify(context).deadLetter(any());
+        verify(context, never()).complete();
+        verify(context, never()).abandon();
+    }
+
+    @Test
     @DisplayName("processMessage abandons and counts when processing throws unexpectedly")
     void process_message_abandons_on_unexpected() {
         when(parser.parse(BODY)).thenReturn(command);
@@ -208,8 +224,9 @@ class ProbationMessageListenerTest {
     }
 
     private double count(final String name, final String tagKey, final String tagValue) {
-        final var search = meter.find(name);
-        final var counter = tagKey == null ? search.counter() : search.tag(tagKey, tagValue).counter();
+        final Search search = meter.find(name);
+        final Counter counter =
+                tagKey == null ? search.counter() : search.tag(tagKey, tagValue).counter();
         return counter == null ? 0.0d : counter.count();
     }
 }

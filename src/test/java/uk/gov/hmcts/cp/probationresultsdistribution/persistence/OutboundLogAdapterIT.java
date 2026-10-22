@@ -15,13 +15,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
-import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 
 @DisplayName("the outbound-log adapter")
@@ -47,7 +47,8 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
         final boolean recorded = adapter.record(outcome, claim);
 
         assertThat(recorded).isTrue();
-        final var row = jdbc().sql("SELECT oml.status, oml.http_status, oml.body_digest, "
+        final java.util.Map<String, Object> row = jdbc().sql(
+                        "SELECT oml.status, oml.http_status, oml.body_digest, "
                         + "oml.service_version, ob.body FROM outbound_message_latest oml "
                         + "LEFT JOIN outbound_body ob ON ob.outbound_message_id = oml.id "
                         + "WHERE oml.source = :s AND oml.request_id = :r")

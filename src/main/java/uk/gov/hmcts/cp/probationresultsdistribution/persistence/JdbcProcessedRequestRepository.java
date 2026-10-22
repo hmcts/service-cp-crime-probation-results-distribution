@@ -23,6 +23,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
 
     private static final String SOURCE = "source";
     private static final String REQUEST_ID = "requestId";
+    private static final String OWNER = "owner";
+    private static final String TOKEN = "token";
 
     private final JdbcClient jdbc;
     private final TransactionTemplate transactionTemplate;
@@ -89,8 +91,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                 .param("eventType", command.eventType())
                 .param("fingerprint", fingerprint)
                 .param("command", commandBody)
-                .param("owner", claim.owner().toString())
-                .param("token", claim.token())
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
                 .param("lease", (double) leaseSeconds)
                 .update();
         jdbc.sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
@@ -111,8 +113,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "WHERE source = :source AND request_id = :requestId "
                         + "AND status IN ('RECEIVED', 'RETRYING') "
                         + "AND (claim_expires_at IS NULL OR claim_expires_at <= now())")
-                .param("owner", claim.owner().toString())
-                .param("token", claim.token())
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
                 .param("lease", (double) leaseSeconds)
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
@@ -130,8 +132,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "AND status IN ('RECEIVED', 'RETRYING') "
                         + "AND claim_owner = :owner AND claim_token = :token")
                 .param("reason", reason.wireValue())
-                .param("owner", claim.owner().toString())
-                .param("token", claim.token())
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
                 .update();
@@ -146,8 +148,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "WHERE source = :source AND request_id = :requestId "
                         + "AND status IN ('RECEIVED', 'RETRYING') "
                         + "AND claim_owner = :owner AND claim_token = :token")
-                .param("owner", claim.owner().toString())
-                .param("token", claim.token())
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
                 .update();

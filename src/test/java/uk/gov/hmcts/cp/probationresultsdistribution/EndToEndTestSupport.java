@@ -13,10 +13,10 @@ import com.azure.messaging.servicebus.ServiceBusProcessorClient;
 import com.azure.messaging.servicebus.ServiceBusSenderClient;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -68,7 +68,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
  * polls the store for the recorded outcome. The containers are shared and the suites run in one JVM,
  * sequentially, so the per-test processor is started and stopped around each case.
  */
-abstract class EndToEndTestSupport {
+class EndToEndTestSupport {
 
     protected static final String QUEUE = "probation.requests";
     protected static final String GATEWAY_PATH = "/probation/api/v1/hearing/results";
@@ -107,7 +107,7 @@ abstract class EndToEndTestSupport {
     private static volatile boolean started;
 
     private ServiceBusProcessorClient processor;
-    private MeterRegistry meterRegistry = new SimpleMeterRegistry();
+    private MeterRegistry meters = new SimpleMeterRegistry();
 
     protected EndToEndTestSupport() {
         startOnce();
@@ -117,6 +117,7 @@ abstract class EndToEndTestSupport {
         if (started) {
             return;
         }
+        quietAzureSdkLogging();
         POSTGRES.start();
         REDIS.start();
         SERVICE_BUS.start();
@@ -137,6 +138,21 @@ abstract class EndToEndTestSupport {
                 .queueName(QUEUE)
                 .buildClient();
         started = true;
+    }
+
+    /**
+     * Quietens the Azure Service Bus SDK, Reactor and Netty loggers to WARN for the shared test JVM.
+     * The SDK logs connection open/close chatter at INFO on its own background threads, which keep
+     * running after a processor closes; left at INFO they bleed into the root appender that unrelated
+     * suites capture (for example {@code HmppsRedactionPurityTest}'s no-log-line assertion). This is
+     * test noise, not service behaviour.
+     */
+    private static void quietAzureSdkLogging() {
+        final String[] noisy = {"com.azure", "reactor", "io.netty", "com.microsoft"};
+        for (final String name : noisy) {
+            ((ch.qos.logback.classic.Logger) LoggerFactory.getLogger(name))
+                    .setLevel(ch.qos.logback.classic.Level.WARN);
+        }
     }
 
     private static DataSource buildDataSource() {
@@ -160,7 +176,6 @@ abstract class EndToEndTestSupport {
     void stopProcessor() {
         if (processor != null) {
             processor.close();
-            processor = null;
         }
         wireMock.resetAll();
     }
@@ -171,7 +186,7 @@ abstract class EndToEndTestSupport {
      * configuring their WireMock and cache state.
      */
     protected final void startProcessor() {
-        meterRegistry = new SimpleMeterRegistry();
+        meters = new SimpleMeterRegistry();
         processor = new ServiceBusClientBuilder()
                 .connectionString(SERVICE_BUS.getConnectionString())
                 .processor()
@@ -207,7 +222,7 @@ abstract class EndToEndTestSupport {
                 Duration.ofSeconds(2), Duration.ofSeconds(5));
         final HmppsPublisher publisher = new HmppsPublisher(
                 gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60));
-        final MetricRegistry registry = new MetricRegistry(meterRegistry);
+        final MetricRegistry registry = new MetricRegistry(meters);
         final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
                 outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
         return new ProbationMessageListener(new DistributionCommandParser(),
@@ -227,19 +242,7 @@ abstract class EndToEndTestSupport {
      * @return the per-test meter registry
      */
     protected final MeterRegistry meterRegistry() {
-        return meterRegistry;
-    }
-
-    protected final DataSource dataSource() {
-        return dataSource;
-    }
-
-    protected final StatefulRedisConnection<String, String> redis() {
-        return redisConnection;
-    }
-
-    protected final WireMockServer wireMock() {
-        return wireMock;
+        return meters;
     }
 
     protected final String usersGroupsBaseUrl() {

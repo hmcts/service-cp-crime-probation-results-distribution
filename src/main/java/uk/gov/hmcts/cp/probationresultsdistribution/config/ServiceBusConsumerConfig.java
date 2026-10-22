@@ -7,7 +7,6 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.micrometer.core.instrument.MeterRegistry;
-import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -210,7 +209,6 @@ public class ServiceBusConsumerConfig {
         public void stop() {
             if (processor != null) {
                 processor.close();
-                processor = null;
             }
         }
 
