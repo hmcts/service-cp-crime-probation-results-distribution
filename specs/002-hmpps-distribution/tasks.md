@@ -282,7 +282,7 @@ description: "Task list for HMPPS distribution (slice 002)"
 
 ### Tests for User Story 3 (MANDATORY — write and run these first) ⚠️
 
-- [ ] T053 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/CachedHearingPayloadAdapterTest.java`: dated-absent/undated-present → `payload_source=cache-nullday`; cache unreachable/timeout/blank/null/unparseable → each a miss, not a failure — fails first (Acceptance Scenarios 1–3, DV-07, DV-13)
+- [x] T053 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/CachedHearingPayloadAdapterTest.java`: dated-absent/undated-present → `payload_source=cache-nullday`; cache unreachable/timeout/blank/null/unparseable → each a miss, not a failure — fails first (Acceptance Scenarios 1–3, DV-07, DV-13)
 - [ ] T054 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/ResultsQueryExternalHearingClientTest.java` (WireMock): empty body/`{}`/non-JSON 2xx → miss; 503-then-200 retried with doubling backoff honouring `Retry-After`, sent on recovery; 404 not retried; fallback form `{hearing, sharedTime}` passed through unexpanded; `CJSCPPUID` = command `userId` or system user when absent — fails first (Acceptance Scenarios 4–7, DV-10, DV-17, DV-23)
 - [ ] T055 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadUnavailableParkIT.java`: every source missing on a non-final delivery → `PARKED(payload-unavailable)`, switch not read, no body, request `RETRYING`, message abandoned, `probation_parked_total` incremented, ERROR line — fails first (Acceptance Scenario 8)
 - [ ] T056 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadRerunInPlaceIT.java`: payload now available on redelivery → same attempt-1 row re-run in place, no new `PENDING`, `attempts` incremented, `note=prev=PARKED/payload-unavailable`, outcome `SENT`, request `COMPLETED` — fails first (Acceptance Scenario 9, FR-002-041)
@@ -291,7 +291,16 @@ description: "Task list for HMPPS distribution (slice 002)"
 
 ### Implementation for User Story 3
 
-- [ ] T059 [US3] Extend `CachedHearingPayloadAdapter` with the undated-key fallback and miss classification (unreachable, timeout, blank, JSON null, unparseable → all misses) — makes T053 pass (FR-002-016)
+- [x] T059 [US3] Extend `CachedHearingPayloadAdapter` with the undated-key fallback and miss classification (unreachable, timeout, blank, JSON null, unparseable → all misses) — makes T053 pass (FR-002-016)
+
+> T053/T059 driven test-first by the extended `adapter/payload/CachedHearingPayloadAdapterTest`
+> (Redis `GenericContainer` for the hit/miss cases, Mockito doubles for the read-failure cases). RED
+> against the dated-key-only US1 adapter (`./gradlew test --tests CachedHearingPayloadAdapterTest`):
+> `11 tests completed, 3 failed` — the undated fallback returns empty (`Expecting Optional to contain
+> a value but it was empty`), and the command-timeout and unreachable reads propagate the
+> `RedisException` out of `fetch`. GREEN: with the dated→undated read chain and every read wrapped so
+> a `RedisException` is a miss for that key (and `SharedTimes` extracted for the shared defensive
+> `sharedTime` parse), all 11 pass (checkstyle/pmd main+test clean).
 - [ ] T060 [US3] Implement `adapter/payload/ResultsQueryExternalHearingClient.java` implementing the query-API leg of `HearingPayloadSource`: the retry block (408/429/5xx/connect/read, doubling backoff, `Retry-After` honoured, budget-bounded), empty/`{}`/non-JSON-as-miss, `CJSCPPUID` selection — makes T054 pass (FR-002-017)
 - [ ] T061 [US3] Compose the three-source chain (dated → undated → query) in the payload-fetch stage of `DistributionRunner`, recording `payload_source` and the attempt-fits rule against the 60s budget — makes T058's budget check and the chain-selection scenarios pass (FR-002-015, FR-002-013)
 - [ ] T062 [US3] Implement the `PARKED(payload-unavailable)`/final-delivery `FAILED(payload-unavailable)` settlement path in `DistributionRunner`/`ProcessedRequestRepository`, with the switch stage skipped entirely when the payload is unavailable — makes T055, T057 pass (FR-002-018, FR-002-047, FR-002-048)

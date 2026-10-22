@@ -1,8 +1,13 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisCommandTimeoutException;
+import io.lettuce.core.RedisConnectionException;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.time.Instant;
@@ -72,6 +77,10 @@ class CachedHearingPayloadAdapterTest {
         return PREFIX + hearingId + "_" + day + "_result_";
     }
 
+    private String undatedKey(final UUID hearingId) {
+        return PREFIX + hearingId + "_result_";
+    }
+
     @Test
     @DisplayName("reads the dated key and records cache-day with the parsed sharedTime")
     void reads_the_dated_key() {
@@ -137,5 +146,82 @@ class CachedHearingPayloadAdapterTest {
         commands.set(datedKey(hearingId, day), "{not json");
 
         assertThat(adapter.fetch(command(hearingId, day))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("falls back to the undated key and records cache-nullday when the dated key is absent")
+    void reads_the_undated_key_when_dated_absent() {
+        final UUID hearingId = UUID.randomUUID();
+        final LocalDate day = LocalDate.parse("2026-08-19");
+        commands.set(undatedKey(hearingId),
+                "{\"hearing\":{\"id\":\"u\"},\"sharedTime\":\"2026-08-19T16:42:07.512Z\"}");
+
+        final Optional<FetchedPayload> fetched = adapter.fetch(command(hearingId, day));
+
+        assertThat(fetched).isPresent();
+        assertThat(fetched.get().source()).isEqualTo(PayloadSource.CACHE_NULLDAY);
+        assertThat(fetched.get().sharedTime()).contains(Instant.parse("2026-08-19T16:42:07.512Z"));
+        assertThat(fetched.get().payload().get("hearing").get("id").asString()).isEqualTo("u");
+    }
+
+    @Test
+    @DisplayName("prefers the dated key over the undated key when both are present")
+    void prefers_the_dated_key_over_the_undated_key() {
+        final UUID hearingId = UUID.randomUUID();
+        final LocalDate day = LocalDate.parse("2026-08-19");
+        commands.set(datedKey(hearingId, day), "{\"hearing\":{\"id\":\"dated\"}}");
+        commands.set(undatedKey(hearingId), "{\"hearing\":{\"id\":\"undated\"}}");
+
+        final Optional<FetchedPayload> fetched = adapter.fetch(command(hearingId, day));
+
+        assertThat(fetched).isPresent();
+        assertThat(fetched.get().source()).isEqualTo(PayloadSource.CACHE_DAY);
+        assertThat(fetched.get().payload().get("hearing").get("id").asString()).isEqualTo("dated");
+    }
+
+    @Test
+    @DisplayName("misses when the undated value is blank, JSON null or unparseable")
+    void misses_when_the_undated_value_is_unusable() {
+        final UUID hearingId = UUID.randomUUID();
+        final LocalDate day = LocalDate.parse("2026-08-19");
+        commands.set(undatedKey(hearingId), "null");
+
+        assertThat(adapter.fetch(command(hearingId, day))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("treats a command timeout on the read as a miss, not a run failure")
+    void misses_when_the_read_times_out() {
+        @SuppressWarnings("unchecked")
+        final StatefulRedisConnection<String, String> unreachable =
+                mock(StatefulRedisConnection.class);
+        @SuppressWarnings("unchecked")
+        final RedisCommands<String, String> timingOut = mock(RedisCommands.class);
+        when(unreachable.sync()).thenReturn(timingOut);
+        when(timingOut.get(anyString()))
+                .thenThrow(new RedisCommandTimeoutException("command timed out"));
+        final CachedHearingPayloadAdapter timeoutAdapter =
+                new CachedHearingPayloadAdapter(unreachable, PREFIX);
+
+        assertThat(timeoutAdapter.fetch(command(UUID.randomUUID(), LocalDate.parse("2026-08-19"))))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("treats an unreachable cache on the read as a miss, not a run failure")
+    void misses_when_the_cache_is_unreachable() {
+        @SuppressWarnings("unchecked")
+        final StatefulRedisConnection<String, String> unreachable =
+                mock(StatefulRedisConnection.class);
+        @SuppressWarnings("unchecked")
+        final RedisCommands<String, String> refusing = mock(RedisCommands.class);
+        when(unreachable.sync()).thenReturn(refusing);
+        when(refusing.get(anyString()))
+                .thenThrow(new RedisConnectionException("connection refused"));
+        final CachedHearingPayloadAdapter refusingAdapter =
+                new CachedHearingPayloadAdapter(unreachable, PREFIX);
+
+        assertThat(refusingAdapter.fetch(command(UUID.randomUUID(), LocalDate.parse("2026-08-19"))))
+                .isEmpty();
     }
 }
