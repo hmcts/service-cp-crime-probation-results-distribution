@@ -18,6 +18,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.WireValued;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 
 @DisplayName("closed metric labels")
 class ClosedLabelSetIT {
@@ -59,7 +60,8 @@ class ClosedLabelSetIT {
     private static Set<String> vocabularyValues() {
         final Set<String> values = new HashSet<>();
         final Class<?>[] vocabularies = {AttemptOrigin.class, BodyShape.class, DeadLetterReason.class,
-            HttpStatusBucket.class, Leg.class, LegReason.class, LegStatus.class};
+            HttpStatusBucket.class, Leg.class, LegReason.class, LegStatus.class,
+            YouthSwitchRecordedValue.class};
         for (final Class<?> vocabulary : vocabularies) {
             Arrays.stream(vocabulary.getEnumConstants()).map(WireValued.class::cast)
                     .map(WireValued::wireValue).forEach(values::add);

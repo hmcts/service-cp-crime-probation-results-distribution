@@ -1,5 +1,6 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
+import java.time.Duration;
 import java.util.Optional;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.BodyShape;
@@ -65,4 +66,7 @@ public interface OutcomeMetrics {
 
     /** Counts a gateway send that recovered to SENT after a 429 or redelivery. */
     void gatewayRecovered(GatewayRecovery after);
+
+    /** Records the duration of one gateway POST attempt, excluding retry waits. */
+    void gatewayRequestDuration(Leg leg, Duration duration);
 }

@@ -267,6 +267,7 @@ public final class MetricRegistry implements OutcomeMetrics {
      * @param leg      the leg
      * @param duration the attempt duration
      */
+    @Override
     public void gatewayRequestDuration(final Leg leg, final Duration duration) {
         Timer.builder(GATEWAY_DURATION_M).tag(TAG_LEG, leg.wireValue()).register(registry)
                 .record(duration);

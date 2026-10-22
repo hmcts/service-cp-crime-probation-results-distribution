@@ -133,7 +133,6 @@ public final class DistributionRunner {
                              final boolean finalPermittedDelivery) {
         final YouthSwitchDecision decision = youthFilterSource.read(command);
         final YouthSwitchRecordedValue recordedSwitch = applyDefault(decision);
-        metrics.youthSwitchState(recordedSwitch);
         final Optional<YouthSwitchUnreadableCause> switchCause = decision
                 instanceof YouthSwitchDecision.Unreadable unreadable
                 ? Optional.of(unreadable.cause()) : Optional.empty();
@@ -215,6 +214,7 @@ public final class DistributionRunner {
         if (!recorded) {
             return new RunResult(runOrigin, outcome.status(), outcome.reason(), false);
         }
+        outcome.youthSwitch().ifPresent(metrics::youthSwitchState);
         metrics.legOutcome(Leg.HMPPS, outcome.status(), outcome.reason(), runOrigin, false,
                 shape, httpBucket(outcome.httpStatus()));
         if (outcome.status() == LegStatus.PARKED) {

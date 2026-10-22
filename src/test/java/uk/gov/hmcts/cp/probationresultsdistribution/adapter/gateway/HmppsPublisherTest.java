@@ -27,8 +27,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.HmppsSender.SentBody;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
-import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
 
 @DisplayName("the HMPPS gateway publisher")
@@ -40,13 +40,15 @@ class HmppsPublisherTest {
 
     private WireMockServer gateway;
     private HmppsPublisher publisher;
+    private MetricRegistry metrics;
 
     @BeforeEach
     void setUp() {
         gateway = new WireMockServer(WireMockConfiguration.options().dynamicPort());
         gateway.start();
+        metrics = new MetricRegistry(new SimpleMeterRegistry());
         publisher = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
-                Duration.ofSeconds(5), Duration.ofSeconds(60));
+                Duration.ofSeconds(5), Duration.ofSeconds(60), metrics);
     }
 
     @AfterEach
@@ -159,7 +161,7 @@ class HmppsPublisherTest {
                 .withFixedDelay(500)));
         final HmppsPublisher shortReadTimeout = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
                 Duration.ofSeconds(1), Duration.ofMillis(100), 3,
-                Duration.ofMillis(5), Duration.ofMillis(50), Duration.ofSeconds(5));
+                Duration.ofMillis(5), Duration.ofMillis(50), Duration.ofSeconds(5), metrics);
 
         final SentBody result = shortReadTimeout.send(body());
 
@@ -180,7 +182,7 @@ class HmppsPublisherTest {
                 .whenScenarioStateIs("recovered").willReturn(aResponse().withStatus(200)));
         final HmppsPublisher retrying = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
                 Duration.ofSeconds(1), Duration.ofSeconds(2), 3,
-                Duration.ofMillis(5), Duration.ofMillis(50), Duration.ofSeconds(5));
+                Duration.ofMillis(5), Duration.ofMillis(50), Duration.ofSeconds(5), metrics);
 
         final PublishOutcome.Sent result = (PublishOutcome.Sent) retrying.send(body()).outcome();
 
@@ -201,7 +203,7 @@ class HmppsPublisherTest {
                 .whenScenarioStateIs("recovered").willReturn(aResponse().withStatus(200)));
         final HmppsPublisher retrying = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
                 Duration.ofSeconds(1), Duration.ofSeconds(2), 3,
-                Duration.ofMillis(5), Duration.ofSeconds(10), Duration.ofSeconds(10));
+                Duration.ofMillis(5), Duration.ofSeconds(10), Duration.ofSeconds(10), metrics);
         final long started = System.nanoTime();
 
         final PublishOutcome.Sent result = (PublishOutcome.Sent) retrying.send(body()).outcome();
@@ -224,7 +226,7 @@ class HmppsPublisherTest {
                 .whenScenarioStateIs("recovered").willReturn(aResponse().withStatus(200)));
         final HmppsPublisher retrying = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
                 Duration.ofSeconds(1), Duration.ofSeconds(2), 3,
-                Duration.ofMillis(30), Duration.ofMillis(60), Duration.ofSeconds(5));
+                Duration.ofMillis(30), Duration.ofMillis(60), Duration.ofSeconds(5), metrics);
         final long started = System.nanoTime();
 
         final PublishOutcome.Sent result = (PublishOutcome.Sent) retrying.send(body()).outcome();
@@ -257,7 +259,7 @@ class HmppsPublisherTest {
         final String deadUrl = closed.baseUrl() + PATH;
         closed.stop();
         final HmppsPublisher toClosedPort = new HmppsPublisher(deadUrl, KEY,
-                Duration.ofSeconds(1), Duration.ofSeconds(2));
+                Duration.ofSeconds(1), Duration.ofSeconds(2), metrics);
         final long started = System.nanoTime();
 
         final SentBody result = toClosedPort.send(body());
@@ -316,7 +318,7 @@ class HmppsPublisherTest {
                 .withHeader("Retry-After", "2").withFixedDelay(350)));
         final HmppsPublisher budgetBound = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
                 Duration.ofSeconds(1), Duration.ofSeconds(1), 3,
-                Duration.ofMillis(5), Duration.ofSeconds(10), Duration.ofMillis(800));
+                Duration.ofMillis(5), Duration.ofSeconds(10), Duration.ofMillis(800), metrics);
 
         final SentBody result = budgetBound.send(body());
 

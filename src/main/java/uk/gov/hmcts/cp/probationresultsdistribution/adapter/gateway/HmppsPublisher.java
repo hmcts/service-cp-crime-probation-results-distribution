@@ -1,6 +1,5 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
 import java.net.UnknownHostException;
@@ -17,8 +16,8 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.HmppsSender;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.OutcomeMetrics;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.StageBudget;
-import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
@@ -55,7 +54,7 @@ public final class HmppsPublisher implements HmppsSender {
     private final String subscriptionKey;
     private final RetryPolicy retryPolicy;
     private final Duration stageDuration;
-    private final MetricRegistry metrics;
+    private final OutcomeMetrics metrics;
 
     /**
      * Creates the publisher over the HMPPS route and its subscription key.
@@ -66,28 +65,10 @@ public final class HmppsPublisher implements HmppsSender {
      * @param readTimeout     the read timeout (H27: 60 s)
      */
     public HmppsPublisher(final String url, final String subscriptionKey,
-                          final Duration connectTimeout, final Duration readTimeout) {
-        this(url, subscriptionKey, connectTimeout, readTimeout, 3,
-                Duration.ofMillis(500), Duration.ofSeconds(10), Duration.ofSeconds(130),
-                new MetricRegistry(new SimpleMeterRegistry()));
-    }
-
-    /** Creates the publisher with the shared service metrics. */
-    public HmppsPublisher(final String url, final String subscriptionKey,
                           final Duration connectTimeout, final Duration readTimeout,
-                          final MetricRegistry metrics) {
+                          final OutcomeMetrics metrics) {
         this(url, subscriptionKey, connectTimeout, readTimeout, 3,
                 Duration.ofMillis(500), Duration.ofSeconds(10), Duration.ofSeconds(130), metrics);
-    }
-
-    /** Creates the publisher with its retry and send-stage limits. */
-    public HmppsPublisher(final String url, final String subscriptionKey,
-                          final Duration connectTimeout, final Duration readTimeout,
-                          final int maxAttempts, final Duration initialBackoff,
-                          final Duration maxBackoff, final Duration stageDuration) {
-        this(url, subscriptionKey, connectTimeout, readTimeout, maxAttempts,
-                initialBackoff, maxBackoff, stageDuration,
-                new MetricRegistry(new SimpleMeterRegistry()));
     }
 
     /** Creates the publisher with retry limits and the shared service metrics. */
@@ -96,7 +77,7 @@ public final class HmppsPublisher implements HmppsSender {
                           final Duration connectTimeout, final Duration readTimeout,
                           final int maxAttempts, final Duration initialBackoff,
                           final Duration maxBackoff, final Duration stageDuration,
-                          final MetricRegistry metrics) {
+                          final OutcomeMetrics metrics) {
         this.url = url;
         this.subscriptionKey = subscriptionKey;
         this.retryPolicy = new RetryPolicy(maxAttempts, initialBackoff, maxBackoff,
@@ -128,13 +109,18 @@ public final class HmppsPublisher implements HmppsSender {
             Response response;
             final long startedAt = System.nanoTime();
             try {
-                response = restClient.post().uri(url)
-                    .header(CONTENT_TYPE_HEADER, JSON)
-                    .header(SUBSCRIPTION_KEY_HEADER, subscriptionKey)
-                    .body(body)
-                    .exchange((request, received) -> new Response(
-                            received.getStatusCode().value(),
-                            received.getHeaders().getFirst("Retry-After")));
+                try {
+                    response = restClient.post().uri(url)
+                        .header(CONTENT_TYPE_HEADER, JSON)
+                        .header(SUBSCRIPTION_KEY_HEADER, subscriptionKey)
+                        .body(body)
+                        .exchange((request, received) -> new Response(
+                                received.getStatusCode().value(),
+                                received.getHeaders().getFirst("Retry-After")));
+                } finally {
+                    metrics.gatewayRequestDuration(Leg.HMPPS,
+                            Duration.ofNanos(System.nanoTime() - startedAt));
+                }
             } catch (final ResourceAccessException transportFailure) {
                 if (!isNeverSentConnectionFailure(transportFailure)
                         || attempt == retryPolicy.maxAttempts()) {
@@ -144,9 +130,6 @@ public final class HmppsPublisher implements HmppsSender {
                     return new PublishOutcome.TransientExhausted(lastStatus);
                 }
                 continue;
-            } finally {
-                metrics.gatewayRequestDuration(Leg.HMPPS,
-                        Duration.ofNanos(System.nanoTime() - startedAt));
             }
             final PublishOutcome outcome = mapStatus(response.status());
             if (outcome instanceof PublishOutcome.Sent sent) {

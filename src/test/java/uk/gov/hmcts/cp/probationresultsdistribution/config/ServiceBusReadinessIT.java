@@ -26,11 +26,15 @@ import org.springframework.test.context.ActiveProfiles;
 @DisplayName("the deployed readiness endpoint")
 class ServiceBusReadinessIT {
 
-    @Value("${local.server.port}")
-    private int port;
+    private final int port;
+    private final ServiceBusHealthIndicator broker;
 
     @Autowired
-    private ServiceBusHealthIndicator broker;
+    ServiceBusReadinessIT(@Value("${local.server.port}") final int port,
+                          final ServiceBusHealthIndicator broker) {
+        this.port = port;
+        this.broker = broker;
+    }
 
     @Test
     @DisplayName("stays up with a healthy database when broker health is down")
