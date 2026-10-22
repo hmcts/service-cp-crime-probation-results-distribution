@@ -10,6 +10,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.http.Fault;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -149,5 +151,117 @@ class ResultsQueryExternalHearingClientTest {
         assertThat(client.fetch(command(Optional.empty()), deadline())).isEmpty();
 
         wireMock.verify(4, getRequestedFor(urlPathEqualTo(PATH)));
+    }
+
+    @Test
+    @DisplayName("retries a 408 then is sent on the 200 (DV-23)")
+    void retries_a_408_then_is_sent() {
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover-408")
+                .whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withStatus(408))
+                .willSetStateTo("second"));
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover-408")
+                .whenScenarioStateIs("second")
+                .willReturn(okJson("{\"hearing\":{\"id\":\"after-408\"}}")));
+
+        final Optional<FetchedPayload> fetched = client.fetch(command(Optional.empty()), deadline());
+
+        assertThat(fetched).isPresent();
+        assertThat(fetched.get().payload().get("hearing").get("id").asString())
+                .isEqualTo("after-408");
+        wireMock.verify(2, getRequestedFor(urlPathEqualTo(PATH)));
+    }
+
+    @Test
+    @DisplayName("retries a 429 carrying a delta-seconds Retry-After then is sent (DV-23)")
+    void retries_a_429_with_retry_after_then_is_sent() {
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover-429")
+                .whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "0"))
+                .willSetStateTo("second"));
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover-429")
+                .whenScenarioStateIs("second")
+                .willReturn(okJson("{\"hearing\":{\"id\":\"after-429\"}}")));
+
+        final Optional<FetchedPayload> fetched = client.fetch(command(Optional.empty()), deadline());
+
+        assertThat(fetched).isPresent();
+        assertThat(fetched.get().payload().get("hearing").get("id").asString())
+                .isEqualTo("after-429");
+        wireMock.verify(2, getRequestedFor(urlPathEqualTo(PATH)));
+    }
+
+    @Test
+    @DisplayName("retries a 429 with no Retry-After, backing off, then is sent (DV-23)")
+    void retries_a_429_without_retry_after_then_is_sent() {
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover-429-plain")
+                .whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withStatus(429))
+                .willSetStateTo("second"));
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover-429-plain")
+                .whenScenarioStateIs("second")
+                .willReturn(okJson("{\"hearing\":{\"id\":\"backed-off\"}}")));
+
+        final Optional<FetchedPayload> fetched = client.fetch(command(Optional.empty()), deadline());
+
+        assertThat(fetched).isPresent();
+        assertThat(fetched.get().payload().get("hearing").get("id").asString())
+                .isEqualTo("backed-off");
+        wireMock.verify(2, getRequestedFor(urlPathEqualTo(PATH)));
+    }
+
+    @Test
+    @DisplayName("ignores a non-numeric Retry-After and falls back to the computed back-off (DV-23)")
+    void ignores_a_non_numeric_retry_after() {
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("http-date")
+                .whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withStatus(503)
+                        .withHeader("Retry-After", "Wed, 21 Oct 2026 07:28:00 GMT"))
+                .willSetStateTo("second"));
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("http-date")
+                .whenScenarioStateIs("second")
+                .willReturn(okJson("{\"hearing\":{\"id\":\"computed\"}}")));
+
+        final Optional<FetchedPayload> fetched = client.fetch(command(Optional.empty()), deadline());
+
+        assertThat(fetched).isPresent();
+        assertThat(fetched.get().payload().get("hearing").get("id").asString())
+                .isEqualTo("computed");
+        wireMock.verify(2, getRequestedFor(urlPathEqualTo(PATH)));
+    }
+
+    @Test
+    @DisplayName("retries a transport failure then is sent on the 200 (DV-23)")
+    void retries_a_transport_failure_then_is_sent() {
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover-fault")
+                .whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER))
+                .willSetStateTo("second"));
+        wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover-fault")
+                .whenScenarioStateIs("second")
+                .willReturn(okJson("{\"hearing\":{\"id\":\"after-reset\"}}")));
+
+        final Optional<FetchedPayload> fetched = client.fetch(command(Optional.empty()), deadline());
+
+        assertThat(fetched).isPresent();
+        assertThat(fetched.get().payload().get("hearing").get("id").asString())
+                .isEqualTo("after-reset");
+        wireMock.verify(2, getRequestedFor(urlPathEqualTo(PATH)));
+    }
+
+    @Test
+    @DisplayName("stops before a retry whose wait would overrun the payload budget (DV-23)")
+    void stops_when_the_budget_runs_out_mid_retry() {
+        final ResultsQueryExternalHearingClient budgeted = new ResultsQueryExternalHearingClient(
+                wireMock.baseUrl(), SYSTEM_USER, Duration.ofSeconds(1), Duration.ofSeconds(1), 4,
+                Duration.ofMillis(20), Duration.ofSeconds(5));
+        wireMock.stubFor(get(urlPathEqualTo(PATH))
+                .willReturn(aResponse().withStatus(503).withHeader("Retry-After", "10")));
+
+        final Optional<FetchedPayload> fetched =
+                budgeted.fetch(command(Optional.empty()), StageBudget.startingNow(Duration.ofSeconds(5)));
+
+        assertThat(fetched).isEmpty();
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo(PATH)));
     }
 }
