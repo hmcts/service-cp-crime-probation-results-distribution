@@ -259,11 +259,14 @@ public final class DistributionRunner {
         return switch (decision) {
             case YouthSwitchDecision.Active ignored -> YouthSwitchRecordedValue.ACTIVE;
             case YouthSwitchDecision.Inactive ignored -> YouthSwitchRecordedValue.INACTIVE;
-            case YouthSwitchDecision.Unreadable ignored ->
-                    defaultWhenUnreadable == YouthSwitchRecordedValue.ACTIVE
-                            ? YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_ACTIVE
-                            : YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_INACTIVE;
+            case YouthSwitchDecision.Unreadable ignored -> defaultedUnreadable();
         };
+    }
+
+    private YouthSwitchRecordedValue defaultedUnreadable() {
+        return defaultWhenUnreadable == YouthSwitchRecordedValue.ACTIVE
+                ? YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_ACTIVE
+                : YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_INACTIVE;
     }
 
     private static MappedOutcome mapOutcome(final PublishOutcome outcome) {
