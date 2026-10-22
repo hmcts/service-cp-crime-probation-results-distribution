@@ -97,7 +97,7 @@ description: "Task list for HMPPS distribution (slice 002)"
 ### Tests for User Story 1 (MANDATORY — write and run these first) ⚠️
 
 - [x] T028 [P] [US1] Contract test for the inbound schema in `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/inbound/DistributionCommandSchemaTest.java`: valid command accepted, each invalid shape (unknown field, missing field, wrong type, `eventType` other than `Hearing_Resulted`, explicit `userId: null`) rejected — fails first (FR-002-002, FR-002-003)
-- [ ] T029 [P] [US1] WireMock contract test for the gateway send in `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/gateway/HmppsPublisherTest.java`: 200 → `Sent(200)`, no client certificate sent, `Ocp-Apim-Subscription-Key` and `Content-Type: application/json` headers present, exact serialized bytes match what was digested — fails first (FR-002-032 to FR-002-034, FR-002-037, contracts/hmpps-gateway.md)
+- [x] T029 [P] [US1] WireMock contract test for the gateway send in `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/gateway/HmppsPublisherTest.java`: 200 → `Sent(200)`, no client certificate sent, `Ocp-Apim-Subscription-Key` and `Content-Type: application/json` headers present, exact serialized bytes match what was digested — fails first (FR-002-032 to FR-002-034, FR-002-037, contracts/hmpps-gateway.md)
 - [ ] T030 [P] [US1] End-to-end integration test `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/EndToEndSentIT.java` (Service Bus emulator + Postgres Testcontainers + WireMock + Redis): valid command, payload under dated `EXT_` key, switch `ACTIVE`, gateway 200 → asserts the full acceptance scenario 1 outcome, byte-identical stored body hashing to the digest, message completed only after the writes, and `completion_reason = both-legs-terminal` — never `recovered`, since that branch depends on slice 004's recovery write which does not exist in this slice (FR-002-044) — fails first (US1 Acceptance Scenario 1, SC-002-001, SC-002-004, FR-002-044)
 - [ ] T031 [P] [US1] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/EndToEndNotApplicableIT.java`: an R1/R11-emptied payload → no POST, row `NOT_APPLICABLE` with the correct reason, no digest, no stored body, request `COMPLETED` — fails first (Acceptance Scenario 3)
 - [ ] T032 [P] [US1] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/EndToEndReceiverRejectedIT.java`: application-only hearing, gateway 400 → one POST no retry, `FAILED(receiver-rejected)`, body+digest stored, `shape=application-only`, `http=400`, request `COMPLETED` — fails first (Acceptance Scenario 4, D16(a))
@@ -119,7 +119,18 @@ description: "Task list for HMPPS distribution (slice 002)"
 > `distribution-command.schema.json` remains the documented authority.
 - [ ] T036 [P] [US1] Implement `adapter/payload/CachedHearingPayloadAdapter.java` (dated-key read only, for this story's happy path; undated/query fallback lands in US3) implementing `HearingPayloadSource`, with `payload_source=cache-day` recorded — partial implementation toward FR-002-015
 - [ ] T037 [P] [US1] Implement `adapter/usersgroups/FeaturePermissionClient.java` (happy-path `ACTIVE`/`INACTIVE` decision only; retry/timeout/unreadable branches land in US4) implementing `YouthFilterSource` per contracts/consumed-reads.md
-- [ ] T038 [US1] Implement `adapter/gateway/HmppsPublisher.java` implementing `HmppsSender`: one serialization to UTF-8 bytes, POST with the two required headers, no redirect following, maps a 2xx to `Sent(status)` — makes T029 pass (FR-002-032, FR-002-033, FR-002-037, FR-002-039)
+- [x] T038 [US1] Implement `adapter/gateway/HmppsPublisher.java` implementing `HmppsSender`: one serialization to UTF-8 bytes, POST with the two required headers, no redirect following, maps a 2xx to `Sent(status)` — makes T029 pass (FR-002-032, FR-002-033, FR-002-037, FR-002-039)
+
+> T029/T038 driven test-first by `adapter/gateway/HmppsPublisherTest` (WireMock, `dynamicPort()`).
+> RED: with `HmppsPublisher`'s constructor and `send` stubbed to throw `UnsupportedOperationException`,
+> `4 tests completed, 4 failed` — every case hitting `UnsupportedOperationException` from the
+> constructor in `setUp`. GREEN: with the publisher serialising the tree once (Jackson 3), POSTing the
+> exact bytes over a no-redirect JDK `HttpClient` (connect 5 s / read 60 s) with `Content-Type:
+> application/json` and `Ocp-Apim-Subscription-Key`, and mapping the answer to `PublishOutcome`
+> without throwing past its outcome, all 4 pass (checkstyle/pmd main+test clean; the long-lived
+> `HttpClient` carries a justified `PMD.CloseResource` suppression). The in-run connection/429 retry
+> loop and the full 4xx/5xx/3xx recorded mapping belong to US5 (T080-T086); this publisher does one
+> POST and already maps every answer so it never throws.
 - [ ] T039 [US1] Implement `persistence/OutboundLogAdapter.java` implementing `OutboundLog`: the one-UPDATE outcome write (status, reason, youth_switch, http_status, payload_source, payload_shared_time, body_digest, sent_at, service_version, note) plus the `outbound_body` insert in the same transaction — depends on T021
 - [ ] T040 [US1] Wire `DistributionRunner` to call slice 001's `pipeline.HmppsRedaction` with the effective switch state, handle the `NOT_APPLICABLE`/rules-failure/success result kinds, compute `body_digest` and read `service_version` once at startup — makes T030, T031, T033 pass (FR-002-028 to FR-002-030, FR-002-033)
 - [ ] T041 [US1] Implement `shape` derivation (`application-only` vs `case`, reading `hearing.courtApplications`/`hearing.prosecutionCases` presence) and wire it into the `probation_leg_outcomes_total` label — makes T032 pass (FR-002-059, research.md R7)
