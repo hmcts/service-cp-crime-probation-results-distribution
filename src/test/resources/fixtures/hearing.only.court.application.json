@@ -1,0 +1,250 @@
+{
+  "hearing": {
+    "id": "a1182c38-508c-4b5a-8e18-bf219f380226",
+    "jurisdictionType": "CROWN",
+    "courtCentre": {
+      "address": {
+        "address1": "The Law Courts",
+        "address2": "Altyre Road",
+        "address3": "Croydon",
+        "postcode": "CR9 5AB"
+      },
+      "code": "C01CY00",
+      "id": "07e45c88-9e5d-3e44-b664-d5345bb13be2",
+      "lja": {
+        "ljaCode": "2576",
+        "ljaName": "South London Magistrates' Court"
+      },
+      "name": "Croydon Crown Court"
+    },
+    "type": {
+      "description": "Application",
+      "id": "3449743b-95d6-4836-8941-57f588b52068"
+    },
+    "hearingDays": [
+      {
+        "listedDurationMinutes": 10,
+        "sittingDay": "2021-03-15T00:00:00.000Z"
+      }
+    ],
+    "hasSharedResults": true,
+    "courtApplications": [
+      {
+        "id": "c5e36298-80b7-4e3a-a828-fddc2db8a824",
+        "type": {
+          "appealFlag": true,
+          "applicantAppellantFlag": true,
+          "boxworkNotifTemplate": "NOT_APPLICABLE",
+          "breachType": "NOT_APPLICABLE",
+          "categoryCode": "CC",
+          "commrOfOathFlag": false,
+          "courtExtractAvlFlag": true,
+          "courtOfAppealFlag": true,
+          "id": "e940019a-84e4-3373-b1f6-cd46199dc9e6",
+          "jurisdiction": "CROWN",
+          "legislation": "section 108 of the Magistrates Courts Act 1980",
+          "linkType": "LINKED",
+          "listingNotifTemplate": "POSTAL_NOTIFICATION",
+          "offenceActiveOrder": "OFFENCE",
+          "pleaApplicableFlag": false,
+          "prosecutorThirdPartyFlag": false,
+          "spiOutApplicableFlag": true,
+          "summonsTemplateType": "NOT_APPLICABLE",
+          "type": "Appeal against sentence – Court of Appeal"
+        },
+        "applicationReceivedDate": "2021-03-15",
+        "applicant": {
+          "id": "008f83e2-9300-4260-bffe-7056e6b32432",
+          "masterDefendant": {
+            "isYouth": false,
+            "masterDefendantId": "a4654611-ca50-4ca2-8c21-7c671b6f9997",
+            "personDefendant": {
+              "arrestSummonsNumber": "TFL",
+              "bailStatus": {
+                "code": "A",
+                "description": "Not applicable",
+                "id": "86009c70-759d-3308-8de4-194886ff9a77"
+              },
+              "personDetails": {
+                "address": {
+                  "address1": "1234",
+                  "address2": "StreetDescription",
+                  "address3": "Locality2O"
+                },
+                "dateOfBirth": "1990-01-01",
+                "documentationLanguageNeeds": "ENGLISH",
+                "firstName": "Jovan",
+                "gender": "MALE",
+                "lastName": "Jerde",
+                "title": "Mr"
+              }
+            }
+          },
+          "notificationRequired": true,
+          "summonsRequired": false
+        },
+        "applicationStatus": "IN_PROGRESS",
+        "subject": {
+          "id": "008f83e2-9300-4260-bffe-7056e6b32432",
+          "masterDefendant": {
+            "isYouth": false,
+            "masterDefendantId": "e06f1327-0a23-4749-b61e-d4e901365fe2",
+            "personDefendant": {
+              "arrestSummonsNumber": "TFL",
+              "bailConditions": "",
+              "bailStatus": {
+                "code": "A",
+                "description": "Not applicable",
+                "id": "86009c70-759d-3308-8de4-194886ff9a77"
+              },
+              "personDetails": {
+                "address": {
+                  "address1": "1234",
+                  "address2": "StreetDescription",
+                  "address3": "Locality2O"
+                },
+                "dateOfBirth": "1990-01-01",
+                "documentationLanguageNeeds": "ENGLISH",
+                "firstName": "Jovan",
+                "gender": "MALE",
+                "lastName": "Jerde",
+                "title": "Mr"
+              }
+            }
+          },
+          "notificationRequired": true,
+          "summonsRequired": false
+        },
+        "applicationReference": "90GDAPPS342",
+        "respondents": [
+          {
+            "id": "bdc190e7-c939-37ca-be4b-9f615d6ef40e",
+            "notificationRequired": true,
+            "prosecutingAuthority": {
+              "address": {
+                "address1": "Criminal Justice Department",
+                "address2": "Derbyshire Constabulary",
+                "address3": "Butterley Hall",
+                "postcode": "DE5 3RS"
+              },
+              "contact": {
+                "primaryEmail": "CCSU@derbyshire.pnn.police.uk"
+              },
+              "name": "Derbyshire Police",
+              "prosecutionAuthorityCode": "DERPF",
+              "prosecutionAuthorityId": "bdc190e7-c939-37ca-be4b-9f615d6ef40e",
+              "welshName": "Heddlu Derbyshire"
+            },
+            "summonsRequired": false
+          }
+        ],
+        "applicationParticulars": "tesing",
+        "judicialResults": [
+          {
+            "alwaysPublished": false,
+            "canBeSubjectOfBreach": false,
+            "canBeSubjectOfVariation": false,
+            "category": "FINAL",
+            "courtClerk": {
+              "firstName": "Erica",
+              "lastName": "Wilson",
+              "userId": "a085e359-6069-4694-8820-7810e7dfe762"
+            },
+            "d20": false,
+            "excludedFromResults": false,
+            "isAdjournmentResult": false,
+            "isAvailableForCourtExtract": true,
+            "isConvictedResult": false,
+            "isDeleted": false,
+            "isFinancialResult": false,
+            "isUnscheduled": false,
+            "judicialResultId": "d4064cd4-ab3d-49ff-97ac-147cc0120a88",
+            "judicialResultTypeId": "2b3f7c20-8fc1-4fad-9076-df196c24b27e",
+            "label": "Granted",
+            "lastSharedDateTime": "2021-03-15",
+            "level": "O",
+            "lifeDuration": false,
+            "orderedDate": "2021-03-15",
+            "orderedHearingId": "a1182c38-508c-4b5a-8e18-bf219f380226",
+            "postHearingCustodyStatus": "A",
+            "publishedAsAPrompt": false,
+            "publishedForNows": false,
+            "rank": 84300,
+            "resultText": "Granted\n",
+            "rollUpPrompts": true,
+            "rootJudicialResultId": "d4064cd4-ab3d-49ff-97ac-147cc0120a88",
+            "rootJudicialResultTypeId": "2b3f7c20-8fc1-4fad-9076-df196c24b27e",
+            "terminatesOffenceProceedings": false,
+            "urgent": false,
+            "usergroups": []
+          }
+        ],
+        "courtApplicationCases": [
+          {
+            "prosecutionCaseId": "3bc6a0ee-7bd7-4931-be39-a6557d926eb6",
+            "isSJP": false,
+            "caseStatus": "INACTIVE",
+            "prosecutionCaseIdentifier": {
+              "address": {
+                "address1": "Criminal Justice Department",
+                "address2": "Derbyshire Constabulary",
+                "address3": "Butterley Hall",
+                "postcode": "DE5 3RS"
+              },
+              "majorCreditorCode": "PF30",
+              "prosecutionAuthorityCode": "DERPF",
+              "prosecutionAuthorityId": "bdc190e7-c939-37ca-be4b-9f615d6ef40e",
+              "prosecutionAuthorityName": "Derbyshire Police",
+              "prosecutionAuthorityOUCode": "0300000",
+              "caseURN": "90GDAPPS342"
+            },
+            "offences": [
+              {
+                "laaApplnReference": {
+                  "applicationReference": "LAA REF OFF 1",
+                  "statusId": "bbf6f4b1-79cd-45ef-8255-66ae0845a06d",
+                  "statusCode": "LAA STATUS CODE OFF 1",
+                  "statusDescription": "LAA STATUS DESC OFF 1"
+                },
+                "arrestDate": "2020-02-09",
+                "chargeDate": "2020-02-09",
+                "count": 0,
+                "id": "9e83c494-6d76-46bd-bed5-ef5d44740d38",
+                "isDisposed": false,
+                "modeOfTrial": "Summary",
+                "offenceCode": "CA03010",
+                "offenceDateCode": 1,
+                "offenceDefinitionId": "4023c959-fad1-3e47-b678-ff7f0c0c1f48",
+                "offenceLegislation": "Contrary to section 363(2) and (4) of the Communications Act 2003.",
+                "offenceTitle": "Use / install a television set without a licence",
+                "orderIndex": 1,
+                "proceedingsConcluded": true,
+                "startDate": "2020-02-09",
+                "wording": "Has a violent past and fear that he will commit further offences and\n interfere with witnesse"
+              },
+              {
+                "arrestDate": "2020-02-09",
+                "chargeDate": "2020-02-09",
+                "count": 0,
+                "id": "1a5bfd84-df66-4c01-8e27-497ab1517afd",
+                "isDisposed": false,
+                "modeOfTrial": "Summary",
+                "offenceCode": "CA03011",
+                "offenceDateCode": 1,
+                "offenceDefinitionId": "a2804f0e-ecb1-3855-947d-01ea5bb2a70b",
+                "offenceLegislation": "Contrary to section 363(3)(a) and (4) of the Communications Act 2003.",
+                "offenceTitle": "Possess a television set with intent to install / use without a licence",
+                "orderIndex": 2,
+                "proceedingsConcluded": true,
+                "startDate": "2020-02-09",
+                "wording": "Has a violent past and fear that he will commit further offences and\n interfere with witnesse"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "isBoxHearing": false
+  },
+  "sharedTime": "2021-03-15T20:00:38.380Z"
+}

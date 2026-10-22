@@ -107,6 +107,22 @@ sections below.
   and `HMPPSExternalPublisher/index.js:68-70` publishes nothing for it), or the filter failed after the
   switch was read as inactive (`PF/index.js:29-32`) (§6.1: "the HMPPS body or 'no message'").
 
+### Session 2026-10-21 (planning)
+
+- Q: FR-001-020 — what is the `INACTIVE` expectation for the SIT form the legacy did not read at
+  share time (normally the fallback form)? → A: Option (b). There is no `INACTIVE` expectation for
+  that form; it is held to its `ACTIVE` expectation, and what is derived from it, only. Running the
+  legacy ourselves for this form would mix oracle sources on the same hearing (the whole point of
+  using SIT's own logged body for `INACTIVE` is to avoid that), and this answer matches the
+  Edge Cases bullet already in this spec ("a fallback form captured later has no `INACTIVE`
+  expectation of its own").
+- Q: FR-001-021 — what is the `INACTIVE` expectation for a SIT share whose logged HMPPS body is cut
+  short at SIT's 32,768-character trace limit? → A: Option (b). No `INACTIVE` expectation for that
+  share; its `ACTIVE` expectation, and what is derived from it, stand, and the share is recorded as
+  excluded from the `INACTIVE` comparison, with its reason. Keeps the same discipline as FR-001-020:
+  an `INACTIVE` expectation comes only from SIT's own complete logged behaviour, never from our own
+  execution or a fragile partial-text comparison.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The ported HMPPS rules produce the legacy's output, and nothing else (Priority: P1)
@@ -501,26 +517,17 @@ case-13 derivation fail.
   query API (`HearingResultedCacheQuery/index.js:172-185` at `122e2152`). Where SIT's log does not show
   it, neither form has an `INACTIVE` expectation from SIT's log (Edge Cases). (H21; A3-67; §6.1;
   DIGEST §2)
-- **FR-001-020**: The `INACTIVE` expectation for the other form of a SIT share, the form SIT's legacy
-  did not read (normally the fallback form), is [NEEDS CLARIFICATION: design §6.1 and row A3-67 provide
-  SIT's logged body only for the form the legacy read at the time, and run the legacy only for `ACTIVE`
-  and synthetic cases, so this expectation is undefined (DIGEST §16, "§6.1 / A3-67"). Which of these
-  applies? (a) The executed legacy, as for `ACTIVE`. (b) No `INACTIVE` expectation for that form; it is
-  held to its `ACTIVE` expectation, and what is derived from it, only. (c) `INACTIVE` expectations for
-  that form only from shares SIT's legacy actually read in that form.] Until this is decided, the
-  harness lists every such case-state as having no expectation and never counts it as a pass.
+- **FR-001-020**: The other form of a SIT share — the form SIT's legacy did not read, normally the
+  fallback form — has **no `INACTIVE` expectation of its own**: it is held to its `ACTIVE`
+  expectation, and what is derived from it, only (Clarification, 2026-10-21). The harness lists
+  every such case-state as having no `INACTIVE` expectation, with this as its reason, and never
+  counts it as a pass.
 - **FR-001-021**: SIT's telemetry keeps at most 32,768 characters of a trace line (the limit H28's
   production measurement records). A logged body is cut short when its log line reaches that limit, or
   when the logged body is not complete JSON. A cut-short body MUST NOT be compared as a whole body, and
-  it is never repaired. The `INACTIVE` expectation of a SIT share whose logged body is cut short is
-  [NEEDS CLARIFICATION: design §6.1 and row A3-67 take SIT's logged body as the `INACTIVE` expectation
-  and execute the legacy only for `ACTIVE` and synthetic cases; a cut-short body cannot be an
-  expectation, and the design does not cover one. Which applies? (a) The executed legacy, admitted
-  only where its own log line matches the kept text character for character. (b) No `INACTIVE`
-  expectation for that share; its `ACTIVE` expectation, and what is derived from it, stand, and the
-  share is recorded as excluded from the `INACTIVE` comparison, with its reason. (c) The kept text
-  compared as a prefix of the port's rendered body, with no executed legacy.] Until this is decided,
-  the harness lists every such case-state as having no expectation and never counts it as a pass.
+  it is never repaired. A SIT share whose logged body is cut short has **no `INACTIVE` expectation of
+  its own** (Clarification, 2026-10-21): its `ACTIVE` expectation, and what is derived from it, stand,
+  and the share is recorded as excluded from the `INACTIVE` comparison, with this as its reason.
 - **FR-001-022**: The `ACTIVE` expectation of every case, and both expectations of a synthetic case,
   MUST be recorded by running the legacy at `122e2152`: the HMPPS filter (`PF/functions.js`) and the
   HMPPS publisher's body construction, which publishes nothing for an empty result

@@ -1,0 +1,188 @@
+package uk.gov.hmcts.cp.probationresultsdistribution.persistence;
+
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.UUID;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.support.TransactionTemplate;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
+
+/**
+ * The JDBC {@link ProcessedRequestRepository}. The insert is the idempotency claim: it writes the
+ * {@code processed_request} ({@code RECEIVED}) and the attempt-1 {@code PENDING}
+ * {@code outbound_message} row in one transaction, and a unique violation is handled as a concurrent
+ * or duplicate delivery, not an error. It issues no {@code DELETE} against either table and writes no
+ * {@code audit_note} (FR-002-045, FR-002-056). The database clock computes every claim expiry.
+ */
+public final class JdbcProcessedRequestRepository implements ProcessedRequestRepository {
+
+    private static final String SOURCE = "source";
+    private static final String REQUEST_ID = "requestId";
+    private static final String OWNER = "owner";
+    private static final String TOKEN = "token";
+    private static final String REQUEST_WHERE = "WHERE source = :source AND request_id = :requestId ";
+    private static final String ACTIVE_REQUEST = "AND status IN ('RECEIVED', 'RETRYING') ";
+
+    private final JdbcClient jdbc;
+    private final TransactionTemplate transactionTemplate;
+    private final long leaseSeconds;
+
+    /**
+     * Creates the repository.
+     *
+     * @param jdbc                the JDBC client
+     * @param transactionTemplate the transaction template for the two-row admission insert
+     * @param claimLease          how long an acquired claim stays live
+     */
+    public JdbcProcessedRequestRepository(final JdbcClient jdbc,
+                                          final TransactionTemplate transactionTemplate,
+                                          final Duration claimLease) {
+        this.jdbc = jdbc;
+        this.transactionTemplate = transactionTemplate;
+        this.leaseSeconds = claimLease.toSeconds();
+    }
+
+    @Override
+    public Optional<RequestRecord> find(final String source, final UUID requestId) {
+        return jdbc.sql("SELECT pr.status, pr.request_fingerprint, "
+                        + "(pr.claim_expires_at IS NOT NULL AND pr.claim_expires_at > now()) AS claim_live, "
+                        + "om.status AS attempt_one_status, om.reason AS attempt_one_reason, "
+                        + "om.http_status AS attempt_one_http_status "
+                        + "FROM processed_request pr LEFT JOIN outbound_message om "
+                        + "ON om.source = pr.source AND om.request_id = pr.request_id "
+                        + "AND om.leg = 'HMPPS' AND om.attempt = 1 "
+                        + "WHERE pr.source = :source AND pr.request_id = :requestId")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query((rs, rowNum) -> {
+                    final Integer httpStatus = (Integer) rs.getObject("attempt_one_http_status");
+                    final OptionalInt optionalHttpStatus = httpStatus == null ? OptionalInt.empty()
+                            : OptionalInt.of(httpStatus);
+                    return new RequestRecord(rs.getString("status"),
+                            rs.getString("request_fingerprint"), rs.getBoolean("claim_live"),
+                            Optional.ofNullable(rs.getString("attempt_one_status")),
+                            Optional.ofNullable(rs.getString("attempt_one_reason")), optionalHttpStatus);
+                })
+                .optional();
+    }
+
+    @Override
+    public boolean insertClaim(final DistributionCommand command, final String commandBody,
+                               final String fingerprint, final RunClaim claim) {
+        boolean inserted;
+        try {
+            transactionTemplate.executeWithoutResult(status -> insertRows(command, commandBody,
+                    fingerprint, claim));
+            inserted = true;
+        } catch (final DuplicateKeyException duplicate) {
+            // Expected: a concurrent or duplicate first delivery lost the race. Handled as a
+            // no-admission, never swallowed silently.
+            inserted = false;
+        }
+        return inserted;
+    }
+
+    private void insertRows(final DistributionCommand command, final String commandBody,
+                            final String fingerprint, final RunClaim claim) {
+        jdbc.sql("INSERT INTO processed_request (source, request_id, hearing_id, hearing_day, "
+                        + "shared_time, event_type, request_fingerprint, status, attempts, command, "
+                        + "claim_owner, claim_token, claim_expires_at) VALUES (:source, :requestId, "
+                        + ":hearingId, :hearingDay, :sharedTime, :eventType, :fingerprint, "
+                        + "'RECEIVED', 1, :command, :owner, :token, "
+                        + "now() + make_interval(secs => :lease))")
+                .param(SOURCE, command.source())
+                .param(REQUEST_ID, command.requestId())
+                .param("hearingId", command.hearingId())
+                .param("hearingDay", command.hearingDay())
+                .param("sharedTime", OffsetDateTime.ofInstant(command.sharedTime(), ZoneOffset.UTC))
+                .param("eventType", command.eventType())
+                .param("fingerprint", fingerprint)
+                .param("command", commandBody)
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .param("lease", (double) leaseSeconds)
+                .update();
+        jdbc.sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                        + "attempt_origin, status, attempts) VALUES (:id, :source, :requestId, "
+                        + "'HMPPS', 1, 'queue', 'PENDING', 0)")
+                .param("id", UUID.randomUUID())
+                .param(SOURCE, command.source())
+                .param(REQUEST_ID, command.requestId())
+                .update();
+    }
+
+    @Override
+    public boolean reclaim(final String source, final UUID requestId, final RunClaim claim) {
+        final int rows = jdbc.sql("UPDATE processed_request SET claim_owner = :owner, "
+                        + "claim_token = :token, "
+                        + "claim_expires_at = now() + make_interval(secs => :lease), "
+                        + "attempts = attempts + 1, updated_at = now() "
+                        + REQUEST_WHERE + ACTIVE_REQUEST
+                        + "AND (claim_expires_at IS NULL OR claim_expires_at <= now())")
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .param("lease", (double) leaseSeconds)
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+        return rows > 0;
+    }
+
+    @Override
+    public boolean markCompleted(final String source, final UUID requestId, final RunClaim claim,
+                                 final CompletionReason reason) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'COMPLETED', "
+                        + "completion_reason = :reason, failure_reason = NULL, claim_owner = NULL, "
+                        + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
+                        + REQUEST_WHERE + ACTIVE_REQUEST
+                        + "AND claim_owner = :owner AND claim_token = :token")
+                .param("reason", reason.wireValue())
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+        return rows > 0;
+    }
+
+    @Override
+    public boolean markRetrying(final String source, final UUID requestId, final RunClaim claim) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'RETRYING', "
+                        + "failure_reason = NULL, claim_owner = NULL, claim_token = NULL, "
+                        + "claim_expires_at = NULL, updated_at = now() "
+                        + REQUEST_WHERE + ACTIVE_REQUEST
+                        + "AND claim_owner = :owner AND claim_token = :token")
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+        return rows > 0;
+    }
+
+    @Override
+    public boolean markFailed(final String source, final UUID requestId, final RunClaim claim,
+                              final FailureReason reason, final String exhaustedMessageId) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'FAILED', "
+                        + "failure_reason = :reason, exhausted_message_id = :exhaustedMessageId, "
+                        + "completion_reason = NULL, claim_owner = NULL, claim_token = NULL, "
+                        + "claim_expires_at = NULL, updated_at = now() "
+                        + REQUEST_WHERE + ACTIVE_REQUEST
+                        + "AND claim_owner = :owner AND claim_token = :token")
+                .param("reason", reason.wireValue())
+                .param("exhaustedMessageId", exhaustedMessageId)
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+        return rows > 0;
+    }
+}
