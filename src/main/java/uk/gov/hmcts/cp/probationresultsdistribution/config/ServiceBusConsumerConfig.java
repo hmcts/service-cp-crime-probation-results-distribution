@@ -140,10 +140,11 @@ public class ServiceBusConsumerConfig {
 
     /* default */ @Bean
     ProbationMessageListener probationMessageListener(final DistributionRunner runner,
-            final ProcessedRequestRepository processedRequests, final MetricRegistry metrics) {
+            final ProcessedRequestRepository processedRequests, final MetricRegistry metrics,
+            final DistributionProperties properties) {
         return new ProbationMessageListener(new DistributionCommandParser(),
                 new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
-                processedRequests, metrics);
+                processedRequests, metrics, properties.servicebus().maxDeliveryCount());
     }
 
     /* default */ @Bean

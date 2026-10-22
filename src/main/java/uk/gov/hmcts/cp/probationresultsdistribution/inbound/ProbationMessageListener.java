@@ -43,6 +43,7 @@ public final class ProbationMessageListener {
     private final DistributionRunner runner;
     private final ProcessedRequestRepository processedRequests;
     private final MetricRegistry metrics;
+    private final int maxDeliveryCount;
 
     /**
      * Creates the listener over its collaborators.
@@ -52,17 +53,21 @@ public final class ProbationMessageListener {
      * @param runner            the distribution use case
      * @param processedRequests the request store for the per-request state transition
      * @param metrics           the metric registry
+     * @param maxDeliveryCount  the queue's own delivery budget, mirrored in configuration, used to
+     *                          recognise the final permitted delivery
      */
     public ProbationMessageListener(final DistributionCommandParser parser,
                                     final IdempotencyGuard guard,
                                     final DistributionRunner runner,
                                     final ProcessedRequestRepository processedRequests,
-                                    final MetricRegistry metrics) {
+                                    final MetricRegistry metrics,
+                                    final int maxDeliveryCount) {
         this.parser = parser;
         this.guard = guard;
         this.runner = runner;
         this.processedRequests = processedRequests;
         this.metrics = metrics;
+        this.maxDeliveryCount = maxDeliveryCount;
     }
 
     /**
@@ -118,13 +123,43 @@ public final class ProbationMessageListener {
         final GuardDecision decision = guard.admit(command, body);
         return switch (decision) {
             case GuardDecision.DuplicateComplete ignored -> new Complete();
-            case GuardDecision.Abandon ignored -> new Abandon();
+            case GuardDecision.Abandon ignored -> handBack(deliveryCount);
             case GuardDecision.DeadLetter deadLetter -> {
                 metrics.deadLettered(deadLetter.reason());
                 yield new DeadLetter(deadLetter.reason());
             }
             case GuardDecision.Admitted admitted -> runAndSettle(command, admitted.claim());
         };
+    }
+
+    /**
+     * Hands a delivery back for redelivery, or dead-letters it {@code exhausted} when this is its final
+     * permitted delivery (FR-002-007). A live claim, a lost race, a stale runner, an unexpected failure
+     * and a database outage all share this rule: abandon until the broker's budget is spent, then record
+     * the service's own {@code exhausted} reason rather than leaving the broker to park it under its own.
+     *
+     * @param deliveryCount the broker delivery count for this delivery
+     * @return the settlement to apply
+     */
+    private Settlement handBack(final long deliveryCount) {
+        if (isFinalPermittedDelivery(deliveryCount)) {
+            metrics.deadLettered(DeadLetterReason.EXHAUSTED);
+            return new DeadLetter(DeadLetterReason.EXHAUSTED);
+        }
+        return new Abandon();
+    }
+
+    /**
+     * Whether the queue will deliver this message again after this delivery. The broker counts prior
+     * unsuccessful deliveries, so the first delivery carries {@code 0} and the last one a message is
+     * entitled to carries {@code maxDeliveryCount - 1}; the comparison is {@code >=} so a message that
+     * somehow arrives past the budget is still recognised as final.
+     *
+     * @param deliveryCount the broker delivery count
+     * @return whether this is the final permitted delivery
+     */
+    private boolean isFinalPermittedDelivery(final long deliveryCount) {
+        return deliveryCount >= (long) maxDeliveryCount - 1;
     }
 
     @SuppressWarnings("PMD.OnlyOneReturn")

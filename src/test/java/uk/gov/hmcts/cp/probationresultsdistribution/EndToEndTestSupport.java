@@ -80,6 +80,8 @@ public class EndToEndTestSupport {
     protected static final String SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
     protected static final String CACHE_PREFIX = "EXT_";
     protected static final Duration POLL_TIMEOUT = Duration.ofSeconds(90);
+    /** Mirrors the committed emulator queue's {@code maxDeliveryCount}. */
+    protected static final int MAX_DELIVERY_COUNT = 5;
 
     private static final Logger LOG = LoggerFactory.getLogger(EndToEndTestSupport.class);
     private static final int REDIS_PORT = 6379;
@@ -262,7 +264,7 @@ public class EndToEndTestSupport {
                 outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
         return new ProbationMessageListener(new DistributionCommandParser(),
                 new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
-                processedRequests, registry);
+                processedRequests, registry, MAX_DELIVERY_COUNT);
     }
 
     /**
@@ -557,18 +559,18 @@ public class EndToEndTestSupport {
     protected final void seedRequest(final DistributionCommand command, final String status,
                                      final boolean claimLive) {
         final String fingerprint = new RequestFingerprint().compute(command);
+        final boolean failed = "FAILED".equals(status);
+        final String failureReason = failed ? "leg-exhausted" : null;
+        final String exhaustedMessageId = failed ? "RESULTS:" + command.requestId() : null;
         final String claimClause = claimLive
                 ? "gen_random_uuid(), gen_random_uuid(), now() + interval '1 hour'"
                 : "NULL, NULL, NULL";
-        final String failureClause = "FAILED".equals(status)
-                ? ", failure_reason = 'leg-exhausted', exhausted_message_id = 'RESULTS:"
-                        + command.requestId() + "'"
-                : "";
         jdbc().sql("INSERT INTO processed_request (source, request_id, hearing_id, hearing_day, "
                         + "shared_time, event_type, request_fingerprint, status, attempts, command, "
+                        + "failure_reason, exhausted_message_id, "
                         + "claim_owner, claim_token, claim_expires_at) VALUES (:source, :requestId, "
                         + ":hearingId, :hearingDay, :sharedTime, :eventType, :fingerprint, :status, 1, "
-                        + "'{}', " + claimClause + ")")
+                        + "'{}', :failureReason, :exhaustedMessageId, " + claimClause + ")")
                 .param("source", command.source())
                 .param("requestId", command.requestId())
                 .param("hearingId", command.hearingId())
@@ -579,14 +581,9 @@ public class EndToEndTestSupport {
                 .param("eventType", command.eventType())
                 .param("fingerprint", fingerprint)
                 .param("status", status)
+                .param("failureReason", failureReason)
+                .param("exhaustedMessageId", exhaustedMessageId)
                 .update();
-        if (!failureClause.isEmpty()) {
-            jdbc().sql("UPDATE processed_request SET status = status" + failureClause
-                            + " WHERE source = :source AND request_id = :requestId")
-                    .param("source", command.source())
-                    .param("requestId", command.requestId())
-                    .update();
-        }
     }
 
     /**

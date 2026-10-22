@@ -63,7 +63,7 @@ class ProbationMessageListenerTest {
     void setUp() {
         meter = new SimpleMeterRegistry();
         listener = new ProbationMessageListener(parser, guard, runner, processedRequests,
-                new MetricRegistry(meter));
+                new MetricRegistry(meter), 5);
         command = new DistributionCommand("RESULTS", UUID.randomUUID(), UUID.randomUUID(),
                 LocalDate.parse("2026-08-19"), Instant.parse("2026-08-19T16:42:07.512Z"),
                 "Hearing_Resulted", Optional.empty());
