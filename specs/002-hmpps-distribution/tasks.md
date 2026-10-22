@@ -510,6 +510,29 @@ of the recorded red runs and the same independent evidence (COMPLIANT spec-valid
 review, a green `jacocoTestReport check`/`build`). Principle II governs all later work without
 exception.
 
+### Independent gate review (2026-10-22) and one new-work TDD fix
+
+An independent gate (fresh code-reviewer, qa and spec-validator, with no role in the prior
+remediation) reviewed the whole of T053–T104 against the decisions above. Across three rounds it
+converged clean: code-reviewer PASS (0 findings), spec-validator COMPLIANT (0 findings). Along the
+way it also closed a real coverage gap it found (`a37d811`/`0859c9e`: a missing DV-23 results-query
+retry test) and some documentation hygiene (`a8225db`, `e95fed8`).
+
+qa's final round caught one genuine new-work violation, correctly **not** covered by either
+exception above (both apply only to the named historical commits; per the Decision note, Principle
+II governs all new work without exception): commit `3178078` ("fence the unreadable-switch metric
+behind the recorded write" — a real bug fix, moving the `probation_youth_switch_unreadable_total`
+increment to after the guarded outcome write is confirmed persisted, so a stale-runner-rejected
+write no longer counts a metric for something that was never durably recorded) bundled its test
+and fix with no recorded RED run.
+
+Reconstructed, observed, in a disposable worktree at `3178078`'s parent (`e91b63e`), git history
+unchanged: RED — the new test alone against the pre-fix `DistributionRunner`, `1 test completed, 1
+failed` (`expected: null but was: ...CumulativeCounter`, i.e. the metric was counted even though
+`recorded` was `false`). GREEN — with the fix restored, the full `DistributionRunnerTest` class
+passes. This closes qa's finding on the strength of the same recorded-evidence standard the
+historical exceptions above use, for a fix that is one commit, not a historical bundle.
+
 ---
 
 ## Dependencies & Execution Order
