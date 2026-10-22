@@ -136,11 +136,6 @@ public final class DistributionRunner {
         final Optional<YouthSwitchUnreadableCause> switchCause = decision
                 instanceof YouthSwitchDecision.Unreadable unreadable
                 ? Optional.of(unreadable.cause()) : Optional.empty();
-        if (decision instanceof YouthSwitchDecision.Unreadable unreadable) {
-            metrics.youthSwitchUnreadable(unreadable.cause(), defaultWhenUnreadable);
-            LOG.warn("HMPPS leg youth switch UNREADABLE requestId={} origin={} cause={} defaulted={}",
-                    command.requestId(), runOrigin, unreadable.cause(), defaultWhenUnreadable);
-        }
         final EffectiveSwitchState effective = recordedSwitch.removesYouthDefendants()
                 ? EffectiveSwitchState.ACTIVE : EffectiveSwitchState.INACTIVE;
         final RedactionResult redacted = redaction.redact(fetched.payload(), effective);
@@ -214,6 +209,11 @@ public final class DistributionRunner {
         if (!recorded) {
             return new RunResult(runOrigin, outcome.status(), outcome.reason(), false);
         }
+        switchCause.ifPresent(cause -> {
+            metrics.youthSwitchUnreadable(cause, defaultWhenUnreadable);
+            LOG.warn("HMPPS leg youth switch UNREADABLE requestId={} origin={} cause={} defaulted={}",
+                    command.requestId(), runOrigin, cause, defaultWhenUnreadable);
+        });
         outcome.youthSwitch().ifPresent(metrics::youthSwitchState);
         metrics.legOutcome(Leg.HMPPS, outcome.status(), outcome.reason(), runOrigin, false,
                 shape, httpBucket(outcome.httpStatus()));

@@ -415,6 +415,19 @@ class DistributionRunnerTest {
     }
 
     @Test
+    @DisplayName("does not count an unreadable switch when the fenced outcome write is rejected")
+    void does_not_count_unrecorded_unreadable_switch() {
+        givenPayload(CASE_PAYLOAD);
+        when(youthFilterSource.read(command)).thenReturn(
+                new YouthSwitchDecision.Unreadable(YouthSwitchUnreadableCause.TIMEOUT));
+        when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
+        when(outboundLog.record(any(), any())).thenReturn(false);
+
+        assertThat(runner.run(command, AttemptOrigin.QUEUE, CLAIM, false).recorded()).isFalse();
+        assertThat(meter.find("probation_youth_switch_unreadable_total").counter()).isNull();
+    }
+
+    @Test
     @DisplayName("fails payload-unavailable on the final permitted delivery, without reading the switch")
     void fails_payload_unavailable_on_the_final_permitted_delivery() {
         when(payloadSource.fetch(command)).thenReturn(Optional.empty());
