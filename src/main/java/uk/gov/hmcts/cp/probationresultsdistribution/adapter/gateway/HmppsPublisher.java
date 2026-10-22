@@ -53,12 +53,8 @@ public final class HmppsPublisher implements HmppsSender {
     private final RestClient restClient;
     private final String url;
     private final String subscriptionKey;
-    private final int maxAttempts;
-    private final Duration initialBackoff;
-    private final Duration maxBackoff;
+    private final RetryPolicy retryPolicy;
     private final Duration stageDuration;
-    private final Duration connectTimeout;
-    private final Duration readTimeout;
     private final MetricRegistry metrics;
 
     /**
@@ -103,12 +99,9 @@ public final class HmppsPublisher implements HmppsSender {
                           final MetricRegistry metrics) {
         this.url = url;
         this.subscriptionKey = subscriptionKey;
-        this.maxAttempts = maxAttempts;
-        this.initialBackoff = initialBackoff;
-        this.maxBackoff = maxBackoff;
+        this.retryPolicy = new RetryPolicy(maxAttempts, initialBackoff, maxBackoff,
+                connectTimeout.plus(readTimeout), status -> status == HTTP_TOO_MANY_REQUESTS);
         this.stageDuration = stageDuration;
-        this.connectTimeout = connectTimeout;
-        this.readTimeout = readTimeout;
         this.metrics = metrics;
         final HttpClient httpClient = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -129,10 +122,9 @@ public final class HmppsPublisher implements HmppsSender {
         "PMD.AvoidBranchingStatementAsLastInLoop"})
     private PublishOutcome post(final String body) {
         final StageBudget budget = StageBudget.startingNow(stageDuration);
-        Duration computedBackoff = initialBackoff;
         boolean recovered429 = false;
         OptionalInt lastStatus = OptionalInt.empty();
-        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+        for (int attempt = 1; attempt <= retryPolicy.maxAttempts(); attempt++) {
             Response response;
             final long startedAt = System.nanoTime();
             try {
@@ -144,13 +136,13 @@ public final class HmppsPublisher implements HmppsSender {
                             received.getStatusCode().value(),
                             received.getHeaders().getFirst("Retry-After")));
             } catch (final ResourceAccessException transportFailure) {
-                if (!isNeverSentConnectionFailure(transportFailure) || attempt == maxAttempts) {
+                if (!isNeverSentConnectionFailure(transportFailure)
+                        || attempt == retryPolicy.maxAttempts()) {
                     return new PublishOutcome.TransientExhausted(lastStatus);
                 }
-                if (!waitAndFit(budget, computedBackoff)) {
+                if (!waitAndFit(budget, retryPolicy.waitAfter(attempt, null))) {
                     return new PublishOutcome.TransientExhausted(lastStatus);
                 }
-                computedBackoff = nextWait(computedBackoff);
                 continue;
             } finally {
                 metrics.gatewayRequestDuration(Leg.HMPPS,
@@ -164,15 +156,15 @@ public final class HmppsPublisher implements HmppsSender {
             }
             if (outcome instanceof PublishOutcome.TransientExhausted transientOutcome) {
                 lastStatus = transientOutcome.httpStatus();
-                if (lastStatus.orElse(-1) != HTTP_TOO_MANY_REQUESTS || attempt == maxAttempts) {
+                if (!retryPolicy.retryable(response.status())
+                        || attempt == retryPolicy.maxAttempts()) {
                     return outcome;
                 }
                 recovered429 = true;
-                final Duration retryWait = retryAfterMillis(response.retryAfter(), computedBackoff);
+                final Duration retryWait = retryPolicy.waitAfter(attempt, response.retryAfter());
                 if (!waitAndFit(budget, retryWait)) {
                     return outcome;
                 }
-                computedBackoff = nextWait(computedBackoff);
                 continue;
             }
             return outcome;
@@ -183,8 +175,7 @@ public final class HmppsPublisher implements HmppsSender {
     private record Response(int status, String retryAfter) {}
 
     private boolean waitAndFit(final StageBudget budget, final Duration wait) {
-        final Duration worstCase = wait.plus(connectTimeout).plus(readTimeout);
-        if (!budget.attemptFits(Instant.now(), worstCase)) {
+        if (!retryPolicy.attemptFitsBefore(Instant.now().plus(wait), budget.deadline())) {
             return false;
         }
         try {
@@ -193,25 +184,7 @@ public final class HmppsPublisher implements HmppsSender {
             Thread.currentThread().interrupt();
             return false;
         }
-        return budget.attemptFits(Instant.now(), connectTimeout.plus(readTimeout));
-    }
-
-    private Duration nextWait(final Duration current) {
-        final Duration doubled = current.multipliedBy(2);
-        return doubled.compareTo(maxBackoff) > 0 ? maxBackoff : doubled;
-    }
-
-    private Duration retryAfterMillis(final String retryAfter, final Duration fallback) {
-        if (retryAfter == null || !retryAfter.matches("[0-9]+")) {
-            return fallback;
-        }
-        try {
-            final long seconds = Long.parseLong(retryAfter);
-            final Duration requested = Duration.ofSeconds(Math.max(0, seconds));
-            return requested.compareTo(maxBackoff) > 0 ? maxBackoff : requested;
-        } catch (final NumberFormatException invalid) {
-            return fallback;
-        }
+        return retryPolicy.attemptFitsBefore(Instant.now(), budget.deadline());
     }
 
     private static boolean isNeverSentConnectionFailure(final Throwable error) {
