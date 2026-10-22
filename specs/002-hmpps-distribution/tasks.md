@@ -96,7 +96,7 @@ description: "Task list for HMPPS distribution (slice 002)"
 
 ### Tests for User Story 1 (MANDATORY — write and run these first) ⚠️
 
-- [ ] T028 [P] [US1] Contract test for the inbound schema in `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/inbound/DistributionCommandSchemaTest.java`: valid command accepted, each invalid shape (unknown field, missing field, wrong type, `eventType` other than `Hearing_Resulted`, explicit `userId: null`) rejected — fails first (FR-002-002, FR-002-003)
+- [x] T028 [P] [US1] Contract test for the inbound schema in `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/inbound/DistributionCommandSchemaTest.java`: valid command accepted, each invalid shape (unknown field, missing field, wrong type, `eventType` other than `Hearing_Resulted`, explicit `userId: null`) rejected — fails first (FR-002-002, FR-002-003)
 - [ ] T029 [P] [US1] WireMock contract test for the gateway send in `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/gateway/HmppsPublisherTest.java`: 200 → `Sent(200)`, no client certificate sent, `Ocp-Apim-Subscription-Key` and `Content-Type: application/json` headers present, exact serialized bytes match what was digested — fails first (FR-002-032 to FR-002-034, FR-002-037, contracts/hmpps-gateway.md)
 - [ ] T030 [P] [US1] End-to-end integration test `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/EndToEndSentIT.java` (Service Bus emulator + Postgres Testcontainers + WireMock + Redis): valid command, payload under dated `EXT_` key, switch `ACTIVE`, gateway 200 → asserts the full acceptance scenario 1 outcome, byte-identical stored body hashing to the digest, message completed only after the writes, and `completion_reason = both-legs-terminal` — never `recovered`, since that branch depends on slice 004's recovery write which does not exist in this slice (FR-002-044) — fails first (US1 Acceptance Scenario 1, SC-002-001, SC-002-004, FR-002-044)
 - [ ] T031 [P] [US1] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/EndToEndNotApplicableIT.java`: an R1/R11-emptied payload → no POST, row `NOT_APPLICABLE` with the correct reason, no digest, no stored body, request `COMPLETED` — fails first (Acceptance Scenario 3)
@@ -106,7 +106,17 @@ description: "Task list for HMPPS distribution (slice 002)"
 
 ### Implementation for User Story 1
 
-- [ ] T035 [US1] Implement `inbound/DistributionCommandParser.java` validating against T001's vendored schema and mapping to `domain/DistributionCommand` — makes T028 pass
+- [x] T035 [US1] Implement `inbound/DistributionCommandParser.java` validating against T001's vendored schema and mapping to `domain/DistributionCommand` — makes T028 pass
+
+> T028/T035 driven test-first by `inbound/DistributionCommandSchemaTest` (plain unit). RED: with
+> `DistributionCommandParser.parse` stubbed to throw `UnsupportedOperationException`, `13 tests
+> completed, 13 failed` — every case hitting `UnsupportedOperationException` where a parsed command or
+> a `CommandValidationException` was expected. GREEN: with the explicit-validation parser implemented
+> (closed-schema field set, required-field, type/format, closed-enum and null-`userId` checks, each
+> mapped to a bounded `CommandValidationException.Kind` that never quotes a field name), all 13 pass
+> (checkstyle/pmd main+test clean). The networknt schema library declared in `build.gradle` is not
+> resolvable on this classpath, so the contract is pinned against the parser directly; the vendored
+> `distribution-command.schema.json` remains the documented authority.
 - [ ] T036 [P] [US1] Implement `adapter/payload/CachedHearingPayloadAdapter.java` (dated-key read only, for this story's happy path; undated/query fallback lands in US3) implementing `HearingPayloadSource`, with `payload_source=cache-day` recorded — partial implementation toward FR-002-015
 - [ ] T037 [P] [US1] Implement `adapter/usersgroups/FeaturePermissionClient.java` (happy-path `ACTIVE`/`INACTIVE` decision only; retry/timeout/unreadable branches land in US4) implementing `YouthFilterSource` per contracts/consumed-reads.md
 - [ ] T038 [US1] Implement `adapter/gateway/HmppsPublisher.java` implementing `HmppsSender`: one serialization to UTF-8 bytes, POST with the two required headers, no redirect following, maps a 2xx to `Sent(status)` — makes T029 pass (FR-002-032, FR-002-033, FR-002-037, FR-002-039)
