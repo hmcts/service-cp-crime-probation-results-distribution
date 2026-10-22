@@ -488,3 +488,7 @@ US3, US4 and US5 each extend a different stage of `DistributionRunner` and are i
 - The application core (`application/`, `domain/`) imports no Azure/Redis/HTTP-client/JDBC type; only `JsonNode` crosses the port boundary
 - No business REST endpoint, no VEP code, no `ProbationResultsDistributionService`/App Configuration read, no outbound schema validator — all out of scope per spec.md and constitution Principle IX
 - Stop at any checkpoint to validate a story independently before continuing
+
+### Open points
+
+- **US2 start-with-the-store-already-down migration deferral** (from T047/T051): the outage suspend/resume path is built, but the one case where a pod *boots* while the processed-log database is already unreachable is not yet fully deferred. Flyway's own `spring.flyway.enabled=true` auto-migrates at context refresh regardless of store availability, so a cold start with the database down still attempts an eager migration before `ConsumerLifecycleController.migrateOnce()` (the idempotent safety re-run) ever runs. This is YOT's third outage scenario and is out of this slice's T047 scope. A later pass can add a no-op `FlywayMigrationStrategy` to defer migration entirely to the first successful store probe. Tracked here until a slice that requires start-with-store-down picks it up.
