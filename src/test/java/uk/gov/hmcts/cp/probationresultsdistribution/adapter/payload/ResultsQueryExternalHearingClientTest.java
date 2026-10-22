@@ -118,7 +118,7 @@ class ResultsQueryExternalHearingClientTest {
     @DisplayName("retries a 503 then is sent on the 200, honouring a delta-seconds Retry-After")
     void retries_a_503_then_is_sent() {
         wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover")
-                .whenScenarioStateIs(com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED)
+                .whenScenarioStateIs(Scenario.STARTED)
                 .willReturn(aResponse().withStatus(503).withHeader("Retry-After", "0"))
                 .willSetStateTo("second"));
         wireMock.stubFor(get(urlPathEqualTo(PATH)).inScenario("recover")
