@@ -68,7 +68,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
  * polls the store for the recorded outcome. The containers are shared and the suites run in one JVM,
  * sequentially, so the per-test processor is started and stopped around each case.
  */
-class EndToEndTestSupport {
+public class EndToEndTestSupport {
 
     protected static final String QUEUE = "probation.requests";
     protected static final String GATEWAY_PATH = "/probation/api/v1/hearing/results";
@@ -109,7 +109,16 @@ class EndToEndTestSupport {
     private ServiceBusProcessorClient processor;
     private MeterRegistry meters = new SimpleMeterRegistry();
 
+    /** Starts the shared container stack once for the JVM on first subclass construction. */
     protected EndToEndTestSupport() {
+        startOnce();
+    }
+
+    /**
+     * Starts the shared container stack once for the JVM, for a context test that does not extend this
+     * base but reuses its Postgres, Redis and Service Bus emulator.
+     */
+    public static void startSharedContainers() {
         startOnce();
     }
 
@@ -230,8 +239,49 @@ class EndToEndTestSupport {
                 processedRequests, registry);
     }
 
+    /**
+     * A JDBC client over the shared Postgres container.
+     *
+     * @return the JDBC client
+     */
     protected final JdbcClient jdbc() {
         return JdbcClient.create(dataSource);
+    }
+
+    /**
+     * The shared Postgres data source, for a context that wires its own beans over it.
+     *
+     * @return the shared data source
+     */
+    public static DataSource sharedDataSource() {
+        return dataSource;
+    }
+
+    /**
+     * The shared Redis container host.
+     *
+     * @return the Redis host
+     */
+    public static String redisHost() {
+        return REDIS.getHost();
+    }
+
+    /**
+     * The shared Redis container's mapped port.
+     *
+     * @return the mapped Redis port
+     */
+    public static int redisPort() {
+        return REDIS.getMappedPort(REDIS_PORT);
+    }
+
+    /**
+     * The shared Service Bus emulator's development connection string.
+     *
+     * @return the emulator connection string
+     */
+    public static String serviceBusConnectionString() {
+        return SERVICE_BUS.getConnectionString();
     }
 
     /**
@@ -245,10 +295,20 @@ class EndToEndTestSupport {
         return meters;
     }
 
+    /**
+     * The WireMock base URL the users-groups client reads from.
+     *
+     * @return the users-groups base URL
+     */
     protected final String usersGroupsBaseUrl() {
         return wireMock.baseUrl();
     }
 
+    /**
+     * The WireMock URL the HMPPS gateway POSTs to.
+     *
+     * @return the gateway route URL
+     */
     protected final String gatewayUrl() {
         return wireMock.baseUrl() + GATEWAY_PATH;
     }
@@ -397,6 +457,12 @@ class EndToEndTestSupport {
         }
     }
 
+    /**
+     * The lowercase hex SHA-256 of a UTF-8 string, matching the stored body digest.
+     *
+     * @param value the value to digest
+     * @return the hex digest
+     */
     protected static String sha256Hex(final String value) {
         try {
             return java.util.HexFormat.of().formatHex(
