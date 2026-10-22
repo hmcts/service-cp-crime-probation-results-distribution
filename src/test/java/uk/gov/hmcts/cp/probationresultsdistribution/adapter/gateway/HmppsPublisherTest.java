@@ -100,6 +100,78 @@ class HmppsPublisherTest {
         assertThat(sha256(sentBody)).isEqualTo(sha256(result.body()));
     }
 
+    @Test
+    @DisplayName("maps a 400 to FailedNonTransient with the status, with no retry")
+    void maps_400_to_failed_non_transient() {
+        gateway.stubFor(post(urlEqualTo(PATH)).willReturn(aResponse().withStatus(400)));
+
+        final SentBody result = publisher.send(body());
+
+        assertThat(result.outcome()).isInstanceOf(PublishOutcome.FailedNonTransient.class);
+        assertThat(((PublishOutcome.FailedNonTransient) result.outcome()).httpStatus())
+                .isEqualTo(400);
+        assertThat(gateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("maps a 401 to FailedNonTransient (terminal, not parked)")
+    void maps_401_to_failed_non_transient() {
+        gateway.stubFor(post(urlEqualTo(PATH)).willReturn(aResponse().withStatus(401)));
+
+        assertThat(publisher.send(body()).outcome())
+                .isInstanceOf(PublishOutcome.FailedNonTransient.class);
+    }
+
+    @Test
+    @DisplayName("maps a 5xx to TransientExhausted with the status")
+    void maps_500_to_transient_exhausted() {
+        gateway.stubFor(post(urlEqualTo(PATH)).willReturn(aResponse().withStatus(503)));
+
+        final SentBody result = publisher.send(body());
+
+        assertThat(result.outcome()).isInstanceOf(PublishOutcome.TransientExhausted.class);
+        assertThat(((PublishOutcome.TransientExhausted) result.outcome()).httpStatus()).hasValue(503);
+    }
+
+    @Test
+    @DisplayName("maps a 408 to TransientExhausted")
+    void maps_408_to_transient_exhausted() {
+        gateway.stubFor(post(urlEqualTo(PATH)).willReturn(aResponse().withStatus(408)));
+
+        assertThat(publisher.send(body()).outcome())
+                .isInstanceOf(PublishOutcome.TransientExhausted.class);
+    }
+
+    @Test
+    @DisplayName("does not follow a 302 and maps it to TransientExhausted with the status")
+    void does_not_follow_a_302() {
+        gateway.stubFor(post(urlEqualTo(PATH)).willReturn(aResponse().withStatus(302)
+                .withHeader("Location", gateway.baseUrl() + "/elsewhere")));
+
+        final SentBody result = publisher.send(body());
+
+        assertThat(result.outcome()).isInstanceOf(PublishOutcome.TransientExhausted.class);
+        assertThat(((PublishOutcome.TransientExhausted) result.outcome()).httpStatus()).hasValue(302);
+        assertThat(gateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("maps a transport failure to TransientExhausted with no status")
+    void maps_a_transport_failure_to_transient_exhausted() {
+        final WireMockServer closed =
+                new WireMockServer(WireMockConfiguration.options().dynamicPort());
+        closed.start();
+        final String deadUrl = closed.baseUrl() + PATH;
+        closed.stop();
+        final HmppsPublisher toClosedPort = new HmppsPublisher(deadUrl, KEY,
+                Duration.ofSeconds(1), Duration.ofSeconds(2));
+
+        final SentBody result = toClosedPort.send(body());
+
+        assertThat(result.outcome()).isInstanceOf(PublishOutcome.TransientExhausted.class);
+        assertThat(((PublishOutcome.TransientExhausted) result.outcome()).httpStatus()).isEmpty();
+    }
+
     private static String sha256(final String value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")

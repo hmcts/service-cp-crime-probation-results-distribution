@@ -188,6 +188,47 @@ class DistributionCommandSchemaTest {
         }
 
         @Test
+        @DisplayName("that is blank is rejected as not JSON")
+        void rejects_a_blank_body() {
+            assertThatThrownBy(() -> parser.parse("   "))
+                    .isInstanceOf(CommandValidationException.class)
+                    .extracting(e -> ((CommandValidationException) e).kind())
+                    .isEqualTo(CommandValidationException.Kind.NOT_JSON);
+        }
+
+        @Test
+        @DisplayName("that is a JSON null is rejected as not JSON")
+        void rejects_a_json_null_body() {
+            assertThatThrownBy(() -> parser.parse("null"))
+                    .isInstanceOf(CommandValidationException.class)
+                    .extracting(e -> ((CommandValidationException) e).kind())
+                    .isEqualTo(CommandValidationException.Kind.NOT_JSON);
+        }
+
+        @Test
+        @DisplayName("with a non-string closed-enum field is rejected as the wrong type")
+        void rejects_a_non_string_enum_field() {
+            final String body = valid(false).replace("\"RESULTS\"", "123");
+
+            assertThatThrownBy(() -> parser.parse(body))
+                    .isInstanceOf(CommandValidationException.class)
+                    .extracting(e -> ((CommandValidationException) e).kind())
+                    .isEqualTo(CommandValidationException.Kind.WRONG_TYPE);
+        }
+
+        @Test
+        @DisplayName("with a non-UUID requestId is rejected as the wrong type")
+        void rejects_a_non_uuid_request_id() {
+            final String body = valid(false)
+                    .replace("\"" + REQUEST_ID + "\"", "\"not-a-uuid\"");
+
+            assertThatThrownBy(() -> parser.parse(body))
+                    .isInstanceOf(CommandValidationException.class)
+                    .extracting(e -> ((CommandValidationException) e).kind())
+                    .isEqualTo(CommandValidationException.Kind.WRONG_TYPE);
+        }
+
+        @Test
         @DisplayName("never carries the offending field name in the exception")
         void never_quotes_the_field_name() {
             final String body = valid(true).replace("}", ",\n  \"secretFieldName\": \"x\"\n}");

@@ -118,4 +118,24 @@ class CachedHearingPayloadAdapterTest {
 
         assertThat(adapter.fetch(command(hearingId, day))).isEmpty();
     }
+
+    @Test
+    @DisplayName("misses when the dated value is JSON null")
+    void misses_when_the_dated_value_is_json_null() {
+        final UUID hearingId = UUID.randomUUID();
+        final LocalDate day = LocalDate.parse("2026-08-19");
+        commands.set(datedKey(hearingId, day), "null");
+
+        assertThat(adapter.fetch(command(hearingId, day))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("misses when the dated value does not parse")
+    void misses_when_the_dated_value_is_unparseable() {
+        final UUID hearingId = UUID.randomUUID();
+        final LocalDate day = LocalDate.parse("2026-08-19");
+        commands.set(datedKey(hearingId, day), "{not json");
+
+        assertThat(adapter.fetch(command(hearingId, day))).isEmpty();
+    }
 }
