@@ -17,10 +17,11 @@
  * retention (design H20), so a body is kept 6-7 months while the digest stays on the attempt row.
  * Stored bodies are never logged.
  *
- * <p><strong>Dependency direction.</strong> Implements the store ports declared in
- * {@code application} ({@code OutboundLog} and the request store behind the idempotency guard),
- * and depends on those ports and on {@code domain} only. It never calls an adapter, the
- * {@code pipeline} or a driving adapter; the transaction boundary is chosen by the caller in
- * {@code application}.
+ * <p><strong>Dependency direction.</strong> Declares the request store the idempotency guard claims
+ * through ({@code ProcessedRequestRepository}, an infra-free interface carrying only {@code domain}
+ * types) and the {@code OutboundMessageRepository}, and implements {@code OutboundLog} (declared in
+ * {@code application}). It depends on {@code application}'s ports and on {@code domain} only. It
+ * never calls an adapter, the {@code pipeline} or a driving adapter; the transaction boundary is
+ * chosen by the caller in {@code application}.
  */
 package uk.gov.hmcts.cp.probationresultsdistribution.persistence;

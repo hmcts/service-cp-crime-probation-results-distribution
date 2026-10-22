@@ -22,14 +22,19 @@
  * {@code SubmitHearingAction} and {@code RequestIdRecipe} are the submit-hearing repair (design
  * §4.8 action 5).
  *
- * <p>The ports are declared here, as interfaces, by the side that uses them:
- * {@code HearingPayloadSource}, {@code YouthFilterSource}, {@code HmppsSender},
- * {@code OutboundLog} and the request store the guard settles through.
+ * <p>The outbound ports are declared here, as interfaces, by the side that uses them:
+ * {@code HearingPayloadSource}, {@code YouthFilterSource}, {@code HmppsSender} and
+ * {@code OutboundLog}. The processed-log store the guard claims through
+ * ({@code persistence.ProcessedRequestRepository}) is an infra-free interface declared in
+ * {@code persistence} with the rest of the store, per {@code design_rules.md}'s package tree, and
+ * carries only {@code domain} types; the guard depends on it from here.
  *
  * <p><strong>Dependency direction.</strong> This package depends on {@code domain},
- * {@code pipeline} and its own port interfaces only. It never imports from {@code inbound},
- * {@code api}, {@code adapter}, {@code persistence} or {@code config}: an adapter is reached only
- * through the port it implements, and the concrete choice is made in {@code config}. That is what
- * lets the stub sources stand in for the live ones in the local and test profiles.
+ * {@code pipeline}, its own outbound port interfaces and the persistence-declared
+ * {@code ProcessedRequestRepository} port the guard admits through. It never imports from
+ * {@code inbound}, {@code api}, {@code adapter} or {@code config}, and from {@code persistence}
+ * only that one store interface (never a JDBC adapter): an adapter is reached only through the port
+ * it implements, and the concrete choice is made in {@code config}. That is what lets the stub
+ * sources stand in for the live ones in the local and test profiles.
  */
 package uk.gov.hmcts.cp.probationresultsdistribution.application;
