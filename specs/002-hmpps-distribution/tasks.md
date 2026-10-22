@@ -497,6 +497,19 @@ Principle II (TDD, non-negotiable) governs new work from this point forward with
 this entry records why this one historical gap is closed without reconstruction rather than
 asserting the principle was followed at the time.
 
+**Scope of the exception — T053–T064 (User Story 3)**: commits `630ddfa`, `e8f04f3`, `728d614`,
+`590ffd3` and `19a4f52` each bundle a User-Story-3 test task with its paired implementation task in
+a single commit, the same commit-granularity gap against the "every commit" rule as `59b4d26`.
+These five commits are covered by the decision above. Their RED evidence is stronger than
+`59b4d26`'s: the inline narratives for T053/T059, T054/T060, T055/T057/T062, T056/T063 and
+T058/T061/T064 record the specific pre-implementation assertion-failure counts observed before the
+paired implementation (satisfying qa.md's "commit or PR narrative records the observed red run"
+criterion), even though git history alone does not split them into separate RED/GREEN commits. As
+with `59b4d26`, these commits are not reverted or reconstructed; the gap is closed on the strength
+of the recorded red runs and the same independent evidence (COMPLIANT spec-validator, a clean code
+review, a green `jacocoTestReport check`/`build`). Principle II governs all later work without
+exception.
+
 ---
 
 ## Dependencies & Execution Order
