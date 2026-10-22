@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.OutcomeMetrics;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.BodyShape;
@@ -96,6 +97,8 @@ public final class MetricRegistry implements OutcomeMetrics {
 
     private final MeterRegistry registry;
     private final AtomicInteger intakeSuspended = new AtomicInteger(0);
+    private final AtomicLong oldestNonTerminalAgeMillis = new AtomicLong(0);
+    private final AtomicLong oldestParkedAgeMillis = new AtomicLong(0);
 
     /**
      * Creates the registry over a Micrometer {@link MeterRegistry}.
@@ -107,6 +110,10 @@ public final class MetricRegistry implements OutcomeMetrics {
         Gauge.builder(INTAKE_SUSPENDED_M, intakeSuspended, AtomicInteger::doubleValue)
                 .tag(TAG_CAUSE, "database")
                 .register(registry);
+        Gauge.builder(OLDEST_NON_TERMINAL_AGE_M, oldestNonTerminalAgeMillis,
+                value -> value.get() / 1000.0d).register(registry);
+        Gauge.builder(OLDEST_PARKED_AGE_M, oldestParkedAgeMillis,
+                value -> value.get() / 1000.0d).register(registry);
     }
 
     /**
@@ -118,6 +125,12 @@ public final class MetricRegistry implements OutcomeMetrics {
      */
     public void recordIntakeSuspended(final boolean suspended) {
         intakeSuspended.set(suspended ? 1 : 0);
+    }
+
+    /** Updates the two database-derived ages, in seconds. */
+    public void recordOldestAges(final double nonTerminalSeconds, final double parkedSeconds) {
+        oldestNonTerminalAgeMillis.set(Math.max(0L, (long) (nonTerminalSeconds * 1000.0d)));
+        oldestParkedAgeMillis.set(Math.max(0L, (long) (parkedSeconds * 1000.0d)));
     }
 
     /**
@@ -202,6 +215,7 @@ public final class MetricRegistry implements OutcomeMetrics {
     }
 
     /** Counts one ambiguous switch answer (more than one permission). */
+    @Override
     public void youthSwitchAmbiguous() {
         registry.counter(YOUTH_AMBIGUOUS_M).increment();
     }
@@ -221,6 +235,7 @@ public final class MetricRegistry implements OutcomeMetrics {
      *
      * @param after how it recovered
      */
+    @Override
     public void gatewayRecovered(final GatewayRecovery after) {
         registry.counter(GATEWAY_RECOVERED_M, Tags.of(Tag.of(TAG_AFTER, after.wireValue()))).increment();
     }

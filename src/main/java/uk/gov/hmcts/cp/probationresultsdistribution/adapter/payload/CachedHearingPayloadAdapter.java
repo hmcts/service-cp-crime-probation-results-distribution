@@ -54,23 +54,18 @@ public final class CachedHearingPayloadAdapter implements HearingPayloadSource {
     }
 
     private Optional<FetchedPayload> readKey(final String key, final PayloadSource source) {
-        final String raw = read(key);
-        Optional<FetchedPayload> result = Optional.empty();
-        if (raw != null && !raw.isBlank()) {
-            result = parse(raw, source);
-        }
-        return result;
+        return read(key).filter(raw -> !raw.isBlank()).flatMap(raw -> parse(raw, source));
     }
 
-    private String read(final String key) {
-        String raw;
+    private Optional<String> read(final String key) {
+        Optional<String> raw;
         try {
-            raw = connection.sync().get(key);
+            raw = Optional.ofNullable(connection.sync().get(key));
         } catch (final RedisException unreachable) {
             // An unreachable, timed-out or refused read is a miss for this key, not a run failure
             // (FR-002-016, DV-07). Not swallowed: mapped to the explicit miss (null) the caller treats
             // as the next source's turn.
-            raw = null;
+            raw = Optional.empty();
         }
         return raw;
     }

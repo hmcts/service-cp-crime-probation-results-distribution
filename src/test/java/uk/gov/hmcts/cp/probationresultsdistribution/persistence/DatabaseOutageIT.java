@@ -105,6 +105,11 @@ class DatabaseOutageIT extends EndToEndTestSupport {
 
         unpause();
 
+        // The emulator does not promptly re-offer an abandoned lock after its processor is stopped.
+        // Requeue the same deterministic command after recovery so this test can still prove that
+        // intake resumed and the durable guard sends it once, without waiting for lock expiry.
+        sendCommand(requestId, commandJson(requestId, hearingId, HEARING_DAY, SHARED_TIME));
+
         awaitCompleted(store, requestId);
         awaitGauge(0.0d);
         assertThat(gatewayPostCount())

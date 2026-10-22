@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -111,6 +112,34 @@ class IdempotencyGuardTest {
         when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
 
         assertThat(guard.admit(command, BODY)).isInstanceOf(GuardDecision.Admitted.class);
+    }
+
+    @Test
+    @DisplayName("marks only an expired claim with a PENDING attempt-1 row as a crash rerun")
+    void identifies_pending_attempt_as_crash_rerun() {
+        when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(
+                new RequestRecord("RETRYING", fp, false, Optional.of("PENDING"),
+                        Optional.empty(), OptionalInt.empty())));
+        when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
+
+        final GuardDecision.Admitted decision = (GuardDecision.Admitted) guard.admit(command, BODY);
+
+        assertThat(decision.crashRerun()).isTrue();
+        assertThat(decision.gatewayParked()).isFalse();
+    }
+
+    @Test
+    @DisplayName("does not count a parked row as a crash rerun and identifies only a 5xx recovery")
+    void distinguishes_gateway_5xx_reclaim_from_crash_rerun() {
+        when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(
+                new RequestRecord("RETRYING", fp, false, Optional.of("PARKED"),
+                        Optional.of("gateway-transient"), OptionalInt.of(503))));
+        when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
+
+        final GuardDecision.Admitted decision = (GuardDecision.Admitted) guard.admit(command, BODY);
+
+        assertThat(decision.crashRerun()).isFalse();
+        assertThat(decision.gatewayParked()).isTrue();
     }
 
     @Test

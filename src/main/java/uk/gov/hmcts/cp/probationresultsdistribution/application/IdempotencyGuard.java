@@ -86,8 +86,15 @@ public final class IdempotencyGuard {
             decision = new GuardDecision.Abandon();
         } else {
             final RunClaim claim = RunClaim.fresh();
-            decision = repository.reclaim(command.source(), command.requestId(), claim)
-                    ? new GuardDecision.Admitted(claim) : new GuardDecision.Abandon();
+            final boolean reclaimed = repository.reclaim(command.source(), command.requestId(), claim);
+            final boolean crashRerun = reclaimed && row.attemptOneStatus().filter(
+                    "PENDING"::equals).isPresent();
+            final boolean gatewayParked = reclaimed && row.attemptOneStatus().filter(
+                    "PARKED"::equals).isPresent() && row.attemptOneReason().filter(
+                    "gateway-transient"::equals).isPresent() && row.attemptOneHttpStatus()
+                    .stream().anyMatch(status -> status >= 500 && status < 600);
+            decision = reclaimed ? new GuardDecision.Admitted(claim, crashRerun, gatewayParked)
+                    : new GuardDecision.Abandon();
         }
         return decision;
     }

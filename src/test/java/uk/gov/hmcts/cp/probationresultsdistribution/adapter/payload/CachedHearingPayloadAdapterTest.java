@@ -190,6 +190,7 @@ class CachedHearingPayloadAdapterTest {
     }
 
     @Test
+    @SuppressWarnings("PMD.CloseResource")
     @DisplayName("treats a command timeout on the read as a miss, not a run failure")
     void misses_when_the_read_times_out() {
         @SuppressWarnings("unchecked")
@@ -208,6 +209,7 @@ class CachedHearingPayloadAdapterTest {
     }
 
     @Test
+    @SuppressWarnings("PMD.CloseResource")
     @DisplayName("treats an unreachable cache on the read as a miss, not a run failure")
     void misses_when_the_cache_is_unreachable() {
         @SuppressWarnings("unchecked")

@@ -10,10 +10,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -21,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.HmppsSender.SentBody;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
 
 @DisplayName("the HMPPS gateway publisher")
@@ -131,6 +136,7 @@ class HmppsPublisherTest {
 
         assertThat(result.outcome()).isInstanceOf(PublishOutcome.TransientExhausted.class);
         assertThat(((PublishOutcome.TransientExhausted) result.outcome()).httpStatus()).hasValue(503);
+        assertThat(gateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(1);
     }
 
     @Test
@@ -140,6 +146,90 @@ class HmppsPublisherTest {
 
         assertThat(publisher.send(body()).outcome())
                 .isInstanceOf(PublishOutcome.TransientExhausted.class);
+        assertThat(gateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("does not retry a read timeout after the request reached the gateway")
+    void does_not_retry_a_read_timeout_after_write() {
+        gateway.stubFor(post(urlEqualTo(PATH)).willReturn(aResponse().withStatus(200)
+                .withFixedDelay(500)));
+        final HmppsPublisher shortReadTimeout = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
+                Duration.ofSeconds(1), Duration.ofMillis(100), 3,
+                Duration.ofMillis(5), Duration.ofMillis(50), Duration.ofSeconds(5));
+
+        final SentBody result = shortReadTimeout.send(body());
+
+        assertThat(result.outcome()).isInstanceOf(PublishOutcome.TransientExhausted.class);
+        assertThat(((PublishOutcome.TransientExhausted) result.outcome()).httpStatus()).isEmpty();
+        assertThat(gateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("retries a 429 using Retry-After and reports the recovered send")
+    void retries_429_and_marks_recovery() {
+        final String retryScenario = "retry-after-rate-limit";
+        gateway.stubFor(post(urlEqualTo(PATH)).inScenario(retryScenario)
+                .whenScenarioStateIs(com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED)
+                .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "0"))
+                .willSetStateTo("recovered"));
+        gateway.stubFor(post(urlEqualTo(PATH)).inScenario(retryScenario)
+                .whenScenarioStateIs("recovered").willReturn(aResponse().withStatus(200)));
+        final HmppsPublisher retrying = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
+                Duration.ofSeconds(1), Duration.ofSeconds(2), 3,
+                Duration.ofMillis(5), Duration.ofMillis(50), Duration.ofSeconds(5));
+
+        final PublishOutcome.Sent result = (PublishOutcome.Sent) retrying.send(body()).outcome();
+
+        assertThat(result.httpStatus()).isEqualTo(200);
+        assertThat(result.recovery()).contains(GatewayRecovery.IN_RUN_429);
+        assertThat(gateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("honours a two-second Retry-After and marks a recovered 429")
+    void honours_retry_after_two_seconds() {
+        final String retryScenario = "retry-after-two-seconds";
+        gateway.stubFor(post(urlEqualTo(PATH)).inScenario(retryScenario)
+                .whenScenarioStateIs(com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED)
+                .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "2"))
+                .willSetStateTo("recovered"));
+        gateway.stubFor(post(urlEqualTo(PATH)).inScenario(retryScenario)
+                .whenScenarioStateIs("recovered").willReturn(aResponse().withStatus(200)));
+        final HmppsPublisher retrying = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
+                Duration.ofSeconds(1), Duration.ofSeconds(2), 3,
+                Duration.ofMillis(5), Duration.ofSeconds(10), Duration.ofSeconds(10));
+        final long started = System.nanoTime();
+
+        final PublishOutcome.Sent result = (PublishOutcome.Sent) retrying.send(body()).outcome();
+
+        final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        assertThat(elapsedMillis).isBetween(1_900L, 5_000L);
+        assertThat(result.recovery()).contains(GatewayRecovery.IN_RUN_429);
+        assertThat(gateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("falls back to computed backoff for a non-numeric Retry-After")
+    void falls_back_for_non_numeric_retry_after() {
+        final String retryScenario = "invalid-retry-after";
+        gateway.stubFor(post(urlEqualTo(PATH)).inScenario(retryScenario)
+                .whenScenarioStateIs(com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED)
+                .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "later"))
+                .willSetStateTo("recovered"));
+        gateway.stubFor(post(urlEqualTo(PATH)).inScenario(retryScenario)
+                .whenScenarioStateIs("recovered").willReturn(aResponse().withStatus(200)));
+        final HmppsPublisher retrying = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
+                Duration.ofSeconds(1), Duration.ofSeconds(2), 3,
+                Duration.ofMillis(30), Duration.ofMillis(60), Duration.ofSeconds(5));
+        final long started = System.nanoTime();
+
+        final PublishOutcome.Sent result = (PublishOutcome.Sent) retrying.send(body()).outcome();
+
+        final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+        assertThat(elapsedMillis).isBetween(25L, 1_000L);
+        assertThat(result.recovery()).contains(GatewayRecovery.IN_RUN_429);
+        assertThat(gateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(2);
     }
 
     @Test
@@ -165,11 +255,64 @@ class HmppsPublisherTest {
         closed.stop();
         final HmppsPublisher toClosedPort = new HmppsPublisher(deadUrl, KEY,
                 Duration.ofSeconds(1), Duration.ofSeconds(2));
+        final long started = System.nanoTime();
 
         final SentBody result = toClosedPort.send(body());
+        final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
 
         assertThat(result.outcome()).isInstanceOf(PublishOutcome.TransientExhausted.class);
         assertThat(((PublishOutcome.TransientExhausted) result.outcome()).httpStatus()).isEmpty();
+        assertThat(elapsedMillis).isBetween(1_400L, 15_000L);
+    }
+
+    @Test
+    @DisplayName("retries a refused connection when the gateway becomes reachable")
+    void retries_connection_refusal_until_gateway_is_reachable() throws Exception {
+        final int port;
+        try (ServerSocket reservation = new ServerSocket(0)) {
+            port = reservation.getLocalPort();
+        }
+        final WireMockServer recoveringGateway = new WireMockServer(
+                WireMockConfiguration.options().port(port));
+        try (ScheduledExecutorService starter = Executors.newSingleThreadScheduledExecutor()) {
+            starter.schedule(() -> {
+                recoveringGateway.start();
+                recoveringGateway.stubFor(post(urlEqualTo(PATH))
+                        .willReturn(aResponse().withStatus(200)));
+            }, 150, TimeUnit.MILLISECONDS);
+            final HmppsPublisher retrying = new HmppsPublisher(
+                    "http://127.0.0.1:" + port + PATH, KEY,
+                    Duration.ofSeconds(1), Duration.ofSeconds(2), 3,
+                    Duration.ofMillis(500), Duration.ofSeconds(10), Duration.ofSeconds(10));
+            final long started = System.nanoTime();
+
+            try {
+                final SentBody result = retrying.send(body());
+                final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+                assertThat(result.outcome()).isInstanceOf(PublishOutcome.Sent.class);
+                assertThat(elapsedMillis).isBetween(450L, 5_000L);
+                assertThat(recoveringGateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(1);
+            } finally {
+                recoveringGateway.stop();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("does not start another 429 attempt when its wait and timeouts exceed the stage budget")
+    void refuses_429_retry_that_does_not_fit_the_send_budget() {
+        gateway.stubFor(post(urlEqualTo(PATH)).willReturn(aResponse().withStatus(429)
+                .withHeader("Retry-After", "2").withFixedDelay(350)));
+        final HmppsPublisher budgetBound = new HmppsPublisher(gateway.baseUrl() + PATH, KEY,
+                Duration.ofSeconds(1), Duration.ofSeconds(1), 3,
+                Duration.ofMillis(5), Duration.ofSeconds(10), Duration.ofMillis(800));
+
+        final SentBody result = budgetBound.send(body());
+
+        assertThat(result.outcome()).isInstanceOf(PublishOutcome.TransientExhausted.class);
+        assertThat(((PublishOutcome.TransientExhausted) result.outcome()).httpStatus()).hasValue(429);
+        assertThat(gateway.findAll(postRequestedFor(urlEqualTo(PATH)))).hasSize(1);
     }
 
     private static String sha256(final String value) {

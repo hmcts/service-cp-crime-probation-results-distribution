@@ -1,5 +1,6 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.domain;
 
+import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
@@ -18,7 +19,14 @@ public sealed interface PublishOutcome
      *
      * @param httpStatus the 2xx status the gateway answered
      */
-    record Sent(int httpStatus) implements PublishOutcome {
+    record Sent(int httpStatus, Optional<GatewayRecovery> recovery) implements PublishOutcome {
+        public Sent(final int httpStatus) {
+            this(httpStatus, Optional.empty());
+        }
+
+        public Sent {
+            recovery = recovery == null ? Optional.empty() : recovery;
+        }
     }
 
     /**

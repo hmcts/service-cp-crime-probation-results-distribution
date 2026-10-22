@@ -1,8 +1,9 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups;
 
-import java.io.IOException;
 import java.io.InputStream;
+import java.net.SocketTimeoutException;
 import java.net.http.HttpClient;
+import java.net.http.HttpTimeoutException;
 import java.time.Duration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.ResourceAccessException;
@@ -10,6 +11,7 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.OutcomeMetrics;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.YouthFilterSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchDecision;
@@ -23,10 +25,9 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadable
  * included — is {@code INACTIVE}; an empty/missing/null first entry is
  * {@code UNREADABLE(EMPTY_PERMISSIONS)}, and an unparseable body is {@code UNREADABLE(UNPARSEABLE)}.
  *
- * <p>This slice (US1) implements the happy-path 2xx decision. The legacy retry rule (3 attempts,
- * fixed 1 s wait), the finite-timeout {@code TIMEOUT} cause, and the ambiguity counter are US4's
- * (T069); this adapter reads once and maps a non-2xx answer or a transport failure to
- * {@code UNREADABLE(HTTP_FAILURE)}.
+ * <p>The read keeps the legacy retry predicate: retry no-response failures and statuses above 429,
+ * up to the configured maximum, with a fixed delay and no {@code Retry-After}. A timeout remains
+ * distinguishable from other no-response failures after the last attempt.
  */
 public final class FeaturePermissionClient implements YouthFilterSource {
 
@@ -41,10 +42,16 @@ public final class FeaturePermissionClient implements YouthFilterSource {
     private static final String PERMISSIONS = "permissions";
     private static final int HTTP_OK = 200;
     private static final int HTTP_MULTIPLE_CHOICES = 300;
+    private static final int HTTP_TOO_MANY_REQUESTS = 429;
+    private static final int MAX_RETRY_STATUS = HTTP_TOO_MANY_REQUESTS;
+    private static final int ONE_PERMISSION = 1;
 
     private final RestClient restClient;
     private final String url;
     private final String systemUserId;
+    private final int maxAttempts;
+    private final Duration retryWait;
+    private final OutcomeMetrics metrics;
 
     /**
      * Creates the client over the users-groups base URL and the system user.
@@ -54,15 +61,22 @@ public final class FeaturePermissionClient implements YouthFilterSource {
      * @param youthFilterKey the feature key (default {@code EMYouthFilter})
      * @param connectTimeout the connect timeout (DV-24: 2 s)
      * @param readTimeout    the read timeout (DV-24: 5 s)
+     * @param maxAttempts    maximum reads (3)
+     * @param retryWait      fixed delay between retryable answers (1 s)
+     * @param metrics        bounded outcome metrics, including ambiguous responses
      */
     // The HttpClient is a long-lived resource, held by the RestClient for the client's whole
     // lifetime and used on every read; it is deliberately not closed in this constructor.
     @SuppressWarnings("PMD.CloseResource")
     public FeaturePermissionClient(final String baseUrl, final String systemUserId,
                                    final String youthFilterKey, final Duration connectTimeout,
-                                   final Duration readTimeout) {
+                                   final Duration readTimeout, final int maxAttempts,
+                                   final Duration retryWait, final OutcomeMetrics metrics) {
         this.systemUserId = systemUserId;
         this.url = baseUrl + PERMISSIONS_PATH + "?key=" + youthFilterKey;
+        this.maxAttempts = maxAttempts;
+        this.retryWait = retryWait;
+        this.metrics = metrics;
         final HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(connectTimeout)
                 .build();
@@ -73,33 +87,45 @@ public final class FeaturePermissionClient implements YouthFilterSource {
 
     @Override
     public YouthSwitchDecision read(final DistributionCommand command) {
-        YouthSwitchDecision decision;
-        try {
-            decision = restClient.get().uri(url)
-                    .header(ACCEPT, ACCEPT_VALUE)
-                    .header(USER_HEADER, systemUserId)
-                    .exchange((request, response) ->
-                            decide(response.getStatusCode().value(), response.getBody()));
-        } catch (final ResourceAccessException transportFailure) {
-            // A connection failure or timeout: not swallowed — mapped to the unreadable outcome the
-            // leg defaults and carries on from (H8). The finite-timeout TIMEOUT cause is US4's.
-            decision = new YouthSwitchDecision.Unreadable(YouthSwitchUnreadableCause.HTTP_FAILURE);
+        YouthSwitchDecision decision = unreadable(YouthSwitchUnreadableCause.HTTP_FAILURE);
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                final ResponseDecision response = restClient.get().uri(url)
+                        .header(ACCEPT, ACCEPT_VALUE)
+                        .header(USER_HEADER, systemUserId)
+                        .exchange((request, answer) -> decide(answer.getStatusCode().value(),
+                                answer.getBody()));
+                decision = response.decision();
+                if (response.status() > MAX_RETRY_STATUS && attempt < maxAttempts) {
+                    if (pauseBeforeRetry()) {
+                        continue;
+                    }
+                }
+                break;
+            } catch (final ResourceAccessException transportFailure) {
+                final boolean timedOut = isTimeout(transportFailure);
+                if (attempt < maxAttempts && pauseBeforeRetry()) {
+                    continue;
+                }
+                decision = unreadable(timedOut
+                        ? YouthSwitchUnreadableCause.TIMEOUT
+                        : YouthSwitchUnreadableCause.HTTP_FAILURE);
+            }
         }
         return decision;
     }
 
-    private static YouthSwitchDecision decide(final int status, final InputStream body)
-            throws IOException {
+    private ResponseDecision decide(final int status, final InputStream body) {
         final YouthSwitchDecision decision;
         if (status < HTTP_OK || status >= HTTP_MULTIPLE_CHOICES) {
-            decision = new YouthSwitchDecision.Unreadable(YouthSwitchUnreadableCause.HTTP_FAILURE);
+            decision = unreadable(YouthSwitchUnreadableCause.HTTP_FAILURE);
         } else {
             decision = decideFromBody(body);
         }
-        return decision;
+        return new ResponseDecision(status, decision);
     }
 
-    private static YouthSwitchDecision decideFromBody(final InputStream body) throws IOException {
+    private YouthSwitchDecision decideFromBody(final InputStream body) {
         YouthSwitchDecision decision;
         try {
             final JsonNode root = MAPPER.readTree(body);
@@ -115,13 +141,16 @@ public final class FeaturePermissionClient implements YouthFilterSource {
         return decision;
     }
 
-    private static YouthSwitchDecision decideFromTree(final JsonNode root) {
+    private YouthSwitchDecision decideFromTree(final JsonNode root) {
         final JsonNode permissions = root.get(PERMISSIONS);
         final YouthSwitchDecision decision;
         if (permissions == null || !permissions.isArray() || permissions.isEmpty()) {
             decision = new YouthSwitchDecision.Unreadable(
                     YouthSwitchUnreadableCause.EMPTY_PERMISSIONS);
         } else {
+            if (permissions.size() > ONE_PERMISSION) {
+                metrics.youthSwitchAmbiguous();
+            }
             decision = decideFromFirst(permissions.get(0));
         }
         return decision;
@@ -155,5 +184,34 @@ public final class FeaturePermissionClient implements YouthFilterSource {
             result = true;
         }
         return result;
+    }
+
+    private boolean pauseBeforeRetry() {
+        boolean paused = true;
+        try {
+            Thread.sleep(retryWait.toMillis());
+        } catch (final InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            paused = false;
+        }
+        return paused;
+    }
+
+    private static boolean isTimeout(final Throwable failure) {
+        Throwable current = failure;
+        boolean timeout = false;
+        while (current != null && !timeout) {
+            timeout = current instanceof HttpTimeoutException
+                    || current instanceof SocketTimeoutException;
+            current = current.getCause();
+        }
+        return timeout;
+    }
+
+    private static YouthSwitchDecision unreadable(final YouthSwitchUnreadableCause cause) {
+        return new YouthSwitchDecision.Unreadable(cause);
+    }
+
+    private record ResponseDecision(int status, YouthSwitchDecision decision) {
     }
 }

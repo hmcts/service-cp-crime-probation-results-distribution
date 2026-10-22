@@ -50,6 +50,14 @@ class PayloadUnavailableParkIT extends EndToEndTestSupport {
         assertThat(row.get("payload_source")).isNull();
         assertThat(row.get("body_digest")).isNull();
         assertThat(parkedCount()).isGreaterThanOrEqualTo(1.0d);
+
+        // The listener budget (10) is above the broker's five, so the service never dead-letters this
+        // churning message itself; the broker exhausts it after its own five deliveries. Wait for it
+        // to leave the shared queue for the dead-letter sub-queue, so it cannot bleed into a later
+        // suite that consumes the same queue.
+        assertThat(awaitDeadLetter("RESULTS:" + requestId))
+                .as("the parked message leaves the shared main queue before the suite ends")
+                .isPresent();
     }
 
     private double parkedCount() {

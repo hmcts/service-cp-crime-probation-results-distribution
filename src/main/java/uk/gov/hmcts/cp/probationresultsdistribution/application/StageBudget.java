@@ -13,10 +13,10 @@ import java.util.Objects;
  */
 public final class StageBudget {
 
-    private final Instant deadline;
+    private final Instant deadlineAt;
 
     private StageBudget(final Instant deadline) {
-        this.deadline = Objects.requireNonNull(deadline, "deadline");
+        this.deadlineAt = Objects.requireNonNull(deadline, "deadline");
     }
 
     /**
@@ -49,7 +49,7 @@ public final class StageBudget {
      * @return whether the attempt finishes on or before the deadline
      */
     public boolean attemptFits(final Instant now, final Duration worstCase) {
-        return !now.plus(worstCase).isAfter(deadline);
+        return !now.plus(worstCase).isAfter(deadlineAt);
     }
 
     /**
@@ -58,6 +58,6 @@ public final class StageBudget {
      * @return the deadline
      */
     public Instant deadline() {
-        return deadline;
+        return deadlineAt;
     }
 }

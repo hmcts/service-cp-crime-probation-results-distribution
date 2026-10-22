@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.inbound;
 import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
 import com.azure.messaging.servicebus.ServiceBusReceivedMessageContext;
 import com.azure.messaging.servicebus.models.DeadLetterOptions;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -13,12 +14,13 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.RunResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MdcFields;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
-import java.util.Optional;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
@@ -37,6 +39,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
  * hand-back and the unexpected-exception final-delivery rule (US2) refine this; here an unexpected
  * failure abandons the delivery, never silently dropping it.
  */
+@SuppressWarnings("PMD.OnlyOneReturn")
 public final class ProbationMessageListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(ProbationMessageListener.class);
@@ -92,6 +95,7 @@ public final class ProbationMessageListener {
     public void processMessage(final ServiceBusReceivedMessageContext context) {
         final ServiceBusReceivedMessage message = context.getMessage();
         final long deliveryCount = message.getDeliveryCount();
+        setDeliveryMdc(message.getSequenceNumber(), deliveryCount);
         Settlement settlement;
         // storeAvailable defaults to false: if the precondition check itself throws (below, inside the
         // try), the outage is unknown rather than disproven, so the finally block still suspends intake.
@@ -103,7 +107,7 @@ public final class ProbationMessageListener {
             // processMessage unsettled (FR-002-007).
             storeAvailable = storeGate.storeAvailable();
             settlement = storeAvailable
-                    ? decide(message.getBody().toString(), deliveryCount)
+                    ? decide(message.getBody().toString(), deliveryCount, message.getSequenceNumber())
                     : storeUnavailable(deliveryCount);
         } catch (final RuntimeException unexpected) {
             // Not swallowed: an unexpected failure is logged by type, counted and the delivery handed
@@ -168,8 +172,12 @@ public final class ProbationMessageListener {
      */
     // The early return on a contract-invalid body and the switch's single return are the two exits a
     // parse-then-decide naturally has; funnelling them through one variable would not read more clearly.
-    @SuppressWarnings("PMD.OnlyOneReturn")
     /* default */ Settlement decide(final String body, final long deliveryCount) {
+        return decide(body, deliveryCount, 0L);
+    }
+
+    private Settlement decide(final String body, final long deliveryCount,
+                              final long sequenceNumber) {
         final DistributionCommand command;
         try {
             command = parser.parse(body);
@@ -179,7 +187,7 @@ public final class ProbationMessageListener {
                     DeadLetterReason.VALIDATION.wireValue(), invalid.kind());
             return new DeadLetter(DeadLetterReason.VALIDATION);
         }
-        setMdc(command, deliveryCount);
+        setMdc(command, deliveryCount, sequenceNumber);
         final GuardDecision decision = guard.admit(command, body);
         return switch (decision) {
             case GuardDecision.DuplicateComplete ignored -> new Complete();
@@ -188,8 +196,12 @@ public final class ProbationMessageListener {
                 metrics.deadLettered(deadLetter.reason());
                 yield new DeadLetter(deadLetter.reason());
             }
-            case GuardDecision.Admitted admitted ->
-                runAndSettle(command, admitted.claim(), deliveryCount);
+            case GuardDecision.Admitted admitted -> {
+                if (admitted.crashRerun()) {
+                    metrics.crashRerun(Leg.HMPPS);
+                }
+                yield runAndSettle(command, admitted.claim(), deliveryCount, admitted.gatewayParked());
+            }
         };
     }
 
@@ -227,13 +239,15 @@ public final class ProbationMessageListener {
         return deliveryCount >= (long) maxDeliveryCount - 1;
     }
 
-    @SuppressWarnings("PMD.OnlyOneReturn")
     private Settlement runAndSettle(final DistributionCommand command, final RunClaim claim,
-                                    final long deliveryCount) {
+                                    final long deliveryCount, final boolean gatewayParked) {
         final boolean finalDelivery = isFinalPermittedDelivery(deliveryCount);
         final RunResult result = runner.run(command, AttemptOrigin.QUEUE, claim, finalDelivery);
         if (!result.recorded()) {
             return staleRunnerRejection(deliveryCount);
+        }
+        if (gatewayParked && result.status() == LegStatus.SENT) {
+            metrics.gatewayRecovered(uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery.FIVE_XX_REDELIVERY);
         }
         return switch (result.status()) {
             case SENT, NOT_APPLICABLE -> completeTerminal(command, claim, deliveryCount);
@@ -315,12 +329,19 @@ public final class ProbationMessageListener {
         return handBack(deliveryCount);
     }
 
-    private static void setMdc(final DistributionCommand command, final long deliveryCount) {
+    private static void setDeliveryMdc(final long sequenceNumber, final long deliveryCount) {
+        MDC.put(MdcFields.SEQUENCE_NUMBER, Long.toString(sequenceNumber));
+        MDC.put(MdcFields.DELIVERY_COUNT, Long.toString(deliveryCount));
+        MDC.put(MdcFields.LEG, "HMPPS");
+    }
+
+    private static void setMdc(final DistributionCommand command, final long deliveryCount,
+                               final long sequenceNumber) {
         MDC.put(MdcFields.REQUEST_ID, command.requestId().toString());
         MDC.put(MdcFields.HEARING_ID, command.hearingId().toString());
         MDC.put(MdcFields.HEARING_DAY, command.hearingDay().toString());
         MDC.put(MdcFields.SOURCE, command.source());
-        MDC.put(MdcFields.DELIVERY_COUNT, Long.toString(deliveryCount));
+        setDeliveryMdc(sequenceNumber, deliveryCount);
     }
 
     private static void apply(final ServiceBusReceivedMessageContext context,

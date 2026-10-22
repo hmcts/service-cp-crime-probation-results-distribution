@@ -21,8 +21,14 @@ public sealed interface GuardDecision
      * reclaim).
      *
      * @param claim the claim the run's writes are fenced by
+     * @param crashRerun whether this reclaimed an expired claim with a still-PENDING attempt-1 row
+     * @param gatewayParked whether attempt 1 was PARKED for a gateway 5xx before this reclaim
      */
-    record Admitted(RunClaim claim) implements GuardDecision {
+    record Admitted(RunClaim claim, boolean crashRerun, boolean gatewayParked) implements GuardDecision {
+
+        public Admitted(final RunClaim claim) {
+            this(claim, false, false);
+        }
 
         /** Rejects a null claim. */
         public Admitted {

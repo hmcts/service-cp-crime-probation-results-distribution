@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
 import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.azure.messaging.servicebus.ServiceBusClientBuilder;
+import com.azure.messaging.servicebus.ServiceBusErrorSource;
 import com.azure.messaging.servicebus.ServiceBusProcessorClient;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
@@ -19,6 +20,7 @@ import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway.HmppsPublisher;
@@ -51,6 +53,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
  * the container starts and stops, and a broker blip never rolls the pod.
  */
 @Configuration
+@EnableScheduling
 @ConditionalOnProperty(name = "distribution.consumer.enabled", havingValue = "true")
 public class ServiceBusConsumerConfig {
 
@@ -59,6 +62,17 @@ public class ServiceBusConsumerConfig {
     /* default */ @Bean
     MetricRegistry metricRegistry(final MeterRegistry meterRegistry) {
         return new MetricRegistry(meterRegistry);
+    }
+
+    /* default */ @Bean
+    ServiceBusHealthIndicator probationServiceBusHealthIndicator(final MeterRegistry meterRegistry,
+            @Value("${distribution.servicebus.health-staleness:60s}") final String staleness) {
+        return new ServiceBusHealthIndicator(DurationStyle.detectAndParse(staleness), meterRegistry);
+    }
+
+    /* default */ @Bean
+    AgeGaugeRefresher ageGaugeRefresher(final JdbcClient jdbc, final MetricRegistry metrics) {
+        return new AgeGaugeRefresher(jdbc, metrics);
     }
 
     /* default */ @Bean
@@ -138,17 +152,21 @@ public class ServiceBusConsumerConfig {
 
     /* default */ @Bean
     FeaturePermissionClient featurePermissionClient(final DistributionProperties properties,
-            @Value("${distribution.usersgroups.youth-filter-key}") final String youthFilterKey) {
+            @Value("${distribution.usersgroups.youth-filter-key}") final String youthFilterKey,
+            final MetricRegistry metrics) {
         return new FeaturePermissionClient(properties.usersgroups().baseUrl(),
                 properties.usersgroups().systemUserId(), youthFilterKey,
-                properties.usersgroups().connectTimeout(), properties.usersgroups().readTimeout());
+                properties.usersgroups().connectTimeout(), properties.usersgroups().readTimeout(),
+                properties.usersgroups().maxAttempts(), properties.usersgroups().retryWait(), metrics);
     }
 
     /* default */ @Bean
     HmppsPublisher hmppsPublisher(final DistributionProperties properties,
             @Value("${distribution.gateway.subscription-key}") final String subscriptionKey) {
         return new HmppsPublisher(properties.hmpps().url(), subscriptionKey,
-                properties.gateway().connectTimeout(), properties.gateway().readTimeout());
+                properties.gateway().connectTimeout(), properties.gateway().readTimeout(),
+                properties.gateway().maxAttempts(), properties.gateway().initialBackoff(),
+                properties.gateway().maxBackoff(), properties.budget().leg());
     }
 
     /* default */ @Bean
@@ -180,6 +198,7 @@ public class ServiceBusConsumerConfig {
 
     /* default */ @Bean(destroyMethod = "close")
     ServiceBusProcessorClient probationProcessorClient(final ProbationMessageListener listener,
+            final ServiceBusHealthIndicator brokerHealth,
             final DistributionProperties properties,
             @Value("${distribution.servicebus.connection-string:}") final String connectionString,
             @Value("${distribution.servicebus.namespace:}") final String namespace,
@@ -199,9 +218,16 @@ public class ServiceBusConsumerConfig {
                 .disableAutoComplete()
                 .maxConcurrentCalls(maxConcurrentCalls)
                 .maxAutoLockRenewDuration(properties.servicebus().maxAutoLockRenewDuration())
-                .processMessage(listener::processMessage)
-                .processError(context ->
-                        LOG.error("Service Bus processor error", context.getException()))
+                .processMessage(context -> {
+                    brokerHealth.recordTraffic();
+                    listener.processMessage(context);
+                })
+                .processError(context -> {
+                    if (!ServiceBusErrorSource.USER_CALLBACK.equals(context.getErrorSource())) {
+                        brokerHealth.recordError();
+                    }
+                    LOG.error("Service Bus processor error", context.getException());
+                })
                 .buildProcessorClient();
     }
 

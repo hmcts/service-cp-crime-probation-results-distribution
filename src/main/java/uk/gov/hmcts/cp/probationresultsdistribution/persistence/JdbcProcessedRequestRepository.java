@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.UUID;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -26,6 +27,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     private static final String REQUEST_ID = "requestId";
     private static final String OWNER = "owner";
     private static final String TOKEN = "token";
+    private static final String REQUEST_WHERE = "WHERE source = :source AND request_id = :requestId ";
+    private static final String ACTIVE_REQUEST = "AND status IN ('RECEIVED', 'RETRYING') ";
 
     private final JdbcClient jdbc;
     private final TransactionTemplate transactionTemplate;
@@ -48,15 +51,25 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
 
     @Override
     public Optional<RequestRecord> find(final String source, final UUID requestId) {
-        return jdbc.sql("SELECT status, request_fingerprint, "
-                        + "(claim_expires_at IS NOT NULL AND claim_expires_at > now()) AS claim_live "
-                        + "FROM processed_request WHERE source = :source AND request_id = :requestId")
+        return jdbc.sql("SELECT pr.status, pr.request_fingerprint, "
+                        + "(pr.claim_expires_at IS NOT NULL AND pr.claim_expires_at > now()) AS claim_live, "
+                        + "om.status AS attempt_one_status, om.reason AS attempt_one_reason, "
+                        + "om.http_status AS attempt_one_http_status "
+                        + "FROM processed_request pr LEFT JOIN outbound_message om "
+                        + "ON om.source = pr.source AND om.request_id = pr.request_id "
+                        + "AND om.leg = 'HMPPS' AND om.attempt = 1 "
+                        + "WHERE pr.source = :source AND pr.request_id = :requestId")
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
-                .query((rs, rowNum) -> new RequestRecord(
-                        rs.getString("status"),
-                        rs.getString("request_fingerprint"),
-                        rs.getBoolean("claim_live")))
+                .query((rs, rowNum) -> {
+                    final Integer httpStatus = (Integer) rs.getObject("attempt_one_http_status");
+                    final OptionalInt optionalHttpStatus = httpStatus == null ? OptionalInt.empty()
+                            : OptionalInt.of(httpStatus);
+                    return new RequestRecord(rs.getString("status"),
+                            rs.getString("request_fingerprint"), rs.getBoolean("claim_live"),
+                            Optional.ofNullable(rs.getString("attempt_one_status")),
+                            Optional.ofNullable(rs.getString("attempt_one_reason")), optionalHttpStatus);
+                })
                 .optional();
     }
 
@@ -111,8 +124,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "claim_token = :token, "
                         + "claim_expires_at = now() + make_interval(secs => :lease), "
                         + "attempts = attempts + 1, updated_at = now() "
-                        + "WHERE source = :source AND request_id = :requestId "
-                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + REQUEST_WHERE + ACTIVE_REQUEST
                         + "AND (claim_expires_at IS NULL OR claim_expires_at <= now())")
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
@@ -129,8 +141,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
         final int rows = jdbc.sql("UPDATE processed_request SET status = 'COMPLETED', "
                         + "completion_reason = :reason, failure_reason = NULL, claim_owner = NULL, "
                         + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
-                        + "WHERE source = :source AND request_id = :requestId "
-                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + REQUEST_WHERE + ACTIVE_REQUEST
                         + "AND claim_owner = :owner AND claim_token = :token")
                 .param("reason", reason.wireValue())
                 .param(OWNER, claim.owner().toString())
@@ -146,8 +157,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
         final int rows = jdbc.sql("UPDATE processed_request SET status = 'RETRYING', "
                         + "failure_reason = NULL, claim_owner = NULL, claim_token = NULL, "
                         + "claim_expires_at = NULL, updated_at = now() "
-                        + "WHERE source = :source AND request_id = :requestId "
-                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + REQUEST_WHERE + ACTIVE_REQUEST
                         + "AND claim_owner = :owner AND claim_token = :token")
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
@@ -164,8 +174,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "failure_reason = :reason, exhausted_message_id = :exhaustedMessageId, "
                         + "completion_reason = NULL, claim_owner = NULL, claim_token = NULL, "
                         + "claim_expires_at = NULL, updated_at = now() "
-                        + "WHERE source = :source AND request_id = :requestId "
-                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + REQUEST_WHERE + ACTIVE_REQUEST
                         + "AND claim_owner = :owner AND claim_token = :token")
                 .param("reason", reason.wireValue())
                 .param("exhaustedMessageId", exhaustedMessageId)

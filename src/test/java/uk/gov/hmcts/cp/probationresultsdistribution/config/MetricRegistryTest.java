@@ -87,4 +87,15 @@ class MetricRegistryTest {
         metrics.processed("COMPLETED");
         assertThat(meters.find("probation_processed_total").meter()).isNotNull();
     }
+
+    @Test
+    @DisplayName("exposes the refreshed oldest-request and oldest-parked ages in seconds")
+    void age_gauges_report_seconds() {
+        metrics.recordOldestAges(125.5d, 5.25d);
+
+        assertThat(meters.find("probation_oldest_non_terminal_age").gauge().value())
+                .isEqualTo(125.5d);
+        assertThat(meters.find("probation_oldest_parked_age").gauge().value())
+                .isEqualTo(5.25d);
+    }
 }

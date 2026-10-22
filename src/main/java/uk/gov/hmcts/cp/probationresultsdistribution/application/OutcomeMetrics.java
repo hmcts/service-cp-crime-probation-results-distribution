@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.application;
 import java.util.Optional;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.BodyShape;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.HttpStatusBucket;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
@@ -55,4 +56,10 @@ public interface OutcomeMetrics {
      * @param defaulted the value it defaulted to ({@code ACTIVE} or {@code INACTIVE})
      */
     void youthSwitchUnreadable(YouthSwitchUnreadableCause cause, YouthSwitchRecordedValue defaulted);
+
+    /** Counts a response whose users-groups permission list contains more than one entry. */
+    void youthSwitchAmbiguous();
+
+    /** Counts a gateway send that recovered to SENT after a 429 or redelivery. */
+    void gatewayRecovered(GatewayRecovery after);
 }

@@ -55,6 +55,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.Outbound
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IdempotencyGuard;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.OutboundLog;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestFingerprint;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
@@ -116,6 +117,7 @@ public class EndToEndTestSupport {
     private static volatile boolean started;
 
     private ServiceBusProcessorClient processor;
+    private boolean processorClosed;
     private MeterRegistry meters = new SimpleMeterRegistry();
     private MetricRegistry sharedMetricRegistry;
 
@@ -193,10 +195,16 @@ public class EndToEndTestSupport {
 
     @AfterEach
     void stopProcessor() {
-        if (processor != null) {
-            processor.close();
-        }
+        stopProcessorNow();
         wireMock.resetAll();
+    }
+
+    /** Stops the active broker processor, allowing a test to inspect one settled delivery. */
+    protected final void stopProcessorNow() {
+        if (processor != null && !processorClosed) {
+            processor.close();
+            processorClosed = true;
+        }
     }
 
     /**
@@ -206,6 +214,7 @@ public class EndToEndTestSupport {
      */
     protected final void startProcessor() {
         meters = new SimpleMeterRegistry();
+        processorClosed = false;
         processor = new ServiceBusClientBuilder()
                 .connectionString(SERVICE_BUS.getConnectionString())
                 .processor()
@@ -213,6 +222,24 @@ public class EndToEndTestSupport {
                 .disableAutoComplete()
                 .maxConcurrentCalls(2)
                 .processMessage(listener()::processMessage)
+                .processError(context -> LOG.error("processor error", context.getException()))
+                .buildProcessorClient();
+        processor.start();
+    }
+
+    /** Starts the production pipeline with a selected youth-switch default and short test timeouts. */
+    protected final void startProcessorWithYouthDefault(
+            final YouthSwitchRecordedValue defaultWhenUnreadable) {
+        meters = new SimpleMeterRegistry();
+        processorClosed = false;
+        processor = new ServiceBusClientBuilder()
+                .connectionString(SERVICE_BUS.getConnectionString())
+                .processor()
+                .queueName(QUEUE)
+                .disableAutoComplete()
+                .maxConcurrentCalls(1)
+                .processMessage(listener(defaultWhenUnreadable, Duration.ofMillis(200),
+                        Duration.ofMillis(100), Duration.ofMillis(10))::processMessage)
                 .processError(context -> LOG.error("processor error", context.getException()))
                 .buildProcessorClient();
         processor.start();
@@ -228,6 +255,7 @@ public class EndToEndTestSupport {
      */
     protected final void startProcessorWith(final ProbationMessageListener custom,
                                             final int maxConcurrentCalls) {
+        processorClosed = false;
         processor = new ServiceBusClientBuilder()
                 .connectionString(SERVICE_BUS.getConnectionString())
                 .processor()
@@ -249,6 +277,14 @@ public class EndToEndTestSupport {
      * @return the listener under test
      */
     protected final ProbationMessageListener listener() {
+        return listener(YouthSwitchRecordedValue.ACTIVE, Duration.ofSeconds(2), Duration.ofSeconds(5),
+                Duration.ofSeconds(1));
+    }
+
+    private ProbationMessageListener listener(final YouthSwitchRecordedValue defaultWhenUnreadable,
+                                              final Duration connectTimeout,
+                                              final Duration readTimeout,
+                                              final Duration retryWait) {
         final TransactionTemplate tx =
                 new TransactionTemplate(new DataSourceTransactionManager(dataSource));
         final ProcessedRequestRepository processedRequests =
@@ -257,14 +293,14 @@ public class EndToEndTestSupport {
                 new OutboundMessageRepository(jdbc(), tx, "test-version");
         final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
         final ChainedHearingPayloadSource payload = chainedPayloadSource();
+        final MetricRegistry registry = new MetricRegistry(meters);
         final FeaturePermissionClient youthFilter = new FeaturePermissionClient(
                 usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
-                Duration.ofSeconds(2), Duration.ofSeconds(5));
+                connectTimeout, readTimeout, 3, retryWait, registry);
         final HmppsPublisher publisher = new HmppsPublisher(
                 gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60));
-        final MetricRegistry registry = new MetricRegistry(meters);
         final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
-                outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
+                outboundLog, defaultWhenUnreadable, registry);
         return new ProbationMessageListener(new DistributionCommandParser(),
                 new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
                 processedRequests, registry, alwaysAvailableStore(), MAX_DELIVERY_COUNT);
@@ -319,6 +355,14 @@ public class EndToEndTestSupport {
      */
     protected final ProbationMessageListener listenerOver(final DataSource store, final StoreGate gate,
                                                           final int maxDeliveryCount) {
+        return listenerOver(store, gate, maxDeliveryCount, Duration.ofSeconds(5),
+                Duration.ofSeconds(60));
+    }
+
+    /** Builds the production listener with explicit HMPPS timeouts for HTTP fault tests. */
+    protected final ProbationMessageListener listenerOver(final DataSource store, final StoreGate gate,
+            final int maxDeliveryCount, final Duration gatewayConnectTimeout,
+            final Duration gatewayReadTimeout) {
         meters = new SimpleMeterRegistry();
         final TransactionTemplate tx =
                 new TransactionTemplate(new DataSourceTransactionManager(store));
@@ -328,12 +372,35 @@ public class EndToEndTestSupport {
                 new OutboundMessageRepository(JdbcClient.create(store), tx, "test-version");
         final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
         final ChainedHearingPayloadSource payload = chainedPayloadSource();
+        final MetricRegistry registry = new MetricRegistry(meters);
         final FeaturePermissionClient youthFilter = new FeaturePermissionClient(
                 usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
-                Duration.ofSeconds(2), Duration.ofSeconds(5));
+                Duration.ofSeconds(2), Duration.ofSeconds(5), 3, Duration.ofSeconds(1), registry);
+        final HmppsPublisher publisher = new HmppsPublisher(
+                gatewayUrl(), SUBSCRIPTION_KEY, gatewayConnectTimeout, gatewayReadTimeout);
+        sharedMetricRegistry = registry;
+        final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
+                outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
+        return new ProbationMessageListener(new DistributionCommandParser(),
+                new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
+                processedRequests, registry, gate, maxDeliveryCount);
+    }
+
+    /** Builds the production listener with a caller-supplied outbound log for write-failure tests. */
+    protected final ProbationMessageListener listenerOverWithOutboundLog(final DataSource store,
+            final StoreGate gate, final int maxDeliveryCount, final OutboundLog outboundLog) {
+        meters = new SimpleMeterRegistry();
+        final TransactionTemplate tx =
+                new TransactionTemplate(new DataSourceTransactionManager(store));
+        final ProcessedRequestRepository processedRequests = new JdbcProcessedRequestRepository(
+                JdbcClient.create(store), tx, Duration.ofMinutes(4).plusSeconds(30));
+        final ChainedHearingPayloadSource payload = chainedPayloadSource();
+        final MetricRegistry registry = new MetricRegistry(meters);
+        final FeaturePermissionClient youthFilter = new FeaturePermissionClient(
+                usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
+                Duration.ofSeconds(2), Duration.ofSeconds(5), 3, Duration.ofSeconds(1), registry);
         final HmppsPublisher publisher = new HmppsPublisher(
                 gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60));
-        final MetricRegistry registry = new MetricRegistry(meters);
         sharedMetricRegistry = registry;
         final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
                 outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
@@ -465,6 +532,14 @@ public class EndToEndTestSupport {
                 .willReturn(okJson("{\"permissions\":[{\"active\":false}]}")));
     }
 
+    /** Stubs the youth-switch route with a controlled response for unreadable-switch scenarios. */
+    protected final void stubYouthSwitch(final int status, final String body, final int delayMillis) {
+        wireMock.stubFor(get(urlPathEqualTo(
+                "/usersgroups-query-api/query/api/rest/usersgroups/permissions"))
+                .willReturn(aResponse().withStatus(status).withFixedDelay(delayMillis)
+                        .withHeader("Content-Type", "application/json").withBody(body)));
+    }
+
     /**
      * Stubs the HMPPS gateway route to answer a fixed status.
      *
@@ -475,6 +550,26 @@ public class EndToEndTestSupport {
                 .willReturn(aResponse().withStatus(status)));
     }
 
+    /** Stubs a gateway response after a fixed delay to exercise the production read timeout. */
+    protected final void stubGatewayWithDelay(final int status, final int delayMillis) {
+        wireMock.stubFor(post(urlPathEqualTo(GATEWAY_PATH))
+                .willReturn(aResponse().withStatus(status).withFixedDelay(delayMillis)));
+    }
+
+    /** Stubs one gateway response followed by a recovered response on the next POST. */
+    protected final void stubGatewaySequence(final int firstStatus, final String retryAfter,
+                                             final int recoveredStatus) {
+        final String scenario = "gateway-recovery-" + UUID.randomUUID();
+        wireMock.stubFor(post(urlPathEqualTo(GATEWAY_PATH)).inScenario(scenario)
+                .whenScenarioStateIs(com.github.tomakehurst.wiremock.stubbing.Scenario.STARTED)
+                .willReturn(aResponse().withStatus(firstStatus)
+                        .withHeader("Retry-After", retryAfter))
+                .willSetStateTo("recovered"));
+        wireMock.stubFor(post(urlPathEqualTo(GATEWAY_PATH)).inScenario(scenario)
+                .whenScenarioStateIs("recovered")
+                .willReturn(aResponse().withStatus(recoveredStatus)));
+    }
+
     /**
      * The number of POSTs the gateway route has received.
      *
@@ -482,6 +577,49 @@ public class EndToEndTestSupport {
      */
     protected final int gatewayPostCount() {
         return wireMock.findAll(postRequestedFor(urlPathEqualTo(GATEWAY_PATH))).size();
+    }
+
+    /** Number of exact bodies retained for a request's latest HMPPS attempt. */
+    protected final int outboundBodyCount(final UUID requestId) {
+        return jdbc().sql("SELECT count(*) FROM outbound_body ob "
+                        + "JOIN outbound_message om ON om.id = ob.outbound_message_id "
+                        + "WHERE om.request_id = :requestId")
+                .param("requestId", requestId)
+                .query(Integer.class)
+                .single();
+    }
+
+    /** Seeds a parked gateway-transient attempt with its previously sent body and digest. */
+    protected final void seedParkedGatewayTransientLeg(final DistributionCommand command,
+                                                       final String body) {
+        seedRequest(command, "RETRYING", false);
+        final UUID messageId = UUID.randomUUID();
+        jdbc().sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                        + "attempt_origin, status, reason, attempts, http_status, body_digest, "
+                        + "payload_source, service_version, youth_switch) VALUES (:id, :source, "
+                        + ":requestId, 'HMPPS', 1, 'queue', 'PARKED', 'gateway-transient', 1, "
+                        + "503, :digest, 'cache-day', 'test-version', 'ACTIVE')")
+                .param("id", messageId)
+                .param("source", command.source())
+                .param("requestId", command.requestId())
+                .param("digest", sha256Hex(body))
+                .update();
+        jdbc().sql("INSERT INTO outbound_body (outbound_message_id, body) VALUES (:id, :body)")
+                .param("id", messageId)
+                .param("body", body)
+                .update();
+    }
+
+    /** Seeds a RETRYING request and PENDING attempt-1 row with an expired/absent claim. */
+    protected final void seedPendingAttemptOne(final DistributionCommand command) {
+        seedRequest(command, "RETRYING", false);
+        jdbc().sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                        + "attempt_origin, status, attempts) VALUES (:id, :source, :requestId, "
+                        + "'HMPPS', 1, 'queue', 'PENDING', 0)")
+                .param("id", UUID.randomUUID())
+                .param("source", command.source())
+                .param("requestId", command.requestId())
+                .update();
     }
 
     /**
@@ -604,6 +742,33 @@ public class EndToEndTestSupport {
                 .query()
                 .listOfRows();
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    /** Waits until the latest leg reaches the requested persisted status. */
+    protected final Optional<Map<String, Object>> awaitLegStatus(final UUID hearingId,
+            final LocalDate hearingDay, final String status) {
+        final long deadline = System.nanoTime() + POLL_TIMEOUT.toNanos();
+        Optional<Map<String, Object>> row = Optional.empty();
+        while (System.nanoTime() < deadline) {
+            row = findLatestLeg(hearingId, hearingDay);
+            if (row.map(value -> status.equals(value.get("leg_status"))).orElse(false)) {
+                return row;
+            }
+            sleep();
+        }
+        return row.filter(value -> status.equals(value.get("leg_status")));
+    }
+
+    /** Waits until the processed request reaches the requested persisted status. */
+    protected final void awaitRequestStatus(final UUID requestId, final String status) {
+        final long deadline = System.nanoTime() + POLL_TIMEOUT.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (requestStatus(requestId).filter(status::equals).isPresent()) {
+                return;
+            }
+            sleep();
+        }
+        throw new IllegalStateException("request did not reach status " + status);
     }
 
     private static void sleep() {

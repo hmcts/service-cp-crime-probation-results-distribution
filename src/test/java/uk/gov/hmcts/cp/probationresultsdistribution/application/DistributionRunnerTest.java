@@ -213,6 +213,60 @@ class DistributionRunnerTest {
     }
 
     @Test
+    @DisplayName("parks a never-sent connection failure without recording an HTTP status")
+    void parks_connection_failure_without_http_status() {
+        givenPayload(CASE_PAYLOAD);
+        when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
+        when(hmppsSender.send(any())).thenReturn(
+                new SentBody(new PublishOutcome.TransientExhausted(OptionalInt.empty()), BODY));
+        when(outboundLog.record(any(), any())).thenReturn(true);
+
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, false);
+
+        assertThat(result.status()).isEqualTo(LegStatus.PARKED);
+        assertThat(result.reason()).contains(LegReason.GATEWAY_TRANSIENT);
+        assertThat(captureOutcome().httpStatus()).isEmpty();
+        assertThat(captureOutcome().bodyDigest()).isPresent();
+        assertThat(meter.find("probation_leg_outcomes_total").tag("http", "none")
+                .counter().count()).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("fails a transient gateway outcome on the final permitted delivery")
+    void fails_gateway_transient_on_final_delivery() {
+        givenPayload(CASE_PAYLOAD);
+        when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
+        when(hmppsSender.send(any())).thenReturn(
+                new SentBody(new PublishOutcome.TransientExhausted(OptionalInt.of(503)), BODY));
+        when(outboundLog.record(any(), any())).thenReturn(true);
+
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, true);
+
+        assertThat(result.status()).isEqualTo(LegStatus.FAILED);
+        assertThat(result.reason()).contains(LegReason.GATEWAY_TRANSIENT);
+        assertThat(captureOutcome().httpStatus()).hasValue(503);
+        assertThat(meter.find("probation_parked_total").counter()).isNull();
+    }
+
+    @Test
+    @DisplayName("maps a final 302 to FAILED(gateway-transient) and the closed other HTTP bucket")
+    void fails_redirect_status_on_final_delivery() {
+        givenPayload(CASE_PAYLOAD);
+        when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
+        when(hmppsSender.send(any())).thenReturn(
+                new SentBody(new PublishOutcome.TransientExhausted(OptionalInt.of(302)), BODY));
+        when(outboundLog.record(any(), any())).thenReturn(true);
+
+        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, CLAIM, true);
+
+        assertThat(result.status()).isEqualTo(LegStatus.FAILED);
+        assertThat(result.reason()).contains(LegReason.GATEWAY_TRANSIENT);
+        assertThat(captureOutcome().httpStatus()).hasValue(302);
+        assertThat(meter.find("probation_leg_outcomes_total").tag("http", "other")
+                .counter().count()).isEqualTo(1.0d);
+    }
+
+    @Test
     @DisplayName("counts a non-200 2xx as a gateway non-200 success")
     void counts_non_200_success() {
         givenPayload(CASE_PAYLOAD);

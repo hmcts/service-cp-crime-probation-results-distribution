@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.persistence;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.UUID;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
@@ -97,13 +98,25 @@ public interface ProcessedRequestRepository {
      * @param status      the request status
      * @param fingerprint the stored fingerprint
      * @param claimLive   whether a live (unexpired) claim is held
+     * @param attemptOneStatus the recorded HMPPS attempt-1 status, if present
+     * @param attemptOneReason the bounded HMPPS attempt-1 reason, if present
+     * @param attemptOneHttpStatus the HMPPS attempt-1 HTTP status, if present
      */
-    record RequestRecord(String status, String fingerprint, boolean claimLive) {
+    record RequestRecord(String status, String fingerprint, boolean claimLive,
+                         Optional<String> attemptOneStatus, Optional<String> attemptOneReason,
+                         OptionalInt attemptOneHttpStatus) {
+
+        public RequestRecord(final String status, final String fingerprint,
+                             final boolean claimLive) {
+            this(status, fingerprint, claimLive, Optional.empty(), Optional.empty(), OptionalInt.empty());
+        }
 
         /** Rejects null components. */
         public RequestRecord {
             Objects.requireNonNull(status, "status");
             Objects.requireNonNull(fingerprint, "fingerprint");
+            Objects.requireNonNull(attemptOneStatus, "attemptOneStatus");
+            Objects.requireNonNull(attemptOneReason, "attemptOneReason");
         }
     }
 }
