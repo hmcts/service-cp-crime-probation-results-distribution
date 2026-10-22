@@ -206,16 +206,17 @@ public final class ProbationMessageListener {
     }
 
     /**
-     * Whether this is the final delivery the broker will permit (FR-002-048). Azure counts deliveries
-     * from one, so the first delivery carries {@code 1} and the final permitted delivery is the one
-     * whose count reaches {@code maxDeliveryCount}; the comparison is {@code >=} so a message that
+     * Whether this is the final delivery the broker will permit (FR-002-048). Azure increments the
+     * delivery count on each abandon or lock expiry, so the first delivery carries {@code 0} and the
+     * {@code maxDeliveryCount}-th — the last the broker permits before it dead-letters under its own
+     * reason — carries {@code maxDeliveryCount - 1}; the comparison is {@code >=} so a message that
      * somehow arrives past the budget is still recognised as final.
      *
      * @param deliveryCount the broker delivery count
      * @return whether this is the final permitted delivery
      */
     private boolean isFinalPermittedDelivery(final long deliveryCount) {
-        return deliveryCount >= maxDeliveryCount;
+        return deliveryCount >= (long) maxDeliveryCount - 1;
     }
 
     @SuppressWarnings("PMD.OnlyOneReturn")

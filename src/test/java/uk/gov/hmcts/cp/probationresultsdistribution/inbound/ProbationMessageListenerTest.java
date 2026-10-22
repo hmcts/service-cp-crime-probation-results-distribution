@@ -226,21 +226,22 @@ class ProbationMessageListenerTest {
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Abandon());
 
-        // maxDeliveryCount is 5 (FR-002-048): the fourth delivery still has a fifth to come, so it is
-        // handed back for redelivery, not dead-lettered.
-        assertThat(listener.decide(BODY, 4L)).isInstanceOf(Abandon.class);
+        // maxDeliveryCount is 5 and Azure counts deliveries from zero (FR-002-048): delivery count 3 is
+        // the fourth delivery, which still has a fifth to come, so it is handed back, not dead-lettered.
+        assertThat(listener.decide(BODY, 3L)).isInstanceOf(Abandon.class);
         assertThat(count("probation_deadlettered_total", "reason", "exhausted")).isEqualTo(0.0d);
     }
 
     @Test
-    @DisplayName("dead-letters exhausted when the delivery count reaches max-delivery-count")
+    @DisplayName("dead-letters exhausted on the final permitted delivery")
     void dead_letters_exhausted_on_the_final_permitted_delivery() {
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Abandon());
 
-        // The fifth delivery reaches maxDeliveryCount (FR-002-048): it is the final permitted delivery,
-        // so the service records its own exhausted reason rather than leaving the broker to park it.
-        final Settlement settlement = listener.decide(BODY, 5L);
+        // Delivery count 4 is the fifth (and final permitted) delivery when maxDeliveryCount is 5 and
+        // Azure counts from zero: the service records its own exhausted reason rather than leaving the
+        // broker to park it under MaxDeliveryCountExceeded.
+        final Settlement settlement = listener.decide(BODY, 4L);
 
         assertThat(settlement).isInstanceOf(DeadLetter.class);
         assertThat(((DeadLetter) settlement).reason()).isEqualTo(DeadLetterReason.EXHAUSTED);
