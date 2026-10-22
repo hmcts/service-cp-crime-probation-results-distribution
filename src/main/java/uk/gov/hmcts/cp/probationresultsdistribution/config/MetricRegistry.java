@@ -11,6 +11,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.OutcomeMetrics;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.BodyShape;
@@ -99,6 +100,7 @@ public final class MetricRegistry implements OutcomeMetrics {
     private final AtomicInteger intakeSuspended = new AtomicInteger(0);
     private final AtomicLong oldestNonTerminalAgeMillis = new AtomicLong(0);
     private final AtomicLong oldestParkedAgeMillis = new AtomicLong(0);
+    private final AtomicReference<YouthSwitchRecordedValue> lastYouthSwitch = new AtomicReference<>();
 
     /**
      * Creates the registry over a Micrometer {@link MeterRegistry}.
@@ -114,6 +116,11 @@ public final class MetricRegistry implements OutcomeMetrics {
                 value -> value.get() / 1000.0d).register(registry);
         Gauge.builder(OLDEST_PARKED_AGE_M, oldestParkedAgeMillis,
                 value -> value.get() / 1000.0d).register(registry);
+        for (final YouthSwitchRecordedValue state : YouthSwitchRecordedValue.values()) {
+            Gauge.builder(YOUTH_SWITCH_STATE_M, lastYouthSwitch,
+                    value -> value.get() == state ? 1.0d : 0.0d)
+                    .tag("state", state.wireValue()).register(registry);
+        }
     }
 
     /**
@@ -212,6 +219,11 @@ public final class MetricRegistry implements OutcomeMetrics {
                                       final YouthSwitchRecordedValue defaulted) {
         registry.counter(YOUTH_UNREADABLE_M, Tags.of(Tag.of(TAG_CAUSE, cause.wireValue()),
                 Tag.of(TAG_DEFAULTED, defaulted.wireValue()))).increment();
+    }
+
+    @Override
+    public void youthSwitchState(final YouthSwitchRecordedValue state) {
+        lastYouthSwitch.set(state);
     }
 
     /** Counts one ambiguous switch answer (more than one permission). */

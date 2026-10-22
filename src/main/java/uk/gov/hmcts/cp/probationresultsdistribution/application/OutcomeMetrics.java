@@ -57,6 +57,9 @@ public interface OutcomeMetrics {
      */
     void youthSwitchUnreadable(YouthSwitchUnreadableCause cause, YouthSwitchRecordedValue defaulted);
 
+    /** Reports the last switch value selected for an HMPPS leg. */
+    void youthSwitchState(YouthSwitchRecordedValue state);
+
     /** Counts a response whose users-groups permission list contains more than one entry. */
     void youthSwitchAmbiguous();
 

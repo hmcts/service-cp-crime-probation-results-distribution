@@ -16,6 +16,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.BodyShape;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.EffectiveSwitchState;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.HttpStatusBucket;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
@@ -114,10 +115,8 @@ public final class DistributionRunner {
         final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.PARKED,
                 Optional.of(LegReason.PAYLOAD_UNAVAILABLE), Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty(), OptionalInt.empty(), Optional.empty());
-        metrics.legOutcome(Leg.HMPPS, LegStatus.PARKED, Optional.of(LegReason.PAYLOAD_UNAVAILABLE),
-                runOrigin, false, BodyShape.CASE, HttpStatusBucket.NONE);
-        metrics.parked(Leg.HMPPS, LegReason.PAYLOAD_UNAVAILABLE);
-        return record(command, runOrigin, claim, outcome, Optional.empty());
+        return record(command, runOrigin, claim, outcome, Optional.empty(), BodyShape.CASE,
+                Optional.empty());
     }
 
     private RunResult failPayloadUnavailable(final DistributionCommand command,
@@ -125,9 +124,8 @@ public final class DistributionRunner {
         final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.FAILED,
                 Optional.of(LegReason.PAYLOAD_UNAVAILABLE), Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty(), OptionalInt.empty(), Optional.empty());
-        metrics.legOutcome(Leg.HMPPS, LegStatus.FAILED, Optional.of(LegReason.PAYLOAD_UNAVAILABLE),
-                runOrigin, false, BodyShape.CASE, HttpStatusBucket.NONE);
-        return record(command, runOrigin, claim, outcome, Optional.empty());
+        return record(command, runOrigin, claim, outcome, Optional.empty(), BodyShape.CASE,
+                Optional.empty());
     }
 
     private RunResult runLeg(final DistributionCommand command, final AttemptOrigin runOrigin,
@@ -135,6 +133,7 @@ public final class DistributionRunner {
                              final boolean finalPermittedDelivery) {
         final YouthSwitchDecision decision = youthFilterSource.read(command);
         final YouthSwitchRecordedValue recordedSwitch = applyDefault(decision);
+        metrics.youthSwitchState(recordedSwitch);
         final Optional<YouthSwitchUnreadableCause> switchCause = decision
                 instanceof YouthSwitchDecision.Unreadable unreadable
                 ? Optional.of(unreadable.cause()) : Optional.empty();
@@ -174,18 +173,9 @@ public final class DistributionRunner {
                 mapped.reason(), Optional.of(recordedSwitch), Optional.of(fetched.source()),
                 fetched.sharedTime(), Optional.of(digest), mapped.httpStatus(),
                 Optional.of(sent.body()));
-        metrics.legOutcome(Leg.HMPPS, mapped.status(), mapped.reason(), runOrigin, false, shape,
-                httpBucket(mapped.httpStatus()));
-        if (mapped.status() == LegStatus.SENT && mapped.httpStatus().orElse(0) != HTTP_OK) {
-            metrics.gatewayNon200Success(non200Status(mapped.httpStatus().orElse(0)));
-        }
-        if (mapped.status() == LegStatus.PARKED) {
-            metrics.parked(Leg.HMPPS, LegReason.GATEWAY_TRANSIENT);
-        }
-        if (sent.outcome() instanceof PublishOutcome.Sent succeeded) {
-            succeeded.recovery().ifPresent(metrics::gatewayRecovered);
-        }
-        return record(command, runOrigin, claim, outcome, switchCause);
+        final Optional<GatewayRecovery> recovery = sent.outcome() instanceof PublishOutcome.Sent succeeded
+                ? succeeded.recovery() : Optional.empty();
+        return record(command, runOrigin, claim, outcome, switchCause, shape, recovery);
     }
 
     private RunResult notApplicable(final DistributionCommand command, final AttemptOrigin runOrigin,
@@ -196,9 +186,8 @@ public final class DistributionRunner {
         final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.NOT_APPLICABLE,
                 Optional.of(reason), Optional.of(recordedSwitch), Optional.of(fetched.source()),
                 fetched.sharedTime(), Optional.empty(), OptionalInt.empty(), Optional.empty());
-        metrics.legOutcome(Leg.HMPPS, LegStatus.NOT_APPLICABLE, Optional.of(reason), runOrigin,
-                false, BodyShape.CASE, HttpStatusBucket.NONE);
-        return record(command, runOrigin, claim, outcome, switchCause);
+        return record(command, runOrigin, claim, outcome, switchCause, BodyShape.CASE,
+                Optional.empty());
     }
 
     private RunResult rulesFailure(final DistributionCommand command, final AttemptOrigin runOrigin,
@@ -210,17 +199,31 @@ public final class DistributionRunner {
                 Optional.of(LegReason.RULES_EXCEPTION), Optional.of(recordedSwitch),
                 Optional.of(fetched.source()), fetched.sharedTime(), Optional.empty(),
                 OptionalInt.empty(), Optional.empty());
-        metrics.legOutcome(Leg.HMPPS, LegStatus.FAILED, Optional.of(LegReason.RULES_EXCEPTION),
-                runOrigin, false, BodyShape.CASE, HttpStatusBucket.NONE);
         LOG.error("HMPPS redaction rules failed requestId={} origin={} rule={}",
                 command.requestId(), runOrigin, ruleId);
-        return record(command, runOrigin, claim, outcome, switchCause);
+        return record(command, runOrigin, claim, outcome, switchCause, BodyShape.CASE,
+                Optional.empty());
     }
 
+    // A rejected fenced write exits before any outcome telemetry can claim that it was recorded.
+    @SuppressWarnings("PMD.OnlyOneReturn")
     private RunResult record(final DistributionCommand command, final AttemptOrigin runOrigin,
                              final RunClaim claim, final LegOutcome outcome,
-                             final Optional<YouthSwitchUnreadableCause> switchCause) {
+                             final Optional<YouthSwitchUnreadableCause> switchCause,
+                             final BodyShape shape, final Optional<GatewayRecovery> recovery) {
         final boolean recorded = outboundLog.record(outcome, claim);
+        if (!recorded) {
+            return new RunResult(runOrigin, outcome.status(), outcome.reason(), false);
+        }
+        metrics.legOutcome(Leg.HMPPS, outcome.status(), outcome.reason(), runOrigin, false,
+                shape, httpBucket(outcome.httpStatus()));
+        if (outcome.status() == LegStatus.PARKED) {
+            metrics.parked(Leg.HMPPS, outcome.reason().orElseThrow());
+        }
+        if (outcome.status() == LegStatus.SENT && outcome.httpStatus().orElse(0) != HTTP_OK) {
+            metrics.gatewayNon200Success(non200Status(outcome.httpStatus().orElseThrow()));
+        }
+        recovery.ifPresent(metrics::gatewayRecovered);
         final String status = outcome.status().wireValue();
         final String reason = outcome.reason().map(LegReason::wireValue).orElse(null);
         final String youthSwitch = outcome.youthSwitch()
