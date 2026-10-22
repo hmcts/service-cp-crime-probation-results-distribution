@@ -43,20 +43,24 @@ public final class OutboundMessageRepository {
     }
 
     /**
-     * Writes the attempt-1 outcome under the request claim, replacing the body when one was sent.
+     * Writes the attempt-1 outcome under the request claim, replacing the body when one was sent. The
+     * guarded UPDATE matches the attempt-1 row in either re-runnable state — {@code PENDING} (a first
+     * run or a reclaimed crash re-run) or {@code PARKED} (a redelivery after a park) — so a re-run
+     * overwrites the row in place without a fresh {@code PENDING} (FR-002-041). On a re-run (the row's
+     * {@code attempts} is already above zero) {@code note} is rewritten whole as
+     * {@code prev=<STATUS>/<reason>}, so a note never grows across re-runs; a first write leaves it
+     * NULL. A terminal attempt-1 row never reaches here: its request is {@code COMPLETED} or
+     * {@code FAILED}, so the guard settles the delivery before a run begins.
      *
-     * @param outcome        the derived leg outcome
-     * @param claim          the request claim fencing the write
-     * @param expectedStatus the status the attempt row must currently hold
+     * @param outcome the derived leg outcome
+     * @param claim   the request claim fencing the write
      * @return the number of rows updated: 1 when written, 0 when fenced out (a stale runner)
      */
-    public int writeOutcome(final LegOutcome outcome, final RunClaim claim,
-                            final LegStatus expectedStatus) {
-        return transactionTemplate.execute(status -> applyOutcome(outcome, claim, expectedStatus));
+    public int writeOutcome(final LegOutcome outcome, final RunClaim claim) {
+        return transactionTemplate.execute(status -> applyOutcome(outcome, claim));
     }
 
-    private int applyOutcome(final LegOutcome outcome, final RunClaim claim,
-                             final LegStatus expectedStatus) {
+    private int applyOutcome(final LegOutcome outcome, final RunClaim claim) {
         final String bodyDigest = outcome.bodyDigest().orElse(null);
         // service_version is written only with a body_digest (H19): precomputed here, as NULL, so the
         // bound parameters always carry a determinable type — a bare NULL inside a CASE leaves the
@@ -69,9 +73,11 @@ public final class OutboundMessageRepository {
                         + "payload_source = :payloadSource, payload_shared_time = :sharedTime, "
                         + "body_digest = :bodyDigest, service_version = :serviceVersion, "
                         + "sent_at = CASE WHEN :sent THEN now() ELSE NULL END, "
+                        + "note = CASE WHEN attempts > 0 "
+                        + "THEN 'prev=' || status || '/' || coalesce(reason, '-') ELSE note END, "
                         + "attempts = attempts + 1, updated_at = now() "
                         + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
-                        + "AND attempt = 1 AND status = :expected "
+                        + "AND attempt = 1 AND status IN ('PENDING', 'PARKED') "
                         + "AND EXISTS (SELECT 1 FROM processed_request pr "
                         + "WHERE pr.source = outbound_message.source "
                         + "AND pr.request_id = outbound_message.request_id "
@@ -91,7 +97,6 @@ public final class OutboundMessageRepository {
                 .param("bodyDigest", bodyDigest)
                 .param("serviceVersion", versionToWrite)
                 .param("sent", sent)
-                .param("expected", expectedStatus.wireValue())
                 .param("source", outcome.command().source())
                 .param("requestId", outcome.command().requestId())
                 .param("owner", claim.owner().toString())

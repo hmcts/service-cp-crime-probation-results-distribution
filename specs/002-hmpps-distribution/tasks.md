@@ -285,7 +285,7 @@ description: "Task list for HMPPS distribution (slice 002)"
 - [x] T053 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/CachedHearingPayloadAdapterTest.java`: dated-absent/undated-present → `payload_source=cache-nullday`; cache unreachable/timeout/blank/null/unparseable → each a miss, not a failure — fails first (Acceptance Scenarios 1–3, DV-07, DV-13)
 - [x] T054 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/ResultsQueryExternalHearingClientTest.java` (WireMock): empty body/`{}`/non-JSON 2xx → miss; 503-then-200 retried with doubling backoff honouring `Retry-After`, sent on recovery; 404 not retried; fallback form `{hearing, sharedTime}` passed through unexpanded; `CJSCPPUID` = command `userId` or system user when absent — fails first (Acceptance Scenarios 4–7, DV-10, DV-17, DV-23)
 - [x] T055 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadUnavailableParkIT.java`: every source missing on a non-final delivery → `PARKED(payload-unavailable)`, switch not read, no body, request `RETRYING`, message abandoned, `probation_parked_total` incremented, ERROR line — fails first (Acceptance Scenario 8)
-- [ ] T056 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadRerunInPlaceIT.java`: payload now available on redelivery → same attempt-1 row re-run in place, no new `PENDING`, `attempts` incremented, `note=prev=PARKED/payload-unavailable`, outcome `SENT`, request `COMPLETED` — fails first (Acceptance Scenario 9, FR-002-041)
+- [x] T056 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadRerunInPlaceIT.java`: payload now available on redelivery → same attempt-1 row re-run in place, no new `PENDING`, `attempts` incremented, `note=prev=PARKED/payload-unavailable`, outcome `SENT`, request `COMPLETED` — fails first (Acceptance Scenario 9, FR-002-041)
 - [x] T057 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadExhaustedIT.java`: every source misses on the final permitted delivery → leg `FAILED(payload-unavailable)`, request `FAILED(leg-exhausted)` with `exhausted_message_id`, message dead-lettered `leg-exhausted` and counted — fails first (Acceptance Scenario 10)
 - [x] T058 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/config/PayloadStageBudgetTest.java`: an attempt whose worst case (with wait) no longer fits the 60s payload budget is not started, stage ends `payload-unavailable`; a `sharedTime` that fails to parse leaves `payload_shared_time` empty without failing the leg — fails first (Acceptance Scenarios 11–12, SC-002-005)
 
@@ -348,7 +348,23 @@ description: "Task list for HMPPS distribution (slice 002)"
 > after T062: both pass; `DistributionRunnerTest` gains a final-delivery-FAILED case and its 15
 > existing `run(...)` calls take `, false`; `EndToEndReceiverRejectedIT`/`EndToEndRulesExceptionIT`
 > (terminal FAILED → `COMPLETED`) stay green (checkstyle/pmd main+test clean).
-- [ ] T063 [US3] Implement in-place re-run (FR-002-012 eligibility column, FR-002-041 note rewrite) for a `PARKED` or claim-reclaimed `PENDING` attempt-1 row — makes T056 pass
+- [x] T063 [US3] Implement in-place re-run (FR-002-012 eligibility column, FR-002-041 note rewrite) for a `PARKED` or claim-reclaimed `PENDING` attempt-1 row — makes T056 pass
+
+> T056/T063. `OutboundMessageRepository.writeOutcome` drops its `expectedStatus` parameter and guards
+> the UPDATE on the attempt-1 row in either re-runnable state (`status IN ('PENDING','PARKED')`), so a
+> first run, a reclaimed crash re-run and a redelivery after a park all overwrite the one row in
+> place; `note` is rewritten whole as `prev=<STATUS>/<reason>` when the row's `attempts` is already
+> above zero (a re-run) and left NULL on a first write. `OutboundLogAdapter.record` and the four
+> `ClaimFencingIT` calls move to the two-argument signature. RED: `PayloadRerunInPlaceIT` (seeding a
+> `RETRYING` request and its attempt-1 `PARKED(payload-unavailable)` leg, then driving one delivery
+> with the payload present) fails against the pre-T063 repository (`expected: "SENT" but was
+> "PARKED"`: the `PENDING`-only guard matched no row, so the re-run never settled). GREEN after T063:
+> the row is re-run in place to `SENT` with `note=prev=PARKED/payload-unavailable`, `attempts`
+> incremented and exactly one `outbound_message` row, the request `COMPLETED`; the repository-level
+> re-run is also pinned by `ClaimFencingIT.rerun_replaces_the_body`, and `EndToEndSentIT` confirms a
+> first write still leaves `note` NULL (checkstyle/pmd main+test clean). The test waits for the
+> request to reach `COMPLETED` rather than for the leg to merely settle, since the seeded `PARKED` row
+> is already non-`PENDING`.
 - [x] T064 [US3] Parse `sharedTime` defensively (ISO-8601 instant, any offset) leaving `payload_shared_time` NULL on a parse failure without failing the leg — makes T058's sharedTime assertion pass (FR-002-019)
 
 **Checkpoint**: User Stories 1–3 all work independently.

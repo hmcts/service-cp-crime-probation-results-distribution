@@ -85,8 +85,7 @@ class ClaimFencingIT extends SchemaTestSupport {
     void stale_runner_write_matches_no_row() {
         requests.insertClaim(command, "{}", "fp", RunClaim.fresh());
 
-        final int rows = outbound.writeOutcome(sent("the bytes"), RunClaim.fresh(),
-                LegStatus.PENDING);
+        final int rows = outbound.writeOutcome(sent("the bytes"), RunClaim.fresh());
 
         assertThat(rows).isZero();
         assertThat(attemptStatus()).isEqualTo("PENDING");
@@ -98,7 +97,7 @@ class ClaimFencingIT extends SchemaTestSupport {
         final RunClaim claim = RunClaim.fresh();
         requests.insertClaim(command, "{}", "fp", claim);
 
-        final int rows = outbound.writeOutcome(sent("the exact bytes"), claim, LegStatus.PENDING);
+        final int rows = outbound.writeOutcome(sent("the exact bytes"), claim);
 
         assertThat(rows).isEqualTo(1);
         assertThat(attemptStatus()).isEqualTo("SENT");
@@ -114,8 +113,8 @@ class ClaimFencingIT extends SchemaTestSupport {
         final RunClaim claim = RunClaim.fresh();
         requests.insertClaim(command, "{}", "fp", claim);
 
-        outbound.writeOutcome(parked("first body"), claim, LegStatus.PENDING);
-        outbound.writeOutcome(sent("second body"), claim, LegStatus.PARKED);
+        outbound.writeOutcome(parked("first body"), claim);
+        outbound.writeOutcome(sent("second body"), claim);
 
         assertThat(attemptStatus()).isEqualTo("SENT");
         assertThat(storedBody()).isEqualTo("second body");

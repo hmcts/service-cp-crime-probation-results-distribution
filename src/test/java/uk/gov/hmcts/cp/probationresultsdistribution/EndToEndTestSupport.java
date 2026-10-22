@@ -735,6 +735,38 @@ public class EndToEndTestSupport {
     }
 
     /**
+     * Seeds a {@code RETRYING} request and its attempt-1 {@code PARKED(payload-unavailable)} leg, with
+     * no claim held, as a delivery leaves them after a payload-unavailable park. A later delivery
+     * reclaims the request and re-runs the same attempt-1 row in place.
+     *
+     * @param command the command whose identity and fingerprint are seeded
+     */
+    protected final void seedParkedPayloadUnavailableLeg(final DistributionCommand command) {
+        final String fingerprint = new RequestFingerprint().compute(command);
+        jdbc().sql("INSERT INTO processed_request (source, request_id, hearing_id, hearing_day, "
+                        + "shared_time, event_type, request_fingerprint, status, attempts, command) "
+                        + "VALUES (:source, :requestId, :hearingId, :hearingDay, :sharedTime, "
+                        + ":eventType, :fingerprint, 'RETRYING', 1, '{}')")
+                .param("source", command.source())
+                .param("requestId", command.requestId())
+                .param("hearingId", command.hearingId())
+                .param("hearingDay", command.hearingDay())
+                .param("sharedTime",
+                        java.time.OffsetDateTime.ofInstant(command.sharedTime(),
+                                java.time.ZoneOffset.UTC))
+                .param("eventType", command.eventType())
+                .param("fingerprint", fingerprint)
+                .update();
+        jdbc().sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                        + "attempt_origin, status, reason, attempts) VALUES (:id, :source, "
+                        + ":requestId, 'HMPPS', 1, 'queue', 'PARKED', 'payload-unavailable', 1)")
+                .param("id", UUID.randomUUID())
+                .param("source", command.source())
+                .param("requestId", command.requestId())
+                .update();
+    }
+
+    /**
      * Seeds a {@code processed_request} row whose fingerprint deliberately differs from any command's,
      * so a later copy of the same key is a collision.
      *

@@ -2,7 +2,6 @@ package uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence;
 
 import uk.gov.hmcts.cp.probationresultsdistribution.application.OutboundLog;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
-import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
 
@@ -13,9 +12,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageR
  * {@code application}. The one-UPDATE outcome write and the {@code outbound_body} insert happen in the
  * repository's single transaction, fenced by the request claim (H18-H20).
  *
- * <p>This slice (US1) writes the attempt-1 row, so the guarded write expects the {@code PENDING}
- * status the admission insert left. The in-place re-run of a {@code PARKED} or reclaimed
- * {@code PENDING} attempt-1 row (a different expected status) is US3/US5's.
+ * <p>The guarded write matches the attempt-1 row in either re-runnable state ({@code PENDING} or
+ * {@code PARKED}), so a first run, a reclaimed crash re-run and a redelivery after a park all
+ * overwrite the one attempt-1 row in place (FR-002-041); the repository derives the {@code prev=}
+ * note on a re-run.
  */
 public final class OutboundLogAdapter implements OutboundLog {
 
@@ -32,7 +32,7 @@ public final class OutboundLogAdapter implements OutboundLog {
 
     /**
      * Writes the attempt-1 outcome and, when a body was sent, its exact bytes, in the repository's
-     * single transaction, fenced by the request claim against the admission's {@code PENDING} row.
+     * single transaction, fenced by the request claim against the re-runnable attempt-1 row.
      *
      * @param outcome the derived leg outcome
      * @param claim   the request claim fencing the write
@@ -40,6 +40,6 @@ public final class OutboundLogAdapter implements OutboundLog {
      */
     @Override
     public boolean record(final LegOutcome outcome, final RunClaim claim) {
-        return repository.writeOutcome(outcome, claim, LegStatus.PENDING) == 1;
+        return repository.writeOutcome(outcome, claim) == 1;
     }
 }
