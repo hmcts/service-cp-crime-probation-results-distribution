@@ -117,6 +117,30 @@ class StartupValidationTest {
                 .doesNotThrowAnyException();
     }
 
+    @Test
+    @DisplayName("refuses an Azure App Configuration connection string or label (H22, H26)")
+    void refuses_an_app_configuration_property() {
+        assertThatThrownBy(() -> validator.validateNoForbiddenProperties(
+                new MockEnvironment().withProperty(
+                        "spring.cloud.azure.appconfiguration.stores[0].connection-string", "x")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("appconfiguration");
+        assertThatThrownBy(() -> validator.validateNoForbiddenProperties(
+                new MockEnvironment().withProperty("some.endpoint", "https://x.azconfig.io")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("some.endpoint");
+    }
+
+    @Test
+    @DisplayName("refuses a max-delivery-count other than the queue's configured value of 5")
+    void refuses_a_mismatched_max_delivery_count() {
+        assertThatThrownBy(() -> validator.validate(
+                valid().withServicebus(new ServiceBus(3, Duration.ofMinutes(5),
+                        Duration.ofMinutes(5))).build(), false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.servicebus.max-delivery-count");
+    }
+
     private static Builder valid() {
         return new Builder();
     }
@@ -167,6 +191,11 @@ class StartupValidationTest {
 
         private Builder withClaim(final Claim value) {
             this.claim = value;
+            return this;
+        }
+
+        private Builder withServicebus(final ServiceBus value) {
+            this.servicebus = value;
             return this;
         }
 
