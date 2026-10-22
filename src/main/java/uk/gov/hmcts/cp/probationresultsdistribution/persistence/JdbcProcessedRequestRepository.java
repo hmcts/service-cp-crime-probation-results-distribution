@@ -8,8 +8,8 @@ import java.util.UUID;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.support.TransactionTemplate;
-import uk.gov.hmcts.cp.probationresultsdistribution.application.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
  * The JDBC {@link ProcessedRequestRepository}. The insert is the idempotency claim: it writes the

@@ -13,6 +13,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.HearingPayloadSo
 import uk.gov.hmcts.cp.probationresultsdistribution.application.HmppsSender.SentBody;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;

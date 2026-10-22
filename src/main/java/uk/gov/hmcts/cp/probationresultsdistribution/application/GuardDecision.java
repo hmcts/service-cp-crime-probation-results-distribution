@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
 import java.util.Objects;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
  * What the idempotency guard decided for one delivery (design §4.5, FR-002-007). The message listener

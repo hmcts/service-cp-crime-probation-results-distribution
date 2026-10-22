@@ -27,7 +27,10 @@
  * {@code OutboundLog}. The processed-log store the guard claims through
  * ({@code persistence.ProcessedRequestRepository}) is an infra-free interface declared in
  * {@code persistence} with the rest of the store, per {@code design_rules.md}'s package tree, and
- * carries only {@code domain} types; the guard depends on it from here.
+ * carries only {@code domain} types; the guard depends on it from here. The claim and outcome
+ * shapes those store interfaces carry ({@code RunClaim}, {@code LegOutcome}) live in {@code domain},
+ * not here, precisely so that {@code persistence} depends on {@code domain} only and never back on
+ * this package.
  *
  * <p><strong>Dependency direction.</strong> This package depends on {@code domain},
  * {@code pipeline}, its own outbound port interfaces and the persistence-declared
@@ -35,6 +38,9 @@
  * {@code inbound}, {@code api}, {@code adapter} or {@code config}, and from {@code persistence}
  * only that one store interface (never a JDBC adapter): an adapter is reached only through the port
  * it implements, and the concrete choice is made in {@code config}. That is what lets the stub
- * sources stand in for the live ones in the local and test profiles.
+ * sources stand in for the live ones in the local and test profiles. The dependency is one
+ * direction only: {@code application} → {@code persistence} (that one interface) and
+ * {@code application} → {@code domain}; nothing in {@code persistence} imports from
+ * {@code application}.
  */
 package uk.gov.hmcts.cp.probationresultsdistribution.application;

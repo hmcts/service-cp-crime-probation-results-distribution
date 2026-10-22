@@ -3,8 +3,8 @@ package uk.gov.hmcts.cp.probationresultsdistribution.persistence;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import uk.gov.hmcts.cp.probationresultsdistribution.application.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
  * The processed-log store the idempotency guard claims through (design §4.4, §4.6). The interface is

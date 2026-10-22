@@ -1,18 +1,13 @@
-package uk.gov.hmcts.cp.probationresultsdistribution.application;
+package uk.gov.hmcts.cp.probationresultsdistribution.domain;
 
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
-import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
-import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
-import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
-import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
-import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
-import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 
 /**
- * A leg attempt's outcome as the core derives it, for the {@link OutboundLog} to persist. It is the
+ * A leg attempt's outcome as the core derives it, for the
+ * {@link uk.gov.hmcts.cp.probationresultsdistribution.application.OutboundLog} to persist. It is the
  * final, mapped shape: the business mapping from a {@code PublishOutcome} or a redaction result to a
  * {@link LegStatus} and {@link LegReason} lives in the core, while the adapter only translates this
  * record into the {@code outbound_message} row and the {@code outbound_body} text.

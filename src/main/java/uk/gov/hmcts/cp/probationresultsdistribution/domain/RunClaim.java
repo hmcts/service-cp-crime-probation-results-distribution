@@ -1,4 +1,4 @@
-package uk.gov.hmcts.cp.probationresultsdistribution.application;
+package uk.gov.hmcts.cp.probationresultsdistribution.domain;
 
 import java.util.Objects;
 import java.util.UUID;

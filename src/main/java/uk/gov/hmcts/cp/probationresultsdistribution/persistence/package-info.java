@@ -19,9 +19,13 @@
  *
  * <p><strong>Dependency direction.</strong> Declares the request store the idempotency guard claims
  * through ({@code ProcessedRequestRepository}, an infra-free interface carrying only {@code domain}
- * types) and the {@code OutboundMessageRepository}, and implements {@code OutboundLog} (declared in
- * {@code application}). It depends on {@code application}'s ports and on {@code domain} only. It
- * never calls an adapter, the {@code pipeline} or a driving adapter; the transaction boundary is
- * chosen by the caller in {@code application}.
+ * types, including {@code RunClaim}) and the {@code OutboundMessageRepository} (which likewise
+ * carries only {@code domain} types, including {@code LegOutcome}). It depends on {@code domain}
+ * only: {@code RunClaim} and {@code LegOutcome} live in {@code domain}, not {@code application}, so
+ * this package never imports from {@code application}. {@code OutboundLog} is declared in
+ * {@code application}, but nothing here implements it or references it; an adapter outside this
+ * package is free to implement {@code OutboundLog} against these repositories. This package never
+ * calls an adapter, the {@code pipeline} or a driving adapter; the transaction boundary is chosen by
+ * the caller in {@code application}.
  */
 package uk.gov.hmcts.cp.probationresultsdistribution.persistence;

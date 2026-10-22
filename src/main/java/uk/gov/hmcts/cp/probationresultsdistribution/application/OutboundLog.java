@@ -1,5 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
+
 /**
  * The outbound-log port (design §4.4, §4.6). The core records a leg attempt's outcome, and its exact
  * sent bytes, only through this port; the JDBC adapter writes the {@code outbound_message} row and,
