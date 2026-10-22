@@ -117,7 +117,16 @@ description: "Task list for HMPPS distribution (slice 002)"
 > (checkstyle/pmd main+test clean). The networknt schema library declared in `build.gradle` is not
 > resolvable on this classpath, so the contract is pinned against the parser directly; the vendored
 > `distribution-command.schema.json` remains the documented authority.
-- [ ] T036 [P] [US1] Implement `adapter/payload/CachedHearingPayloadAdapter.java` (dated-key read only, for this story's happy path; undated/query fallback lands in US3) implementing `HearingPayloadSource`, with `payload_source=cache-day` recorded — partial implementation toward FR-002-015
+- [x] T036 [P] [US1] Implement `adapter/payload/CachedHearingPayloadAdapter.java` (dated-key read only, for this story's happy path; undated/query fallback lands in US3) implementing `HearingPayloadSource`, with `payload_source=cache-day` recorded — partial implementation toward FR-002-015
+
+> T036 driven test-first by `adapter/payload/CachedHearingPayloadAdapterTest` (Redis GenericContainer),
+> scoped to the US1 dated-key happy path; US3's T053 extends this file with the undated-key fallback
+> and the full miss matrix. RED: with the constructor and `fetch` stubbed to throw
+> `UnsupportedOperationException`, `4 tests completed, 4 failed` (12 `UnsupportedOperationException`
+> hits across setUp+body). GREEN: with the dated-key read (`EXT_{hearingId}_{hearingDay}_result_`)
+> recording `payload_source = cache-day` and the parsed `sharedTime` (empty when it does not parse),
+> and treating an absent/blank/JSON-null/unparseable value as a miss, all 4 pass (checkstyle/pmd
+> main+test clean).
 - [x] T037 [P] [US1] Implement `adapter/usersgroups/FeaturePermissionClient.java` (happy-path `ACTIVE`/`INACTIVE` decision only; retry/timeout/unreadable branches land in US4) implementing `YouthFilterSource` per contracts/consumed-reads.md
 
 > T037 driven test-first by `adapter/usersgroups/FeaturePermissionClientTest` (WireMock,
