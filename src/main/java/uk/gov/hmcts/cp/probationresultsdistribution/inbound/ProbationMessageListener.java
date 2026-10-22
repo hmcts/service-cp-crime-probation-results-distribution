@@ -131,23 +131,38 @@ public final class ProbationMessageListener {
     private Settlement runAndSettle(final DistributionCommand command, final RunClaim claim) {
         final RunResult result = runner.run(command, AttemptOrigin.QUEUE, claim);
         if (!result.recorded()) {
-            metrics.staleRunnerRejection();
-            LOG.warn("stale-runner rejection: guarded write matched no row; abandoning");
-            return new Abandon();
+            return staleRunnerRejection();
         }
         return switch (result.status()) {
             case SENT, NOT_APPLICABLE, FAILED -> {
-                processedRequests.markCompleted(command.source(), command.requestId(), claim,
-                        CompletionReason.BOTH_LEGS_TERMINAL);
+                final boolean recorded = processedRequests.markCompleted(command.source(),
+                        command.requestId(), claim, CompletionReason.BOTH_LEGS_TERMINAL);
+                if (!recorded) {
+                    yield staleRunnerRejection();
+                }
                 metrics.processed("COMPLETED");
                 yield new Complete();
             }
             case PARKED -> {
-                processedRequests.markRetrying(command.source(), command.requestId(), claim);
-                yield new Abandon();
+                final boolean recorded =
+                        processedRequests.markRetrying(command.source(), command.requestId(), claim);
+                yield recorded ? new Abandon() : staleRunnerRejection();
             }
             case PENDING -> throw new IllegalStateException("a run never ends PENDING");
         };
+    }
+
+    /**
+     * Counts and logs a stale-runner rejection and hands the delivery back for redelivery. A guarded
+     * write that matched no row means a newer runner holds the claim; this run must not settle on a
+     * transition it did not take (design row A2-67), so it abandons rather than completing.
+     *
+     * @return the abandon settlement
+     */
+    private Settlement staleRunnerRejection() {
+        metrics.staleRunnerRejection();
+        LOG.warn("stale-runner rejection: guarded write matched no row; abandoning");
+        return new Abandon();
     }
 
     private static void setMdc(final DistributionCommand command, final long deliveryCount) {

@@ -126,6 +126,8 @@ class ProbationMessageListenerTest {
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
 
         final Settlement settlement = listener.decide(BODY, 1L);
 
@@ -143,6 +145,8 @@ class ProbationMessageListenerTest {
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim)).thenReturn(new RunResult(
                 AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
+        when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
+                .thenReturn(true);
 
         final Settlement settlement = listener.decide(BODY, 1L);
 
@@ -210,6 +214,8 @@ class ProbationMessageListenerTest {
         when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
         final ServiceBusReceivedMessageContext context = contextFor(BODY);
 
         listener.processMessage(context);
