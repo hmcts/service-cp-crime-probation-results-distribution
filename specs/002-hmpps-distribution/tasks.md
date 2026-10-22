@@ -283,7 +283,7 @@ description: "Task list for HMPPS distribution (slice 002)"
 ### Tests for User Story 3 (MANDATORY — write and run these first) ⚠️
 
 - [x] T053 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/CachedHearingPayloadAdapterTest.java`: dated-absent/undated-present → `payload_source=cache-nullday`; cache unreachable/timeout/blank/null/unparseable → each a miss, not a failure — fails first (Acceptance Scenarios 1–3, DV-07, DV-13)
-- [ ] T054 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/ResultsQueryExternalHearingClientTest.java` (WireMock): empty body/`{}`/non-JSON 2xx → miss; 503-then-200 retried with doubling backoff honouring `Retry-After`, sent on recovery; 404 not retried; fallback form `{hearing, sharedTime}` passed through unexpanded; `CJSCPPUID` = command `userId` or system user when absent — fails first (Acceptance Scenarios 4–7, DV-10, DV-17, DV-23)
+- [x] T054 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/adapter/payload/ResultsQueryExternalHearingClientTest.java` (WireMock): empty body/`{}`/non-JSON 2xx → miss; 503-then-200 retried with doubling backoff honouring `Retry-After`, sent on recovery; 404 not retried; fallback form `{hearing, sharedTime}` passed through unexpanded; `CJSCPPUID` = command `userId` or system user when absent — fails first (Acceptance Scenarios 4–7, DV-10, DV-17, DV-23)
 - [ ] T055 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadUnavailableParkIT.java`: every source missing on a non-final delivery → `PARKED(payload-unavailable)`, switch not read, no body, request `RETRYING`, message abandoned, `probation_parked_total` incremented, ERROR line — fails first (Acceptance Scenario 8)
 - [ ] T056 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadRerunInPlaceIT.java`: payload now available on redelivery → same attempt-1 row re-run in place, no new `PENDING`, `attempts` incremented, `note=prev=PARKED/payload-unavailable`, outcome `SENT`, request `COMPLETED` — fails first (Acceptance Scenario 9, FR-002-041)
 - [ ] T057 [P] [US3] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/application/PayloadExhaustedIT.java`: every source misses on the final permitted delivery → leg `FAILED(payload-unavailable)`, request `FAILED(leg-exhausted)` with `exhausted_message_id`, message dead-lettered `leg-exhausted` and counted — fails first (Acceptance Scenario 10)
@@ -301,7 +301,18 @@ description: "Task list for HMPPS distribution (slice 002)"
 > `RedisException` out of `fetch`. GREEN: with the dated→undated read chain and every read wrapped so
 > a `RedisException` is a miss for that key (and `SharedTimes` extracted for the shared defensive
 > `sharedTime` parse), all 11 pass (checkstyle/pmd main+test clean).
-- [ ] T060 [US3] Implement `adapter/payload/ResultsQueryExternalHearingClient.java` implementing the query-API leg of `HearingPayloadSource`: the retry block (408/429/5xx/connect/read, doubling backoff, `Retry-After` honoured, budget-bounded), empty/`{}`/non-JSON-as-miss, `CJSCPPUID` selection — makes T054 pass (FR-002-017)
+- [x] T060 [US3] Implement `adapter/payload/ResultsQueryExternalHearingClient.java` implementing the query-API leg of `HearingPayloadSource`: the retry block (408/429/5xx/connect/read, doubling backoff, `Retry-After` honoured, budget-bounded), empty/`{}`/non-JSON-as-miss, `CJSCPPUID` selection — makes T054 pass (FR-002-017)
+
+> T054/T060 driven test-first by `adapter/payload/ResultsQueryExternalHearingClientTest` (WireMock,
+> `dynamicPort()`), the client taking a stage-deadline `Instant` so the chain (T061) can share the
+> 60 s payload budget across the cache reads and the query retries. RED against the stubbed seam
+> (`fetch` throwing `UnsupportedOperationException`): `7 tests completed, 7 failed`, every one hitting
+> the `UnsupportedOperationException`. GREEN with the retry loop (retry 408/429/≥500 and connect/read
+> failures, doubling back-off capped at `max-backoff`, delta-seconds `Retry-After` honoured and a
+> non-numeric form ignored, attempt-fits against the deadline), the 2xx empty/`{}`/non-object/non-JSON
+> miss, the 404-and-other-4xx immediate miss, the `{hearing, sharedTime}` pass-through with
+> `payload_source=query`, and `CJSCPPUID` = the command's `userId` or the system user: all 7 pass
+> (checkstyle/pmd main+test clean).
 - [ ] T061 [US3] Compose the three-source chain (dated → undated → query) in the payload-fetch stage of `DistributionRunner`, recording `payload_source` and the attempt-fits rule against the 60s budget — makes T058's budget check and the chain-selection scenarios pass (FR-002-015, FR-002-013)
 - [ ] T062 [US3] Implement the `PARKED(payload-unavailable)`/final-delivery `FAILED(payload-unavailable)` settlement path in `DistributionRunner`/`ProcessedRequestRepository`, with the switch stage skipped entirely when the payload is unavailable — makes T055, T057 pass (FR-002-018, FR-002-047, FR-002-048)
 - [ ] T063 [US3] Implement in-place re-run (FR-002-012 eligibility column, FR-002-041 note rewrite) for a `PARKED` or claim-reclaimed `PENDING` attempt-1 row — makes T056 pass
