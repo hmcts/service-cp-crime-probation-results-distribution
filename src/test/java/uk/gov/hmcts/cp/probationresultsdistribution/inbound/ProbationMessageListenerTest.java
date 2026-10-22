@@ -296,7 +296,10 @@ class ProbationMessageListenerTest {
         assertThatCode(() -> listener.processMessage(context)).doesNotThrowAnyException();
 
         verify(context).complete();
-        assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(1.0d);
+        // A failed settlement is its own event (FR-002-058): it is counted on
+        // probation_settlement_failures_total, never conflated with an unexpected run failure.
+        assertThat(count("probation_settlement_failures_total", null, null)).isEqualTo(1.0d);
+        assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(0.0d);
     }
 
     @Test
