@@ -53,5 +53,7 @@ class EndToEndSentIT extends EndToEndTestSupport {
         assertThat(posted).doesNotContain("policeCases");
         assertThat(row.get("body")).isEqualTo(posted);
         assertThat(sha256Hex(posted)).isEqualTo(row.get("body_digest"));
+        assertThat(meterRegistry().get("probation_gateway_request_duration")
+                .tag("leg", "HMPPS").timer().count()).isEqualTo(1L);
     }
 }
