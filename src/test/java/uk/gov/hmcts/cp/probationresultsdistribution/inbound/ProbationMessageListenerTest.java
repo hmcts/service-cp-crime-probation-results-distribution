@@ -168,6 +168,41 @@ class ProbationMessageListenerTest {
     }
 
     @Test
+    @DisplayName("abandons and counts a stale-runner rejection when the request transition matches no row")
+    void abandons_when_the_request_transition_is_stale() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim))
+                .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(false);
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(Abandon.class);
+        assertThat(count("probation_stale_runner_rejections_total", null, null)).isEqualTo(1.0d);
+        assertThat(count("probation_processed_total", "status", "COMPLETED")).isEqualTo(0.0d);
+    }
+
+    @Test
+    @DisplayName("abandons and counts a stale-runner rejection when the retry transition matches no row")
+    void abandons_when_the_retry_transition_is_stale() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim)).thenReturn(new RunResult(
+                AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
+        when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
+                .thenReturn(false);
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(Abandon.class);
+        assertThat(count("probation_stale_runner_rejections_total", null, null)).isEqualTo(1.0d);
+    }
+
+    @Test
     @DisplayName("processMessage completes the delivery exactly once on a terminal leg")
     void process_message_completes_once() {
         final RunClaim claim = RunClaim.fresh();
