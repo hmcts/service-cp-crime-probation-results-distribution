@@ -58,14 +58,17 @@ public final class OutboundMessageRepository {
     private int applyOutcome(final LegOutcome outcome, final RunClaim claim,
                              final LegStatus expectedStatus) {
         final String bodyDigest = outcome.bodyDigest().orElse(null);
+        // service_version is written only with a body_digest (H19): precomputed here, as NULL, so the
+        // bound parameters always carry a determinable type — a bare NULL inside a CASE leaves the
+        // driver unable to infer its type.
+        final String versionToWrite = bodyDigest == null ? null : serviceVersion;
+        final boolean sent = outcome.status() == LegStatus.SENT;
         final Optional<UUID> updatedId = jdbc.sql(
                         "UPDATE outbound_message SET status = :status, reason = :reason, "
                         + "youth_switch = :youthSwitch, http_status = :httpStatus, "
                         + "payload_source = :payloadSource, payload_shared_time = :sharedTime, "
-                        + "body_digest = :bodyDigest, "
-                        + "service_version = CASE WHEN :bodyDigest IS NULL THEN NULL "
-                        + "ELSE :serviceVersion END, "
-                        + "sent_at = CASE WHEN :status = 'SENT' THEN now() ELSE NULL END, "
+                        + "body_digest = :bodyDigest, service_version = :serviceVersion, "
+                        + "sent_at = CASE WHEN :sent THEN now() ELSE NULL END, "
                         + "attempts = attempts + 1, updated_at = now() "
                         + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
                         + "AND attempt = 1 AND status = :expected "
@@ -86,7 +89,8 @@ public final class OutboundMessageRepository {
                         .map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC))
                         .orElse(null))
                 .param("bodyDigest", bodyDigest)
-                .param("serviceVersion", serviceVersion)
+                .param("serviceVersion", versionToWrite)
+                .param("sent", sent)
                 .param("expected", expectedStatus.wireValue())
                 .param("source", outcome.command().source())
                 .param("requestId", outcome.command().requestId())

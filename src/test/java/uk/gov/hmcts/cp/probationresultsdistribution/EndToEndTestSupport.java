@@ -34,7 +34,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.azure.ServiceBusEmulatorContainer;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -42,6 +44,20 @@ import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.mssqlserver.MSSQLServerContainer;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway.HmppsPublisher;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.CachedHearingPayloadAdapter;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.IdempotencyGuard;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestFingerprint;
+import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.DistributionCommandParser;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
 /**
  * Shared Testcontainers base for the US1 end-to-end suites (T030-T033). It stands the service's whole
@@ -169,14 +185,34 @@ abstract class EndToEndTestSupport {
     }
 
     /**
-     * Builds the production listener wired against the live dependencies. T042 replaces this stub with
-     * the real parse/guard/run/settle wiring; until then it dispatches to the seam that completes
-     * without recording, so the end-to-end assertions fail for the right reason.
+     * Builds the production listener wired against the live dependencies: the JDBC store on the shared
+     * Postgres, the Redis cache adapter, the WireMock-backed users-groups and gateway clients, and a
+     * {@code MetricRegistry} over the per-test meter registry. The youth-switch default is
+     * {@code ACTIVE}.
      *
      * @return the listener under test
      */
-    protected uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener listener() {
-        return new uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener();
+    protected final ProbationMessageListener listener() {
+        final TransactionTemplate tx =
+                new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+        final ProcessedRequestRepository processedRequests =
+                new JdbcProcessedRequestRepository(jdbc(), tx, Duration.ofMinutes(4).plusSeconds(30));
+        final OutboundMessageRepository outboundMessages =
+                new OutboundMessageRepository(jdbc(), tx, "test-version");
+        final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
+        final CachedHearingPayloadAdapter payload =
+                new CachedHearingPayloadAdapter(redisConnection, CACHE_PREFIX);
+        final FeaturePermissionClient youthFilter = new FeaturePermissionClient(
+                usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
+                Duration.ofSeconds(2), Duration.ofSeconds(5));
+        final HmppsPublisher publisher = new HmppsPublisher(
+                gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60));
+        final MetricRegistry registry = new MetricRegistry(meterRegistry);
+        final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
+                outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
+        return new ProbationMessageListener(new DistributionCommandParser(),
+                new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
+                processedRequests, registry);
     }
 
     protected final JdbcClient jdbc() {

@@ -60,6 +60,31 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
     }
 
     @Test
+    @DisplayName("writes a NOT_APPLICABLE outcome with no body")
+    void writes_a_not_applicable_outcome() {
+        final UUID requestId = UUID.randomUUID();
+        final UUID hearingId = UUID.randomUUID();
+        final RunClaim claim = RunClaim.fresh();
+        seedPendingAttempt(requestId, hearingId, claim);
+        final LegOutcome outcome = new LegOutcome(
+                new DistributionCommand(SOURCE, requestId, hearingId, LocalDate.parse("2026-08-19"),
+                        Instant.parse("2026-08-19T16:42:07.512Z"), "Hearing_Resulted",
+                        Optional.empty()),
+                AttemptOrigin.QUEUE, LegStatus.NOT_APPLICABLE,
+                Optional.of(uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason
+                        .SJP_OR_BOX_HEARING),
+                Optional.of(YouthSwitchRecordedValue.ACTIVE), Optional.of(PayloadSource.CACHE_DAY),
+                Optional.of(Instant.parse("2026-08-19T16:42:07.512Z")), Optional.empty(),
+                OptionalInt.empty(), Optional.empty());
+
+        assertThat(adapter.record(outcome, claim)).isTrue();
+        final String status = jdbc().sql("SELECT status FROM outbound_message_latest "
+                        + "WHERE source = :s AND request_id = :r")
+                .param("s", SOURCE).param("r", requestId).query(String.class).single();
+        assertThat(status).isEqualTo("NOT_APPLICABLE");
+    }
+
+    @Test
     @DisplayName("returns false and writes nothing when the claim no longer matches (stale runner)")
     void returns_false_for_a_stale_claim() {
         final UUID requestId = UUID.randomUUID();

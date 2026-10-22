@@ -194,7 +194,30 @@ description: "Task list for HMPPS distribution (slice 002)"
 > `15 tests completed, 1 failed` — the application-only assertion has no matching counter. GREEN
 > (`shapeOf` reading the redacted body: a non-empty `hearing.prosecutionCases` is `case`, otherwise —
 > since R11 guarantees a `Body` carries at least one of the two — `application-only`): all 15 pass.
-- [ ] T042 [US1] Implement `inbound/ProbationMessageListener.java` and its `ServiceBusProcessorClient`/`ServiceBusConsumerConfig` wiring in `config/`: peek-lock mode (never `ReceiveAndDelete`), auto-complete disabled, `distribution.consumer.concurrency` (default 2) concurrent calls, lock duration and claim-lease ordering per `distribution.servicebus.max-delivery-count`; parse via T035, call the guard then the runner, exactly one explicit settlement per delivery — makes T030's end-to-end settlement assertion pass (FR-002-001, FR-002-046, FR-002-048)
+- [x] T042 [US1] Implement `inbound/ProbationMessageListener.java` and its `ServiceBusProcessorClient`/`ServiceBusConsumerConfig` wiring in `config/`: peek-lock mode (never `ReceiveAndDelete`), auto-complete disabled, `distribution.consumer.concurrency` (default 2) concurrent calls, lock duration and claim-lease ordering per `distribution.servicebus.max-delivery-count`; parse via T035, call the guard then the runner, exactly one explicit settlement per delivery — makes T030's end-to-end settlement assertion pass (FR-002-001, FR-002-046, FR-002-048)
+
+> The listener's parse/guard/run/settle decision is a testable `decide(body, deliveryCount)` returning
+> a bounded `Settlement`; `processMessage(context)` applies exactly one `complete`/`abandon`/`deadLetter`
+> and the Azure `ServiceBusReceivedMessage` never leaves the class. The request state transition is a
+> new pair of claim-guarded `ProcessedRequestRepository` statements (`markCompleted`, `markRetrying`);
+> the `OutboundLog` port now carries the `RunClaim` (the prior round's declined finding), threaded from
+> `GuardDecision.Admitted` through the runner to the fenced write. `ServiceBusConsumerConfig` is the
+> composition root, gated on `distribution.consumer.enabled=true`, so the `test`-profile context-load
+> test (intake off, no datasource) still refreshes.
+>
+> Driven test-first. `inbound/ProbationMessageListenerTest` (plain mocks, real `MetricRegistry`) —
+> RED against a throwing `decide` seam: every case hits `UnsupportedOperationException`; GREEN with the
+> real decision: 9 pass. `persistence/RequestTransitionIT` (Postgres) for the two transition
+> statements — RED against throwing seams: `4 tests completed, 4 failed`; GREEN: 4 pass. The four
+> end-to-end suites (T030-T033), red since their own commit, go GREEN here: `4 tests, 0 failures`
+> (Sent, NotApplicable, ReceiverRejected, RulesException).
+>
+> The end-to-end suites caught a real pre-existing defect in `OutboundMessageRepository`: the
+> `service_version = CASE WHEN :bodyDigest IS NULL …` left the bound NULL parameter untyped, so the
+> driver raised *"could not determine data type of parameter"* for every no-body outcome
+> (`NOT_APPLICABLE`, `FAILED(rules-exception)`). The write now precomputes `service_version` in Java
+> (NULL when there is no digest) and binds a typed `:sent` boolean for `sent_at`, removing the
+> untyped-NULL CASE. Pinned by `OutboundLogAdapterIT.writes_a_not_applicable_outcome`.
 - [x] T043 [US1] Build the support-lookup query against `outbound_message_latest` plus `outbound_body` in `persistence/` (a repository method, no HTTP endpoint — this is a support capability, not an API) — makes T034 pass (FR-002-053, SC-002-008)
 
 > T034/T043 driven test-first by `persistence/SupportLookupIT` (Postgres Testcontainers over the

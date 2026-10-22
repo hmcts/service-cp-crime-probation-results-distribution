@@ -8,6 +8,7 @@ import java.util.UUID;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.support.TransactionTemplate;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
@@ -113,6 +114,40 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                 .param("owner", claim.owner().toString())
                 .param("token", claim.token())
                 .param("lease", (double) leaseSeconds)
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+        return rows > 0;
+    }
+
+    @Override
+    public boolean markCompleted(final String source, final UUID requestId, final RunClaim claim,
+                                 final CompletionReason reason) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'COMPLETED', "
+                        + "completion_reason = :reason, failure_reason = NULL, claim_owner = NULL, "
+                        + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
+                        + "WHERE source = :source AND request_id = :requestId "
+                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + "AND claim_owner = :owner AND claim_token = :token")
+                .param("reason", reason.wireValue())
+                .param("owner", claim.owner().toString())
+                .param("token", claim.token())
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+        return rows > 0;
+    }
+
+    @Override
+    public boolean markRetrying(final String source, final UUID requestId, final RunClaim claim) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'RETRYING', "
+                        + "failure_reason = NULL, claim_owner = NULL, claim_token = NULL, "
+                        + "claim_expires_at = NULL, updated_at = now() "
+                        + "WHERE source = :source AND request_id = :requestId "
+                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + "AND claim_owner = :owner AND claim_token = :token")
+                .param("owner", claim.owner().toString())
+                .param("token", claim.token())
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
                 .update();
