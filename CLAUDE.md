@@ -38,7 +38,7 @@ Jira: none — this work carries no ticket; features land on `main` through pull
 | Design digest | `doc/design/DIGEST.md` — the rules of rev 3.6 and H35 for spec authors and implementers, each tagged with its design row id; rules only, no rationale. The design wins where they differ |
 | Constitution | `.specify/memory/constitution.md` |
 | Contracts | `doc/API_CONTRACTS.md` |
-| Deviation register | `doc/DEVIATIONS.md` — seeded from design §7.2 (DV-01 … DV-26) by the first feature that lands behaviour; not present yet |
+| Deviation register | `doc/DEVIATIONS.md` — seeded from design §7.2 (DV-01 … DV-26; next free DV-27); every intended difference from the legacy with its pinning test, plus the carried and pending-external defects |
 | Specifications | none yet — the first feature starts with `/speckit-specify` |
 | Inbound message schema | `src/main/resources/contracts/distribution-command.schema.json` — design Appendix B.1, vendored with the first feature |
 | Outbound HMPPS schema | **none in this release** — outbound schema validation is parked and gate G1 is not a gate (H13); the HMPPS ICD v0.8 is information only (H12) |
@@ -152,10 +152,18 @@ Postgres, Redis, WireMock).
 ## Setup
 
 <!-- SPECKIT START -->
-All six features are specified (design rev 3.6 + H35, constitution v2.0.1); none is planned yet.
-Implement in dependency order: `001-parity-kernel` → `002-hmpps-distribution` (owns the shared core:
-Flyway V1, enums, state machine, ports, metric registry) → `003-body-retention` and `004-recovery`
-→ `005-operations-api` → `006-production-readiness`.
+All six features are specified (design rev 3.6 + H35, constitution v2.0.1). `001-parity-kernel` is
+implemented (branch `001-parity-kernel`; `specs/001-parity-kernel/tasks.md`, 52/52 tasks): the
+ported HMPPS rules, the legacy-case twins, the reused comparator, the custody-checked corpus
+machinery and the deviation register are built and green. It is **not** yet a satisfied go-live
+evidence gate (H21, FR-001-017): the committed corpus is synthetic-only, holding only the `CACHE`
+form, pending the owning team's SIT capture (`doc/DEVIATIONS.md` "Corpus status"; an external
+dependency, not a code gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are
+resolved (spec.md Clarifications). The rest of the six features are specified but not planned yet.
+Implement in dependency order:
+`001-parity-kernel` → `002-hmpps-distribution` (owns the shared core: Flyway V1, enums, state
+machine, ports, metric registry) → `003-body-retention` and `004-recovery` → `005-operations-api` →
+`006-production-readiness`.
 
 To start a feature: branch from `main` with the spec's folder name (e.g. `git switch -c
 002-hmpps-distribution`) — the Spec Kit scripts resolve `specs/<NNN>-*` from the branch prefix —

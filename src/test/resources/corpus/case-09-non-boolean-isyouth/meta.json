@@ -1,0 +1,48 @@
+{
+  "caseId": "case-09-non-boolean-isyouth",
+  "environment": "SYNTHETIC",
+  "formsHeld": [
+    "CACHE"
+  ],
+  "share": {
+    "hearingId": "00000000-0000-0000-0000-000000000009",
+    "hearingDay": "2026-01-01",
+    "sharedTimeInstant": "2026-01-01T09:00:00.000Z"
+  },
+  "payloadSourceRead": "UNKNOWN",
+  "expectations": {
+    "ACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/active.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    },
+    "INACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/inactive.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    }
+  },
+  "provenance": {
+    "syntheticFrom": "hand-built from the legacy Jest fixture shapes; carries no SIT or production payload",
+    "change": "a non-boolean isYouth (\"false\", which is truthy): under ACTIVE that defendant is removed, the adult kept; under INACTIVE both kept",
+    "captureDates": {
+      "cache": "2026-10-21",
+      "outcome": "2026-10-21"
+    },
+    "expectationSources": {
+      "ACTIVE:CACHE": "EXECUTED_LEGACY",
+      "INACTIVE:CACHE": "EXECUTED_LEGACY"
+    },
+    "legacyCommit": "122e215250f6f7c7e646d36cbbaa3a50fd60779a",
+    "runtime": "node v20.9.0"
+  },
+  "digests": {
+    "inputs/cache.json": "02566242f8a48ef22be86f23b03484ea449c05da537fb5d6eade5a19ed8a8b09",
+    "expectations/active.json": "40296366ee15d18ad802357050bc78803f21e7fccdebd5db6dc296e4bbfe1d1c",
+    "expectations/inactive.json": "02566242f8a48ef22be86f23b03484ea449c05da537fb5d6eade5a19ed8a8b09"
+  }
+}

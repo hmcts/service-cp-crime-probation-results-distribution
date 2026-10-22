@@ -1,0 +1,20 @@
+{
+  "hearing": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "isVirtualBoxHearing": true,
+    "prosecutionCases": [
+      {
+        "defendants": [
+          {
+            "offences": [
+              {
+                "judicialResults": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sharedTime": "2026-01-01T09:00:00.000Z"
+}

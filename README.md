@@ -54,6 +54,7 @@ This repository carries no design narrative of its own. What it does carry:
 | Design digest | [doc/design/DIGEST.md](doc/design/DIGEST.md) | The design's rules for spec authors and implementers, each with its design row id; no rationale. The design wins where they differ |
 | Engineering constitution | [.specify/memory/constitution.md](.specify/memory/constitution.md) | The non-negotiable principles: parity with registered deviations, TDD, message contract first, ports and adapters, explicit failure, privacy in telemetry, estate conventions, HMPPS-only scope |
 | Contracts | [doc/API_CONTRACTS.md](doc/API_CONTRACTS.md) | The inbound `probation.requests` message, the outbound HMPPS publish and the operations API |
+| Deviation register | [doc/DEVIATIONS.md](doc/DEVIATIONS.md) | Every intended difference from the legacy (DV-01 … DV-26; next free DV-27), with its pinning test, and the carried and pending-external defects. Any unregistered difference fails the build |
 | Changelog | [doc/CHANGELOG.md](doc/CHANGELOG.md) | Notable changes |
 | Specifications | `specs/` | Spec Kit increments: spec, plan, research, data model, tasks and checklists. None yet; the first feature starts with `/speckit-specify` |
 | Working conventions | [CLAUDE.md](CLAUDE.md) | Build loop, contract rule and build and test commands |
