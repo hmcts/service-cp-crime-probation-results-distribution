@@ -221,6 +221,33 @@ class ProbationMessageListenerTest {
     }
 
     @Test
+    @DisplayName("abandons a hand-back one delivery below the final permitted delivery")
+    void abandons_below_the_final_permitted_delivery() {
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Abandon());
+
+        // maxDeliveryCount is 5 (FR-002-048): the fourth delivery still has a fifth to come, so it is
+        // handed back for redelivery, not dead-lettered.
+        assertThat(listener.decide(BODY, 4L)).isInstanceOf(Abandon.class);
+        assertThat(count("probation_deadlettered_total", "reason", "exhausted")).isEqualTo(0.0d);
+    }
+
+    @Test
+    @DisplayName("dead-letters exhausted when the delivery count reaches max-delivery-count")
+    void dead_letters_exhausted_on_the_final_permitted_delivery() {
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Abandon());
+
+        // The fifth delivery reaches maxDeliveryCount (FR-002-048): it is the final permitted delivery,
+        // so the service records its own exhausted reason rather than leaving the broker to park it.
+        final Settlement settlement = listener.decide(BODY, 5L);
+
+        assertThat(settlement).isInstanceOf(DeadLetter.class);
+        assertThat(((DeadLetter) settlement).reason()).isEqualTo(DeadLetterReason.EXHAUSTED);
+        assertThat(count("probation_deadlettered_total", "reason", "exhausted")).isEqualTo(1.0d);
+    }
+
+    @Test
     @DisplayName("processMessage completes the delivery exactly once on a terminal leg")
     void process_message_completes_once() {
         final RunClaim claim = RunClaim.fresh();
