@@ -273,6 +273,11 @@ class DistributionRunnerTest {
         assertThat(recorded.youthSwitch()).isEmpty();
         assertThat(recorded.payloadSource()).isEmpty();
         assertThat(result.status()).isEqualTo(LegStatus.PARKED);
+        assertThat(meter.find("probation_leg_outcomes_total")
+                .tag("status", "PARKED").tag("reason", "payload-unavailable").counter().count())
+                .isEqualTo(1.0d);
+        assertThat(meter.find("probation_parked_total")
+                .tag("reason", "payload-unavailable").counter().count()).isEqualTo(1.0d);
     }
 
     @Test

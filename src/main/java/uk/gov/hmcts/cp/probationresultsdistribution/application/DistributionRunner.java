@@ -109,11 +109,10 @@ public final class DistributionRunner {
         final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.PARKED,
                 Optional.of(LegReason.PAYLOAD_UNAVAILABLE), Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty(), OptionalInt.empty(), Optional.empty());
-        final boolean recorded = outboundLog.record(outcome, claim);
-        LOG.error("HMPPS leg PARKED(payload-unavailable) requestId={} origin={}",
-                command.requestId(), runOrigin);
-        return new RunResult(runOrigin, LegStatus.PARKED,
-                Optional.of(LegReason.PAYLOAD_UNAVAILABLE), recorded);
+        metrics.legOutcome(Leg.HMPPS, LegStatus.PARKED, Optional.of(LegReason.PAYLOAD_UNAVAILABLE),
+                runOrigin, false, BodyShape.CASE, HttpStatusBucket.NONE);
+        metrics.parked(Leg.HMPPS, LegReason.PAYLOAD_UNAVAILABLE);
+        return record(command, runOrigin, claim, outcome);
     }
 
     private RunResult runLeg(final DistributionCommand command, final AttemptOrigin runOrigin,
