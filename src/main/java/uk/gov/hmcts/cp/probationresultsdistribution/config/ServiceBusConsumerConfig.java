@@ -162,11 +162,12 @@ public class ServiceBusConsumerConfig {
 
     /* default */ @Bean
     HmppsPublisher hmppsPublisher(final DistributionProperties properties,
-            @Value("${distribution.gateway.subscription-key}") final String subscriptionKey) {
+            @Value("${distribution.gateway.subscription-key}") final String subscriptionKey,
+            final MetricRegistry metrics) {
         return new HmppsPublisher(properties.hmpps().url(), subscriptionKey,
                 properties.gateway().connectTimeout(), properties.gateway().readTimeout(),
                 properties.gateway().maxAttempts(), properties.gateway().initialBackoff(),
-                properties.gateway().maxBackoff(), properties.budget().leg());
+                properties.gateway().maxBackoff(), properties.budget().leg(), metrics);
     }
 
     /* default */ @Bean

@@ -298,7 +298,8 @@ public class EndToEndTestSupport {
                 usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
                 connectTimeout, readTimeout, 3, retryWait, registry);
         final HmppsPublisher publisher = new HmppsPublisher(
-                gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60));
+                gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60),
+                registry);
         final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
                 outboundLog, defaultWhenUnreadable, registry);
         return new ProbationMessageListener(new DistributionCommandParser(),
@@ -377,7 +378,7 @@ public class EndToEndTestSupport {
                 usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
                 Duration.ofSeconds(2), Duration.ofSeconds(5), 3, Duration.ofSeconds(1), registry);
         final HmppsPublisher publisher = new HmppsPublisher(
-                gatewayUrl(), SUBSCRIPTION_KEY, gatewayConnectTimeout, gatewayReadTimeout);
+                gatewayUrl(), SUBSCRIPTION_KEY, gatewayConnectTimeout, gatewayReadTimeout, registry);
         sharedMetricRegistry = registry;
         final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
                 outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
@@ -400,7 +401,8 @@ public class EndToEndTestSupport {
                 usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
                 Duration.ofSeconds(2), Duration.ofSeconds(5), 3, Duration.ofSeconds(1), registry);
         final HmppsPublisher publisher = new HmppsPublisher(
-                gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60));
+                gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60),
+                registry);
         sharedMetricRegistry = registry;
         final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
                 outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
