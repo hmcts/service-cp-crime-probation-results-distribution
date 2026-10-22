@@ -13,13 +13,14 @@ import org.springframework.core.env.PropertySource;
  * The startup configuration check (design §6 Startup refusals, digest §12; FR-002-066, FR-002-067).
  * It refuses to start, naming the offending property, when a composed stage does not fit its budget,
  * the claim lease and lock are mis-ordered, the two system-user ids differ, the youth default is not
- * {@code ACTIVE}/{@code INACTIVE}, the delivery limit is absent, a required secret is missing in a
- * deployed profile, or a forbidden property is present.
+ * {@code ACTIVE}/{@code INACTIVE}, the delivery limit differs from the queue's configured value, a
+ * required secret is missing in a deployed profile, or a forbidden property is present.
  */
 public final class StartupValidator {
 
     private static final Set<String> VALID_DEFAULTS = Set.of("ACTIVE", "INACTIVE");
     private static final Duration RENEW_MARGIN = Duration.ofSeconds(30);
+    private static final int EXPECTED_MAX_DELIVERY_COUNT = 5;
 
     /**
      * Validates the typed configuration, throwing when a rule fails.
@@ -42,7 +43,9 @@ public final class StartupValidator {
 
     /**
      * Refuses a forbidden property: a contract-validation mode (H13), an App Configuration source
-     * (H22, H26) or any {@code distribution.vep.*} (H5).
+     * (H22, H26) — a property name carrying {@code appconfiguration}/{@code app-configuration} or a
+     * value holding an {@code azconfig.io} connection string/endpoint — or any
+     * {@code distribution.vep.*} (H5).
      *
      * @param environment the application environment
      */
@@ -51,7 +54,7 @@ public final class StartupValidator {
             for (final PropertySource<?> source : configurable.getPropertySources()) {
                 if (source instanceof EnumerablePropertySource<?> enumerable) {
                     for (final String name : enumerable.getPropertyNames()) {
-                        requireNotForbidden(name);
+                        requireNotForbidden(name, enumerable.getProperty(name));
                     }
                 }
             }
@@ -134,9 +137,10 @@ public final class StartupValidator {
     }
 
     private void validateDeliveryLimit(final DistributionProperties props) {
-        require(props.servicebus().maxDeliveryCount() >= 1,
+        require(props.servicebus().maxDeliveryCount() == EXPECTED_MAX_DELIVERY_COUNT,
                 "distribution.servicebus.max-delivery-count",
-                "must be at least 1 and equal to the queue's maxDeliveryCount");
+                "must equal the queue's configured maxDeliveryCount ("
+                        + EXPECTED_MAX_DELIVERY_COUNT + ", design §4.2)");
     }
 
     private void validateSecrets(final DistributionProperties props) {
@@ -150,12 +154,16 @@ public final class StartupValidator {
                 "distribution.hmpps.url", "is required and must be https");
     }
 
-    private static void requireNotForbidden(final String name) {
-        final String lower = name.toLowerCase(Locale.ROOT);
-        final boolean forbidden = lower.startsWith("distribution.vep.")
-                || lower.contains("contract-validation")
-                || lower.startsWith("distribution.feature.");
-        if (forbidden) {
+    private static void requireNotForbidden(final String name, final Object value) {
+        final String lowerName = name.toLowerCase(Locale.ROOT);
+        final boolean forbiddenName = lowerName.startsWith("distribution.vep.")
+                || lowerName.contains("contract-validation")
+                || lowerName.startsWith("distribution.feature.")
+                || lowerName.contains("appconfiguration")
+                || lowerName.contains("app-configuration");
+        final boolean forbiddenValue = value instanceof String text
+                && text.toLowerCase(Locale.ROOT).contains("azconfig.io");
+        if (forbiddenName || forbiddenValue) {
             throw new IllegalStateException("Forbidden configuration property present: " + name);
         }
     }
