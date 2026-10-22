@@ -99,11 +99,12 @@ public final class ProbationMessageListener {
                     : storeUnavailable(deliveryCount);
         } catch (final RuntimeException unexpected) {
             // Not swallowed: an unexpected failure is logged by type, counted and the delivery handed
-            // back for redelivery. The final-permitted-delivery dead-letter for this path is US2's (T052).
+            // back for redelivery — or dead-lettered exhausted on its final permitted delivery, so the
+            // service's own reason is counted rather than the broker's (FR-002-007).
             metrics.processingFailure();
-            LOG.error("unexpected failure processing a delivery; abandoning; type={}",
+            LOG.error("unexpected failure processing a delivery; handing it back; type={}",
                     unexpected.getClass().getName());
-            settlement = new Abandon();
+            settlement = handBack(deliveryCount);
         }
         try {
             apply(context, settlement);
@@ -162,7 +163,8 @@ public final class ProbationMessageListener {
                 metrics.deadLettered(deadLetter.reason());
                 yield new DeadLetter(deadLetter.reason());
             }
-            case GuardDecision.Admitted admitted -> runAndSettle(command, admitted.claim());
+            case GuardDecision.Admitted admitted ->
+                runAndSettle(command, admitted.claim(), deliveryCount);
         };
     }
 
@@ -200,17 +202,18 @@ public final class ProbationMessageListener {
     }
 
     @SuppressWarnings("PMD.OnlyOneReturn")
-    private Settlement runAndSettle(final DistributionCommand command, final RunClaim claim) {
+    private Settlement runAndSettle(final DistributionCommand command, final RunClaim claim,
+                                    final long deliveryCount) {
         final RunResult result = runner.run(command, AttemptOrigin.QUEUE, claim);
         if (!result.recorded()) {
-            return staleRunnerRejection();
+            return staleRunnerRejection(deliveryCount);
         }
         return switch (result.status()) {
             case SENT, NOT_APPLICABLE, FAILED -> {
                 final boolean recorded = processedRequests.markCompleted(command.source(),
                         command.requestId(), claim, CompletionReason.BOTH_LEGS_TERMINAL);
                 if (!recorded) {
-                    yield staleRunnerRejection();
+                    yield staleRunnerRejection(deliveryCount);
                 }
                 metrics.processed("COMPLETED");
                 yield new Complete();
@@ -218,23 +221,25 @@ public final class ProbationMessageListener {
             case PARKED -> {
                 final boolean recorded =
                         processedRequests.markRetrying(command.source(), command.requestId(), claim);
-                yield recorded ? new Abandon() : staleRunnerRejection();
+                yield recorded ? new Abandon() : staleRunnerRejection(deliveryCount);
             }
             case PENDING -> throw new IllegalStateException("a run never ends PENDING");
         };
     }
 
     /**
-     * Counts and logs a stale-runner rejection and hands the delivery back for redelivery. A guarded
-     * write that matched no row means a newer runner holds the claim; this run must not settle on a
-     * transition it did not take (design row A2-67), so it abandons rather than completing.
+     * Counts and logs a stale-runner rejection and hands the delivery back for redelivery, dead-lettering
+     * it {@code exhausted} on the final permitted delivery (FR-002-007, A2-67). A guarded write that
+     * matched no row means a newer runner holds the claim; this run must not settle on a transition it did
+     * not take, so it never completes the message.
      *
-     * @return the abandon settlement
+     * @param deliveryCount the broker delivery count for this delivery
+     * @return the hand-back settlement (abandon, or dead-letter exhausted on the final delivery)
      */
-    private Settlement staleRunnerRejection() {
+    private Settlement staleRunnerRejection(final long deliveryCount) {
         metrics.staleRunnerRejection();
-        LOG.warn("stale-runner rejection: guarded write matched no row; abandoning");
-        return new Abandon();
+        LOG.warn("stale-runner rejection: guarded write matched no row; handing the delivery back");
+        return handBack(deliveryCount);
     }
 
     private static void setMdc(final DistributionCommand command, final long deliveryCount) {
