@@ -15,6 +15,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import uk.gov.hmcts.cp.probationresultsdistribution.EndToEndTestSupport;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ConsumerLifecycleController;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener;
 
 /**
@@ -67,8 +68,7 @@ class ServiceBusConsumerConfigIT {
             assertThat(context).hasSingleBean(ProbationMessageListener.class);
             assertThat(context).hasSingleBean(DistributionRunner.class);
             assertThat(context).hasSingleBean(MetricRegistry.class);
-            assertThat(context).hasSingleBean(
-                    uk.gov.hmcts.cp.probationresultsdistribution.inbound.ConsumerLifecycleController.class);
+            assertThat(context).hasSingleBean(ConsumerLifecycleController.class);
         });
     }
 
