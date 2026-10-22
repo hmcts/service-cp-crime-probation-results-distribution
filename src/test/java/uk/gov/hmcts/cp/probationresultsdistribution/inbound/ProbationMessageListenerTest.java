@@ -1,7 +1,9 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.inbound;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -249,6 +251,25 @@ class ProbationMessageListenerTest {
         verify(context).deadLetter(any());
         verify(context, never()).complete();
         verify(context, never()).abandon();
+    }
+
+    @Test
+    @DisplayName("processMessage never propagates when applying the settlement fails")
+    void process_message_swallows_settlement_application_failure() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim))
+                .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+        doThrow(new IllegalStateException("the lock was lost")).when(context).complete();
+
+        assertThatCode(() -> listener.processMessage(context)).doesNotThrowAnyException();
+
+        verify(context).complete();
+        assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(1.0d);
     }
 
     @Test
