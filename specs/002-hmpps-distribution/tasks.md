@@ -173,7 +173,20 @@ description: "Task list for HMPPS distribution (slice 002)"
 > delegating to `OutboundMessageRepository.writeOutcome(outcome, claim, PENDING)` and returning
 > whether one row was written): both pass — the SENT row carries the stored body hashing to the
 > digest, and a stale claim writes nothing and returns false.
-- [ ] T040 [US1] Wire `DistributionRunner` to call slice 001's `pipeline.HmppsRedaction` with the effective switch state, handle the `NOT_APPLICABLE`/rules-failure/success result kinds, compute `body_digest` and read `service_version` once at startup — makes T030, T031, T033 pass (FR-002-028 to FR-002-030, FR-002-033)
+- [x] T040 [US1] Wire `DistributionRunner` to call slice 001's `pipeline.HmppsRedaction` with the effective switch state, handle the `NOT_APPLICABLE`/rules-failure/success result kinds, compute `body_digest` and read `service_version` once at startup — makes T030, T031, T033 pass (FR-002-028 to FR-002-030, FR-002-033)
+
+> Driven test-first by the rewritten `application/DistributionRunnerTest` (plain mocks, a real
+> `MetricRegistry` over a `SimpleMeterRegistry`). The leg-outcome metrics cross an `OutcomeMetrics`
+> port declared in `application` and implemented by `config.MetricRegistry`, so the core never imports
+> `config` (its `package-info` forbids it) — the dependency points inward. RED (runner constructor
+> taking the metrics port but still raw-sending the fetched tree, redaction unwired):
+> `13 tests completed, 9 failed` — the redacted-tree, NOT_APPLICABLE(R1/R11), rules-exception,
+> gateway-transient, non-200 and metric assertions all fail. GREEN (the switch-expression over the
+> four `RedactionResult` kinds — `Body` sends and maps the outcome, `EmptiedByR1`/`EmptiedByR11` record
+> `NOT_APPLICABLE` without sending, `RulesFailure` records `FAILED(rules-exception)` with no digest —
+> each emitting `probation_leg_outcomes_total` and, where apt, the non-200/parked/unreadable-switch
+> counters): `13 tests` pass. The `service_version` is written by the persistence layer with the
+> digest (H19); `body_digest` is the SHA-256 of the exact bytes the sender returns.
 - [ ] T041 [US1] Implement `shape` derivation (`application-only` vs `case`, reading `hearing.courtApplications`/`hearing.prosecutionCases` presence) and wire it into the `probation_leg_outcomes_total` label — makes T032 pass (FR-002-059, research.md R7)
 - [ ] T042 [US1] Implement `inbound/ProbationMessageListener.java` and its `ServiceBusProcessorClient`/`ServiceBusConsumerConfig` wiring in `config/`: peek-lock mode (never `ReceiveAndDelete`), auto-complete disabled, `distribution.consumer.concurrency` (default 2) concurrent calls, lock duration and claim-lease ordering per `distribution.servicebus.max-delivery-count`; parse via T035, call the guard then the runner, exactly one explicit settlement per delivery — makes T030's end-to-end settlement assertion pass (FR-002-001, FR-002-046, FR-002-048)
 - [x] T043 [US1] Build the support-lookup query against `outbound_message_latest` plus `outbound_body` in `persistence/` (a repository method, no HTTP endpoint — this is a support capability, not an API) — makes T034 pass (FR-002-053, SC-002-008)

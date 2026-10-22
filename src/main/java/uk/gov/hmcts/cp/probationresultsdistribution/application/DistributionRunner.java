@@ -9,17 +9,25 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.JsonNode;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.HearingPayloadSource.FetchedPayload;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.HmppsSender.SentBody;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.BodyShape;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.EffectiveSwitchState;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.HttpStatusBucket;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.Non200SuccessStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.RedactionResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchDecision;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
+import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.HmppsRedaction;
 
 /**
  * The application core: the one use case, orchestrating the four owned ports in the fixed pipeline
@@ -35,15 +43,19 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedVa
 public final class DistributionRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(DistributionRunner.class);
+    private static final int HTTP_OK = 200;
 
     private final HearingPayloadSource payloadSource;
     private final YouthFilterSource youthFilterSource;
     private final HmppsSender hmppsSender;
     private final OutboundLog outboundLog;
     private final YouthSwitchRecordedValue defaultWhenUnreadable;
+    private final OutcomeMetrics metrics;
+    private final HmppsRedaction redaction = new HmppsRedaction();
 
     /**
-     * Creates the runner over its four ports and the configured youth-switch default.
+     * Creates the runner over its four ports, the configured youth-switch default and the metric
+     * registry it labels every outcome on.
      *
      * @param payloadSource         the payload-fetch port
      * @param youthFilterSource     the youth-switch port
@@ -51,17 +63,20 @@ public final class DistributionRunner {
      * @param outboundLog           the outbound-log port
      * @param defaultWhenUnreadable the value an unreadable switch defaults to ({@code ACTIVE} or
      *                              {@code INACTIVE})
+     * @param metrics               the metric registry
      */
     public DistributionRunner(final HearingPayloadSource payloadSource,
                               final YouthFilterSource youthFilterSource,
                               final HmppsSender hmppsSender,
                               final OutboundLog outboundLog,
-                              final YouthSwitchRecordedValue defaultWhenUnreadable) {
+                              final YouthSwitchRecordedValue defaultWhenUnreadable,
+                              final OutcomeMetrics metrics) {
         this.payloadSource = payloadSource;
         this.youthFilterSource = youthFilterSource;
         this.hmppsSender = hmppsSender;
         this.outboundLog = outboundLog;
         this.defaultWhenUnreadable = defaultWhenUnreadable;
+        this.metrics = metrics;
     }
 
     /**
@@ -103,19 +118,126 @@ public final class DistributionRunner {
                              final RunClaim claim, final FetchedPayload fetched) {
         final YouthSwitchDecision decision = youthFilterSource.read(command);
         final YouthSwitchRecordedValue recordedSwitch = applyDefault(decision);
-        // Slice 001's HmppsRedaction is wired in before the send by US1 (T040); the orchestration
-        // seam here passes the fetched tree so the pipeline order is exercised end to end.
-        final SentBody sent = hmppsSender.send(fetched.payload());
+        if (decision instanceof YouthSwitchDecision.Unreadable unreadable) {
+            metrics.youthSwitchUnreadable(unreadable.cause(), defaultWhenUnreadable);
+            LOG.warn("HMPPS leg youth switch UNREADABLE requestId={} origin={} cause={} defaulted={}",
+                    command.requestId(), runOrigin, unreadable.cause(), defaultWhenUnreadable);
+        }
+        final EffectiveSwitchState effective = recordedSwitch.removesYouthDefendants()
+                ? EffectiveSwitchState.ACTIVE : EffectiveSwitchState.INACTIVE;
+        final RedactionResult redacted = redaction.redact(fetched.payload(), effective);
+        return switch (redacted) {
+            case RedactionResult.Body body ->
+                    send(command, runOrigin, claim, recordedSwitch, fetched, body.payload());
+            case RedactionResult.EmptiedByR1 ignored ->
+                    notApplicable(command, runOrigin, claim, recordedSwitch, fetched,
+                            LegReason.SJP_OR_BOX_HEARING);
+            case RedactionResult.EmptiedByR11 ignored ->
+                    notApplicable(command, runOrigin, claim, recordedSwitch, fetched,
+                            LegReason.NOTHING_LEFT_AFTER_REDACTION);
+            case RedactionResult.RulesFailure failure ->
+                    rulesFailure(command, runOrigin, claim, recordedSwitch, fetched,
+                            failure.ruleId());
+        };
+    }
+
+    private RunResult send(final DistributionCommand command, final AttemptOrigin runOrigin,
+                           final RunClaim claim, final YouthSwitchRecordedValue recordedSwitch,
+                           final FetchedPayload fetched, final JsonNode redactedBody) {
+        final SentBody sent = hmppsSender.send(redactedBody);
         final String digest = sha256Hex(sent.body());
         final MappedOutcome mapped = mapOutcome(sent.outcome());
+        // T041 derives application-only vs case from the redacted body; every body is case until then.
+        final BodyShape shape = BodyShape.CASE;
         final LegOutcome outcome = new LegOutcome(command, runOrigin, mapped.status(),
                 mapped.reason(), Optional.of(recordedSwitch), Optional.of(fetched.source()),
                 fetched.sharedTime(), Optional.of(digest), mapped.httpStatus(),
                 Optional.of(sent.body()));
+        metrics.legOutcome(Leg.HMPPS, mapped.status(), mapped.reason(), runOrigin, false, shape,
+                httpBucket(mapped.httpStatus()));
+        if (mapped.status() == LegStatus.SENT && mapped.httpStatus().orElse(0) != HTTP_OK) {
+            metrics.gatewayNon200Success(non200Status(mapped.httpStatus().orElse(0)));
+            LOG.warn("HMPPS leg SENT non-200 requestId={} origin={} httpStatus={}",
+                    command.requestId(), runOrigin, mapped.httpStatus().orElse(0));
+        }
+        if (mapped.status() == LegStatus.PARKED) {
+            metrics.parked(Leg.HMPPS, LegReason.GATEWAY_TRANSIENT);
+        }
+        return record(command, runOrigin, claim, outcome);
+    }
+
+    private RunResult notApplicable(final DistributionCommand command, final AttemptOrigin runOrigin,
+                                    final RunClaim claim,
+                                    final YouthSwitchRecordedValue recordedSwitch,
+                                    final FetchedPayload fetched, final LegReason reason) {
+        final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.NOT_APPLICABLE,
+                Optional.of(reason), Optional.of(recordedSwitch), Optional.of(fetched.source()),
+                fetched.sharedTime(), Optional.empty(), OptionalInt.empty(), Optional.empty());
+        metrics.legOutcome(Leg.HMPPS, LegStatus.NOT_APPLICABLE, Optional.of(reason), runOrigin,
+                false, BodyShape.CASE, HttpStatusBucket.NONE);
+        return record(command, runOrigin, claim, outcome);
+    }
+
+    private RunResult rulesFailure(final DistributionCommand command, final AttemptOrigin runOrigin,
+                                   final RunClaim claim,
+                                   final YouthSwitchRecordedValue recordedSwitch,
+                                   final FetchedPayload fetched, final String ruleId) {
+        final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.FAILED,
+                Optional.of(LegReason.RULES_EXCEPTION), Optional.of(recordedSwitch),
+                Optional.of(fetched.source()), fetched.sharedTime(), Optional.empty(),
+                OptionalInt.empty(), Optional.empty());
+        metrics.legOutcome(Leg.HMPPS, LegStatus.FAILED, Optional.of(LegReason.RULES_EXCEPTION),
+                runOrigin, false, BodyShape.CASE, HttpStatusBucket.NONE);
+        LOG.error("HMPPS leg FAILED(rules-exception) requestId={} origin={} rule={}",
+                command.requestId(), runOrigin, ruleId);
+        return record(command, runOrigin, claim, outcome);
+    }
+
+    private RunResult record(final DistributionCommand command, final AttemptOrigin runOrigin,
+                             final RunClaim claim, final LegOutcome outcome) {
         final boolean recorded = outboundLog.record(outcome, claim);
-        LOG.info("HMPPS leg {} requestId={} origin={} youthSwitch={} bodyDigest={}",
-                mapped.status(), command.requestId(), runOrigin, recordedSwitch, digest);
-        return new RunResult(runOrigin, mapped.status(), mapped.reason(), recorded);
+        LOG.info("HMPPS leg {} requestId={} origin={} youthSwitch={} reason={}",
+                outcome.status(), command.requestId(), runOrigin,
+                outcome.youthSwitch().orElse(null),
+                outcome.reason().map(LegReason::wireValue).orElse(null));
+        return new RunResult(runOrigin, outcome.status(), outcome.reason(), recorded);
+    }
+
+    private static HttpStatusBucket httpBucket(final OptionalInt status) {
+        if (status.isEmpty()) {
+            return HttpStatusBucket.NONE;
+        }
+        return switch (status.getAsInt()) {
+            case HTTP_OK -> HttpStatusBucket.OK_200;
+            case 400 -> HttpStatusBucket.BAD_REQUEST_400;
+            case 401 -> HttpStatusBucket.UNAUTHORIZED_401;
+            case 408 -> HttpStatusBucket.REQUEST_TIMEOUT_408;
+            case 429 -> HttpStatusBucket.TOO_MANY_REQUESTS_429;
+            default -> bucketByRange(status.getAsInt());
+        };
+    }
+
+    private static HttpStatusBucket bucketByRange(final int status) {
+        final HttpStatusBucket bucket;
+        if (status >= 200 && status < 300) {
+            bucket = HttpStatusBucket.TWO_XX_OTHER;
+        } else if (status >= 400 && status < 500) {
+            bucket = HttpStatusBucket.FOUR_XX_OTHER;
+        } else if (status >= 500 && status < 600) {
+            bucket = HttpStatusBucket.FIVE_XX;
+        } else {
+            bucket = HttpStatusBucket.OTHER;
+        }
+        return bucket;
+    }
+
+    private static Non200SuccessStatus non200Status(final int status) {
+        return switch (status) {
+            case 201 -> Non200SuccessStatus.CREATED_201;
+            case 202 -> Non200SuccessStatus.ACCEPTED_202;
+            case 204 -> Non200SuccessStatus.NO_CONTENT_204;
+            default -> Non200SuccessStatus.OTHER;
+        };
     }
 
     private YouthSwitchRecordedValue applyDefault(final YouthSwitchDecision decision) {

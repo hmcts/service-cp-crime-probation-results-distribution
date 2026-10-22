@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.OutcomeMetrics;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.BodyShape;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
@@ -31,7 +32,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadable
  * registry keeps one owner. {@code probation_operations_failures_total} is registered-but-unread: a
  * proposed slice 005 series with no reader yet.
  */
-public final class MetricRegistry {
+public final class MetricRegistry implements OutcomeMetrics {
 
     /** The {@code reason}-label placeholder for a leg outcome that has no reason (R7). */
     public static final String NO_REASON = "none";
@@ -113,6 +114,7 @@ public final class MetricRegistry {
      * @param shape    the body shape
      * @param http     the HTTP bucket
      */
+    @Override
     public void legOutcome(final Leg leg, final LegStatus status, final Optional<LegReason> reason,
                            final AttemptOrigin origin, final boolean forced, final BodyShape shape,
                            final HttpStatusBucket http) {
@@ -144,6 +146,7 @@ public final class MetricRegistry {
      * @param leg    the leg
      * @param reason the park reason
      */
+    @Override
     public void parked(final Leg leg, final LegReason reason) {
         registry.counter(PARKED_M, Tags.of(Tag.of(TAG_LEG, leg.wireValue()),
                 Tag.of(TAG_REASON, reason.wireValue()))).increment();
@@ -174,6 +177,7 @@ public final class MetricRegistry {
      * @param cause     the unreadable cause
      * @param defaulted the value it defaulted to ({@code ACTIVE} or {@code INACTIVE})
      */
+    @Override
     public void youthSwitchUnreadable(final YouthSwitchUnreadableCause cause,
                                       final YouthSwitchRecordedValue defaulted) {
         registry.counter(YOUTH_UNREADABLE_M, Tags.of(Tag.of(TAG_CAUSE, cause.wireValue()),
@@ -190,6 +194,7 @@ public final class MetricRegistry {
      *
      * @param status the non-200 success bucket
      */
+    @Override
     public void gatewayNon200Success(final Non200SuccessStatus status) {
         registry.counter(GATEWAY_NON200_M, Tags.of(Tag.of(TAG_STATUS, status.wireValue()))).increment();
     }
