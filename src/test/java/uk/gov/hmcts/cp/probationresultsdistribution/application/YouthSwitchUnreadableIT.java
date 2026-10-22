@@ -18,6 +18,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.EndToEndTestSupport;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadableCause;
@@ -28,6 +30,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadable
 @DisplayName("an unreadable youth switch defaults and the hearing still reaches HMPPS")
 class YouthSwitchUnreadableIT extends EndToEndTestSupport {
 
+    private static final JsonMapper MAPPER = JsonMapper.builder().build();
     private static final LocalDate HEARING_DAY = LocalDate.parse("2026-08-19");
     private static final String PAYLOAD = "{\"policeCases\":[{\"id\":1}],"
             + "\"hearing\":{\"prosecutionCases\":[{\"defendants\":["
@@ -91,7 +94,16 @@ class YouthSwitchUnreadableIT extends EndToEndTestSupport {
         assertThat(row.get("youth_switch")).isEqualTo(recorded.wireValue());
         assertThat(row.get("request_status")).isEqualTo("COMPLETED");
         assertThat(gatewayPostCount()).isEqualTo(1);
-        assertThat(gatewayPostBody()).isNotBlank();
+        final JsonNode defendants = MAPPER.readTree(gatewayPostBody())
+                .get("hearing").get("prosecutionCases").get(0).get("defendants");
+        if (configuredDefault == YouthSwitchRecordedValue.ACTIVE) {
+            assertThat(defendants.size()).isEqualTo(1);
+            assertThat(defendants.get(0).get("isYouth").booleanValue()).isFalse();
+        } else {
+            assertThat(defendants.size()).isEqualTo(2);
+            assertThat(defendants.get(0).get("isYouth").booleanValue()).isTrue();
+            assertThat(defendants.get(1).get("isYouth").booleanValue()).isFalse();
+        }
         assertThat(unreadableCounterCount(scenario.cause(), configuredDefault))
                 .isGreaterThan(unreadableCountBefore);
         assertThat(appender.list).anySatisfy(event -> {

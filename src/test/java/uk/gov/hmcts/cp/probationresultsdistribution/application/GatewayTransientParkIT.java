@@ -56,9 +56,9 @@ class GatewayTransientParkIT extends EndToEndTestSupport {
         assertThat(row.get("body")).isNotNull();
         assertThat(row.get("body_digest")).isEqualTo(sha256Hex((String) row.get("body")));
         assertThat(outboundBodyCount(requestId)).isEqualTo(1);
-        assertThat(gatewayPostCount()).isGreaterThanOrEqualTo(1);
         // Keep the processor active until the broker exhausts its own delivery limit, preventing
         // this abandoned message from leaking into the next integration test.
         assertThat(awaitDeadLetter("RESULTS:" + requestId)).isPresent();
+        assertThat(gatewayPostCount()).isEqualTo(MAX_DELIVERY_COUNT);
     }
 }

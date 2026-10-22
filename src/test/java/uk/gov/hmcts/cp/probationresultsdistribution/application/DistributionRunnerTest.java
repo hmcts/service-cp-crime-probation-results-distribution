@@ -28,6 +28,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.HmppsSender.Sent
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
@@ -363,6 +364,10 @@ class DistributionRunnerTest {
         assertThat(meter.find("probation_youth_switch_unreadable_total")
                 .tag("cause", "TIMEOUT").tag("defaulted", "ACTIVE").counter().count())
                 .isEqualTo(1.0d);
+        assertThat(meter.find("probation_youth_switch_state")
+                .tag("state", "UNREADABLE_DEFAULTED_ACTIVE").gauge().value()).isEqualTo(1.0d);
+        assertThat(meter.find("probation_youth_switch_state")
+                .tag("state", "INACTIVE").gauge().value()).isZero();
     }
 
     @Test
@@ -390,6 +395,21 @@ class DistributionRunnerTest {
         when(outboundLog.record(any(), any())).thenReturn(false);
 
         assertThat(runner.run(command, AttemptOrigin.QUEUE, CLAIM, false).recorded()).isFalse();
+        assertThat(meter.find("probation_leg_outcomes_total").counter()).isNull();
+        assertThat(meter.find("probation_gateway_recovered_total").counter()).isNull();
+    }
+
+    @Test
+    @DisplayName("does not count a gateway recovery when the fenced outcome write is rejected")
+    void does_not_count_unrecorded_gateway_recovery() {
+        givenPayload(CASE_PAYLOAD);
+        when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
+        when(hmppsSender.send(any())).thenReturn(new SentBody(
+                new PublishOutcome.Sent(200, Optional.of(GatewayRecovery.IN_RUN_429)), BODY));
+        when(outboundLog.record(any(), any())).thenReturn(false);
+
+        assertThat(runner.run(command, AttemptOrigin.QUEUE, CLAIM, false).recorded()).isFalse();
+        assertThat(meter.find("probation_gateway_recovered_total").counter()).isNull();
     }
 
     @Test
