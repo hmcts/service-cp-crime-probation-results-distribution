@@ -108,6 +108,17 @@ public final class ProbationMessageListener {
         }
         try {
             apply(context, settlement);
+        } catch (final RuntimeException settlementFailure) {
+            // Not swallowed in the defect sense: applying the chosen settlement is the one broker call the
+            // listener cannot itself recover from — if complete()/abandon()/deadLetter() throws (the lock
+            // lost, the connection dropped) any further broker call would fail the same way. It is logged
+            // by type and counted; the lock is left to expire so the broker redelivers. The state that
+            // justified the settlement is already persisted, so the redelivery is handled idempotently.
+            // The exception must never escape processMessage and leave the processor to its default
+            // handling (FR-002-007): the listener owns every delivery's outcome.
+            metrics.processingFailure();
+            LOG.error("failed to apply the settlement for a delivery; the lock will expire and the "
+                    + "broker will redeliver; type={}", settlementFailure.getClass().getName());
         } finally {
             // Suspend only after the settlement is durable: asking the lifecycle to stop before the
             // delivery is settled races the processor's own drain and can leave the settlement unapplied.
