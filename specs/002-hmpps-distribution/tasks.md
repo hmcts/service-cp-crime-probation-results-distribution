@@ -102,7 +102,7 @@ description: "Task list for HMPPS distribution (slice 002)"
 - [ ] T031 [P] [US1] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/EndToEndNotApplicableIT.java`: an R1/R11-emptied payload → no POST, row `NOT_APPLICABLE` with the correct reason, no digest, no stored body, request `COMPLETED` — fails first (Acceptance Scenario 3)
 - [ ] T032 [P] [US1] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/EndToEndReceiverRejectedIT.java`: application-only hearing, gateway 400 → one POST no retry, `FAILED(receiver-rejected)`, body+digest stored, `shape=application-only`, `http=400`, request `COMPLETED` — fails first (Acceptance Scenario 4, D16(a))
 - [ ] T033 [P] [US1] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/EndToEndRulesExceptionIT.java`: a payload on which a rule throws (no null guard, P19) → no POST, `FAILED(rules-exception)`, switch value recorded but no digest, ERROR line + counter, request `COMPLETED` — fails first (Acceptance Scenario 7, P19)
-- [ ] T034 [P] [US1] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/persistence/SupportLookupIT.java`: given a recorded leg, a lookup by hearing id and hearing day via `outbound_message_latest` returns the request, the latest attempt and the exact stored bytes hashing to the digest — fails first (Acceptance Scenario 8, SC-002-008)
+- [x] T034 [P] [US1] `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/persistence/SupportLookupIT.java`: given a recorded leg, a lookup by hearing id and hearing day via `outbound_message_latest` returns the request, the latest attempt and the exact stored bytes hashing to the digest — fails first (Acceptance Scenario 8, SC-002-008)
 
 ### Implementation for User Story 1
 
@@ -135,7 +135,16 @@ description: "Task list for HMPPS distribution (slice 002)"
 - [ ] T040 [US1] Wire `DistributionRunner` to call slice 001's `pipeline.HmppsRedaction` with the effective switch state, handle the `NOT_APPLICABLE`/rules-failure/success result kinds, compute `body_digest` and read `service_version` once at startup — makes T030, T031, T033 pass (FR-002-028 to FR-002-030, FR-002-033)
 - [ ] T041 [US1] Implement `shape` derivation (`application-only` vs `case`, reading `hearing.courtApplications`/`hearing.prosecutionCases` presence) and wire it into the `probation_leg_outcomes_total` label — makes T032 pass (FR-002-059, research.md R7)
 - [ ] T042 [US1] Implement `inbound/ProbationMessageListener.java` and its `ServiceBusProcessorClient`/`ServiceBusConsumerConfig` wiring in `config/`: peek-lock mode (never `ReceiveAndDelete`), auto-complete disabled, `distribution.consumer.concurrency` (default 2) concurrent calls, lock duration and claim-lease ordering per `distribution.servicebus.max-delivery-count`; parse via T035, call the guard then the runner, exactly one explicit settlement per delivery — makes T030's end-to-end settlement assertion pass (FR-002-001, FR-002-046, FR-002-048)
-- [ ] T043 [US1] Build the support-lookup query against `outbound_message_latest` plus `outbound_body` in `persistence/` (a repository method, no HTTP endpoint — this is a support capability, not an API) — makes T034 pass (FR-002-053, SC-002-008)
+- [x] T043 [US1] Build the support-lookup query against `outbound_message_latest` plus `outbound_body` in `persistence/` (a repository method, no HTTP endpoint — this is a support capability, not an API) — makes T034 pass (FR-002-053, SC-002-008)
+
+> T034/T043 driven test-first by `persistence/SupportLookupIT` (Postgres Testcontainers over the
+> shared `SchemaTestSupport`). RED: with `SupportLookupRepository.lookup` stubbed to throw
+> `UnsupportedOperationException`, `2 tests completed, 2 failed` — both hitting
+> `UnsupportedOperationException` at the lookup (the SENT-leg fixture inserts, including the
+> digest-trigger-checked `outbound_body`, already commit). GREEN: with the join of
+> `processed_request` + `outbound_message_latest` + `outbound_body` implemented (the leg read coming
+> from the latest-attempt view, never `processed_request.status`), both pass; the returned bytes hash
+> to the recorded digest (checkstyle/pmd main+test clean).
 
 **Checkpoint**: User Story 1 is fully functional and independently testable — this is the MVP.
 
