@@ -256,34 +256,26 @@ public final class DistributionRunner {
     }
 
     private YouthSwitchRecordedValue applyDefault(final YouthSwitchDecision decision) {
-        final YouthSwitchRecordedValue recorded;
-        if (decision instanceof YouthSwitchDecision.Active) {
-            recorded = YouthSwitchRecordedValue.ACTIVE;
-        } else if (decision instanceof YouthSwitchDecision.Inactive) {
-            recorded = YouthSwitchRecordedValue.INACTIVE;
-        } else if (defaultWhenUnreadable == YouthSwitchRecordedValue.ACTIVE) {
-            recorded = YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_ACTIVE;
-        } else {
-            recorded = YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_INACTIVE;
-        }
-        return recorded;
+        return switch (decision) {
+            case YouthSwitchDecision.Active ignored -> YouthSwitchRecordedValue.ACTIVE;
+            case YouthSwitchDecision.Inactive ignored -> YouthSwitchRecordedValue.INACTIVE;
+            case YouthSwitchDecision.Unreadable ignored ->
+                    defaultWhenUnreadable == YouthSwitchRecordedValue.ACTIVE
+                            ? YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_ACTIVE
+                            : YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_INACTIVE;
+        };
     }
 
     private static MappedOutcome mapOutcome(final PublishOutcome outcome) {
-        final MappedOutcome mapped;
-        if (outcome instanceof PublishOutcome.Sent sent) {
-            mapped = new MappedOutcome(LegStatus.SENT, Optional.empty(),
+        return switch (outcome) {
+            case PublishOutcome.Sent sent -> new MappedOutcome(LegStatus.SENT, Optional.empty(),
                     OptionalInt.of(sent.httpStatus()));
-        } else if (outcome instanceof PublishOutcome.FailedNonTransient failed) {
-            mapped = new MappedOutcome(LegStatus.FAILED, Optional.of(LegReason.RECEIVER_REJECTED),
-                    OptionalInt.of(failed.httpStatus()));
-        } else {
-            final PublishOutcome.TransientExhausted transientOutcome =
-                    (PublishOutcome.TransientExhausted) outcome;
-            mapped = new MappedOutcome(LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT),
+            case PublishOutcome.FailedNonTransient failed -> new MappedOutcome(LegStatus.FAILED,
+                    Optional.of(LegReason.RECEIVER_REJECTED), OptionalInt.of(failed.httpStatus()));
+            case PublishOutcome.TransientExhausted transientOutcome -> new MappedOutcome(
+                    LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT),
                     transientOutcome.httpStatus());
-        }
-        return mapped;
+        };
     }
 
     private static String sha256Hex(final String body) {
