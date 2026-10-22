@@ -1,5 +1,6 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Tags;
@@ -8,6 +9,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.OutcomeMetrics;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.BodyShape;
@@ -93,6 +95,7 @@ public final class MetricRegistry implements OutcomeMetrics {
             OLDEST_PARKED_AGE_M, SERVICEBUS_UP_M, YOUTH_SWITCH_STATE_M, INTAKE_SUSPENDED_M, BODY_DEFAULT_ROWS_M);
 
     private final MeterRegistry registry;
+    private final AtomicInteger intakeSuspended = new AtomicInteger(0);
 
     /**
      * Creates the registry over a Micrometer {@link MeterRegistry}.
@@ -101,6 +104,20 @@ public final class MetricRegistry implements OutcomeMetrics {
      */
     public MetricRegistry(final MeterRegistry registry) {
         this.registry = registry;
+        Gauge.builder(INTAKE_SUSPENDED_M, intakeSuspended, AtomicInteger::doubleValue)
+                .tag(TAG_CAUSE, "database")
+                .register(registry);
+    }
+
+    /**
+     * Sets the {@code probation_intake_suspended{cause="database"}} gauge to 1 while intake is
+     * suspended by a store outage, 0 otherwise (FR-002-009). Reporting the resume is half the signal:
+     * a gauge that only ever rose would never say an outage had ended.
+     *
+     * @param suspended whether intake is currently suspended by the store
+     */
+    public void recordIntakeSuspended(final boolean suspended) {
+        intakeSuspended.set(suspended ? 1 : 0);
     }
 
     /**

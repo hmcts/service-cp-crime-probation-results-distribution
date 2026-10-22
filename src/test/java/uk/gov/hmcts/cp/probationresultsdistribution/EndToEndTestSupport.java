@@ -59,6 +59,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.DistributionCommandParser;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.StoreGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
@@ -114,6 +115,7 @@ public class EndToEndTestSupport {
 
     private ServiceBusProcessorClient processor;
     private MeterRegistry meters = new SimpleMeterRegistry();
+    private MetricRegistry sharedMetricRegistry;
 
     /** Starts the shared container stack once for the JVM on first subclass construction. */
     protected EndToEndTestSupport() {
@@ -264,7 +266,95 @@ public class EndToEndTestSupport {
                 outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
         return new ProbationMessageListener(new DistributionCommandParser(),
                 new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
-                processedRequests, registry, MAX_DELIVERY_COUNT);
+                processedRequests, registry, alwaysAvailableStore(), MAX_DELIVERY_COUNT);
+    }
+
+    /**
+     * A store gate that is always available and never suspends, for the happy-path suites whose store
+     * is up for the whole test. The database-outage suite wires a real {@code ConsumerLifecycleController}
+     * instead.
+     *
+     * @return an always-available store gate
+     */
+    protected static StoreGate alwaysAvailableStore() {
+        return new StoreGate() {
+            @Override
+            public boolean storeAvailable() {
+                return true;
+            }
+
+            @Override
+            public void suspendIntake() {
+                // nothing to suspend in the happy-path suites
+            }
+        };
+    }
+
+    /**
+     * Builds the production listener over a caller-supplied store and store gate, reusing the shared
+     * Redis, users-groups and gateway stubs. For the database-outage suite, which points the processed
+     * log at a container it can pause while the broker and downstreams stay up.
+     *
+     * @param store            the processed-log data source
+     * @param gate             the store gate the listener consults before reading a body
+     * @param maxDeliveryCount the delivery budget the listener recognises the final delivery from
+     * @return the listener under test
+     */
+    protected final ProbationMessageListener listenerOver(final DataSource store, final StoreGate gate,
+                                                          final int maxDeliveryCount) {
+        meters = new SimpleMeterRegistry();
+        final TransactionTemplate tx =
+                new TransactionTemplate(new DataSourceTransactionManager(store));
+        final ProcessedRequestRepository processedRequests = new JdbcProcessedRequestRepository(
+                JdbcClient.create(store), tx, Duration.ofMinutes(4).plusSeconds(30));
+        final OutboundMessageRepository outboundMessages =
+                new OutboundMessageRepository(JdbcClient.create(store), tx, "test-version");
+        final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
+        final CachedHearingPayloadAdapter payload =
+                new CachedHearingPayloadAdapter(redisConnection, CACHE_PREFIX);
+        final FeaturePermissionClient youthFilter = new FeaturePermissionClient(
+                usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
+                Duration.ofSeconds(2), Duration.ofSeconds(5));
+        final HmppsPublisher publisher = new HmppsPublisher(
+                gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60));
+        final MetricRegistry registry = new MetricRegistry(meters);
+        sharedMetricRegistry = registry;
+        final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
+                outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
+        return new ProbationMessageListener(new DistributionCommandParser(),
+                new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
+                processedRequests, registry, gate, maxDeliveryCount);
+    }
+
+    /**
+     * The {@link MetricRegistry} the most recent {@link #listenerOver} built, so a caller can wire its
+     * own lifecycle controller onto the same instrument surface the listener records into.
+     *
+     * @return the shared metric registry
+     */
+    protected final MetricRegistry sharedMetrics() {
+        return sharedMetricRegistry;
+    }
+
+    /**
+     * Builds a peek-lock processor over the shared emulator, not started, for a caller that owns its
+     * lifecycle (the consumer lifecycle controller in the outage suite).
+     *
+     * @param custom             the listener each delivery is handed to
+     * @param maxConcurrentCalls the processor concurrency
+     * @return the built, unstarted processor client
+     */
+    protected final ServiceBusProcessorClient buildProcessor(final ProbationMessageListener custom,
+                                                             final int maxConcurrentCalls) {
+        return new ServiceBusClientBuilder()
+                .connectionString(SERVICE_BUS.getConnectionString())
+                .processor()
+                .queueName(QUEUE)
+                .disableAutoComplete()
+                .maxConcurrentCalls(maxConcurrentCalls)
+                .processMessage(custom::processMessage)
+                .processError(context -> LOG.error("processor error", context.getException()))
+                .buildProcessorClient();
     }
 
     /**
@@ -510,6 +600,24 @@ public class EndToEndTestSupport {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Peeks the dead-letter sub-queue once for a message id, without waiting. For asserting that a
+     * message is <em>not</em> on the dead-letter queue.
+     *
+     * @param messageId the message id to look for
+     * @return the dead-lettered message if already present, otherwise empty
+     */
+    protected final Optional<ServiceBusReceivedMessage> peekDeadLetterNow(final String messageId) {
+        try (ServiceBusReceiverClient dlq = new ServiceBusClientBuilder()
+                .connectionString(SERVICE_BUS.getConnectionString())
+                .receiver()
+                .queueName(QUEUE)
+                .subQueue(SubQueue.DEAD_LETTER_QUEUE)
+                .buildClient()) {
+            return scanDeadLetter(dlq, messageId);
+        }
     }
 
     private static Optional<ServiceBusReceivedMessage> scanDeadLetter(

@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.inbound;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
+import io.micrometer.core.instrument.Counter;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.UUID;
@@ -77,7 +78,7 @@ class ContractValidationDeadLetterIT extends EndToEndTestSupport {
     }
 
     private double deadLetteredValidationCount() {
-        final var counter = meterRegistry().find("probation_deadlettered_total")
+        final Counter counter = meterRegistry().find("probation_deadlettered_total")
                 .tag("reason", "validation").counter();
         return counter == null ? 0.0d : counter.count();
     }

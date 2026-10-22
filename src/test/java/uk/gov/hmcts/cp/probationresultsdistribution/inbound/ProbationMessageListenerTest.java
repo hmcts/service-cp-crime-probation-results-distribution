@@ -55,6 +55,18 @@ class ProbationMessageListenerTest {
     @Mock
     private ProcessedRequestRepository processedRequests;
 
+    private final StoreGate availableStore = new StoreGate() {
+        @Override
+        public boolean storeAvailable() {
+            return true;
+        }
+
+        @Override
+        public void suspendIntake() {
+            // no-op: these unit tests run with the store available
+        }
+    };
+
     private SimpleMeterRegistry meter;
     private ProbationMessageListener listener;
     private DistributionCommand command;
@@ -63,7 +75,7 @@ class ProbationMessageListenerTest {
     void setUp() {
         meter = new SimpleMeterRegistry();
         listener = new ProbationMessageListener(parser, guard, runner, processedRequests,
-                new MetricRegistry(meter), 5);
+                new MetricRegistry(meter), availableStore, 5);
         command = new DistributionCommand("RESULTS", UUID.randomUUID(), UUID.randomUUID(),
                 LocalDate.parse("2026-08-19"), Instant.parse("2026-08-19T16:42:07.512Z"),
                 "Hearing_Resulted", Optional.empty());

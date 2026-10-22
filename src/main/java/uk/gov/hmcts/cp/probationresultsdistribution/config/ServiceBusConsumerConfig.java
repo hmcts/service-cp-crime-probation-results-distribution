@@ -7,13 +7,15 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.function.Supplier;
+import org.flywaydb.core.Flyway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.convert.DurationStyle;
 import org.springframework.boot.info.BuildProperties;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -27,10 +29,13 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunn
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IdempotencyGuard;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestFingerprint;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ConsumerLifecycleController;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.DistributionCommandParser;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.StoreGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedLogProbe;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
 /**
@@ -139,22 +144,55 @@ public class ServiceBusConsumerConfig {
     }
 
     /* default */ @Bean
-    ProbationMessageListener probationMessageListener(final DistributionRunner runner,
-            final ProcessedRequestRepository processedRequests, final MetricRegistry metrics,
-            final DistributionProperties properties) {
-        return new ProbationMessageListener(new DistributionCommandParser(),
-                new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
-                processedRequests, metrics, properties.servicebus().maxDeliveryCount());
+    ProcessedLogProbe processedLogProbe(final JdbcClient jdbc) {
+        return new ProcessedLogProbe(jdbc);
     }
 
     /* default */ @Bean
-    ServiceBusProcessorLifecycle serviceBusProcessorLifecycle(final ProbationMessageListener listener,
+    ProbationMessageListener probationMessageListener(final DistributionRunner runner,
+            final ProcessedRequestRepository processedRequests, final MetricRegistry metrics,
+            final DistributionProperties properties,
+            final ObjectProvider<ConsumerLifecycleController> lifecycle) {
+        return new ProbationMessageListener(new DistributionCommandParser(),
+                new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
+                processedRequests, metrics, new DeferredStoreGate(lifecycle::getObject),
+                properties.servicebus().maxDeliveryCount());
+    }
+
+    /* default */ @Bean(destroyMethod = "close")
+    ServiceBusProcessorClient probationProcessorClient(final ProbationMessageListener listener,
+            final DistributionProperties properties,
             @Value("${distribution.servicebus.connection-string:}") final String connectionString,
             @Value("${distribution.servicebus.namespace:}") final String namespace,
             @Value("${distribution.servicebus.queue-name}") final String queueName,
             @Value("${distribution.servicebus.max-concurrent-calls}") final int maxConcurrentCalls) {
-        return new ServiceBusProcessorLifecycle(listener, connectionString, namespace, queueName,
+        final ServiceBusClientBuilder client = new ServiceBusClientBuilder();
+        if (connectionString.isBlank()) {
+            client.fullyQualifiedNamespace(namespace)
+                    .credential(new DefaultAzureCredentialBuilder().build());
+        } else {
+            client.connectionString(connectionString);
+        }
+        LOG.info("Building the Service Bus consumer. queue={} maxConcurrentCalls={}", queueName,
                 maxConcurrentCalls);
+        return client.processor()
+                .queueName(queueName)
+                .disableAutoComplete()
+                .maxConcurrentCalls(maxConcurrentCalls)
+                .maxAutoLockRenewDuration(properties.servicebus().maxAutoLockRenewDuration())
+                .processMessage(listener::processMessage)
+                .processError(context ->
+                        LOG.error("Service Bus processor error", context.getException()))
+                .buildProcessorClient();
+    }
+
+    /* default */ @Bean
+    ConsumerLifecycleController probationConsumerLifecycle(final ServiceBusProcessorClient processor,
+            final ProcessedLogProbe storeProbe, final ObjectProvider<Flyway> flyway,
+            final MetricRegistry metrics,
+            @Value("${distribution.store.probe-interval:10s}") final String probeInterval) {
+        return new ConsumerLifecycleController(processor, storeProbe, flyway::getIfAvailable, metrics,
+                DurationStyle.detectAndParse(probeInterval));
     }
 
     private static String serviceVersion(final ObjectProvider<BuildProperties> buildProperties) {
@@ -163,59 +201,25 @@ public class ServiceBusConsumerConfig {
     }
 
     /**
-     * Owns the processor client's lifecycle: built, started and stopped with the container, never a
-     * readiness input (a broker blip must not roll the pod).
+     * The store gate, resolved when a delivery uses it rather than when the listener is built. There is
+     * a genuine cycle: the controller owns the processor, the processor is built around the listener,
+     * and the listener must be able to ask the controller to suspend intake. The gate is the honest
+     * place to be late — it is only ever needed while a delivery is being handled, by which time every
+     * bean in the cycle exists.
+     *
+     * @param lifecycle the lazily resolved lifecycle controller
      */
-    public static final class ServiceBusProcessorLifecycle implements SmartLifecycle {
+    private record DeferredStoreGate(Supplier<ConsumerLifecycleController> lifecycle)
+            implements StoreGate {
 
-        private final ProbationMessageListener listener;
-        private final String connectionString;
-        private final String namespace;
-        private final String queueName;
-        private final int maxConcurrentCalls;
-        private volatile ServiceBusProcessorClient processor;
-
-        /* default */ ServiceBusProcessorLifecycle(final ProbationMessageListener listener,
-                final String connectionString, final String namespace, final String queueName,
-                final int maxConcurrentCalls) {
-            this.listener = listener;
-            this.connectionString = connectionString;
-            this.namespace = namespace;
-            this.queueName = queueName;
-            this.maxConcurrentCalls = maxConcurrentCalls;
+        @Override
+        public boolean storeAvailable() {
+            return lifecycle.get().storeAvailable();
         }
 
         @Override
-        public void start() {
-            final ServiceBusClientBuilder client = new ServiceBusClientBuilder();
-            if (connectionString.isBlank()) {
-                client.fullyQualifiedNamespace(namespace)
-                        .credential(new DefaultAzureCredentialBuilder().build());
-            } else {
-                client.connectionString(connectionString);
-            }
-            processor = client.processor()
-                    .queueName(queueName)
-                    .disableAutoComplete()
-                    .maxConcurrentCalls(maxConcurrentCalls)
-                    .processMessage(listener::processMessage)
-                    .processError(context ->
-                            LOG.error("Service Bus processor error", context.getException()))
-                    .buildProcessorClient();
-            processor.start();
-            LOG.info("Service Bus intake started on queue {}", queueName);
-        }
-
-        @Override
-        public void stop() {
-            if (processor != null) {
-                processor.close();
-            }
-        }
-
-        @Override
-        public boolean isRunning() {
-            return processor != null && processor.isRunning();
+        public void suspendIntake() {
+            lifecycle.get().suspendIntake();
         }
     }
 }

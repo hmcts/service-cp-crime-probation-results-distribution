@@ -67,8 +67,8 @@ class ServiceBusConsumerConfigIT {
             assertThat(context).hasSingleBean(ProbationMessageListener.class);
             assertThat(context).hasSingleBean(DistributionRunner.class);
             assertThat(context).hasSingleBean(MetricRegistry.class);
-            assertThat(context)
-                    .hasSingleBean(ServiceBusConsumerConfig.ServiceBusProcessorLifecycle.class);
+            assertThat(context).hasSingleBean(
+                    uk.gov.hmcts.cp.probationresultsdistribution.inbound.ConsumerLifecycleController.class);
         });
     }
 

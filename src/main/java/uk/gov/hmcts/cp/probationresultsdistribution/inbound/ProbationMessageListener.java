@@ -43,6 +43,7 @@ public final class ProbationMessageListener {
     private final DistributionRunner runner;
     private final ProcessedRequestRepository processedRequests;
     private final MetricRegistry metrics;
+    private final StoreGate storeGate;
     private final int maxDeliveryCount;
 
     /**
@@ -53,6 +54,8 @@ public final class ProbationMessageListener {
      * @param runner            the distribution use case
      * @param processedRequests the request store for the per-request state transition
      * @param metrics           the metric registry
+     * @param storeGate         the processed-log precondition every delivery passes through before its
+     *                          body is read
      * @param maxDeliveryCount  the queue's own delivery budget, mirrored in configuration, used to
      *                          recognise the final permitted delivery
      */
@@ -61,12 +64,14 @@ public final class ProbationMessageListener {
                                     final DistributionRunner runner,
                                     final ProcessedRequestRepository processedRequests,
                                     final MetricRegistry metrics,
+                                    final StoreGate storeGate,
                                     final int maxDeliveryCount) {
         this.parser = parser;
         this.guard = guard;
         this.runner = runner;
         this.processedRequests = processedRequests;
         this.metrics = metrics;
+        this.storeGate = storeGate;
         this.maxDeliveryCount = maxDeliveryCount;
     }
 
@@ -83,19 +88,48 @@ public final class ProbationMessageListener {
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void processMessage(final ServiceBusReceivedMessageContext context) {
         final ServiceBusReceivedMessage message = context.getMessage();
-        final String body = message.getBody().toString();
+        final long deliveryCount = message.getDeliveryCount();
+        // The store precondition is checked before the body is read (FR-002-009): a delivery arriving
+        // while the processed log is unreachable is handed back unexamined, and intake is asked to stop.
+        final boolean storeAvailable = storeGate.storeAvailable();
+        Settlement settlement;
         try {
-            final Settlement settlement = decide(body, message.getDeliveryCount());
-            apply(context, settlement);
+            settlement = storeAvailable
+                    ? decide(message.getBody().toString(), deliveryCount)
+                    : storeUnavailable(deliveryCount);
         } catch (final RuntimeException unexpected) {
-            // Not swallowed: an unexpected failure is logged, counted and the delivery handed back for
-            // redelivery. The final-permitted-delivery dead-letter is US2's (T052).
+            // Not swallowed: an unexpected failure is logged by type, counted and the delivery handed
+            // back for redelivery. The final-permitted-delivery dead-letter for this path is US2's (T052).
             metrics.processingFailure();
-            LOG.error("unexpected failure processing a delivery; abandoning", unexpected);
-            context.abandon();
+            LOG.error("unexpected failure processing a delivery; abandoning; type={}",
+                    unexpected.getClass().getName());
+            settlement = new Abandon();
+        }
+        try {
+            apply(context, settlement);
         } finally {
+            // Suspend only after the settlement is durable: asking the lifecycle to stop before the
+            // delivery is settled races the processor's own drain and can leave the settlement unapplied.
+            if (!storeAvailable) {
+                storeGate.suspendIntake();
+            }
             MdcFields.KEYS.forEach(MDC::remove);
         }
+    }
+
+    /**
+     * The processed log is unreachable, so this delivery is handed back unexamined — or dead-lettered
+     * {@code exhausted} on its final permitted delivery, so the broker's budget is not burned on an
+     * outage of ours (FR-002-009, FR-002-007). Nothing is examined, so nothing is judged.
+     *
+     * @param deliveryCount the broker delivery count
+     * @return the settlement to apply
+     */
+    private Settlement storeUnavailable(final long deliveryCount) {
+        LOG.error("the processed log could not be reached, so the delivery was not examined; "
+                + "returning it and asking for intake to stop; reason={}",
+                DeadLetterReason.EXHAUSTED.wireValue());
+        return handBack(deliveryCount);
     }
 
     /**
@@ -142,11 +176,14 @@ public final class ProbationMessageListener {
      * @return the settlement to apply
      */
     private Settlement handBack(final long deliveryCount) {
+        final Settlement settlement;
         if (isFinalPermittedDelivery(deliveryCount)) {
             metrics.deadLettered(DeadLetterReason.EXHAUSTED);
-            return new DeadLetter(DeadLetterReason.EXHAUSTED);
+            settlement = new DeadLetter(DeadLetterReason.EXHAUSTED);
+        } else {
+            settlement = new Abandon();
         }
-        return new Abandon();
+        return settlement;
     }
 
     /**
