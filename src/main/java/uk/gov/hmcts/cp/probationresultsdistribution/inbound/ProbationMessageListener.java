@@ -89,11 +89,16 @@ public final class ProbationMessageListener {
     public void processMessage(final ServiceBusReceivedMessageContext context) {
         final ServiceBusReceivedMessage message = context.getMessage();
         final long deliveryCount = message.getDeliveryCount();
-        // The store precondition is checked before the body is read (FR-002-009): a delivery arriving
-        // while the processed log is unreachable is handed back unexamined, and intake is asked to stop.
-        final boolean storeAvailable = storeGate.storeAvailable();
         Settlement settlement;
+        // storeAvailable defaults to false: if the precondition check itself throws (below, inside the
+        // try), the outage is unknown rather than disproven, so the finally block still suspends intake.
+        boolean storeAvailable = false;
         try {
+            // The store precondition is checked before the body is read (FR-002-009): a delivery
+            // arriving while the processed log is unreachable is handed back unexamined, and intake is
+            // asked to stop. Checked inside this try so a failure here is also settled, never escaping
+            // processMessage unsettled (FR-002-007).
+            storeAvailable = storeGate.storeAvailable();
             settlement = storeAvailable
                     ? decide(message.getBody().toString(), deliveryCount)
                     : storeUnavailable(deliveryCount);

@@ -317,6 +317,42 @@ class ProbationMessageListenerTest {
         assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(1.0d);
     }
 
+    @Test
+    @DisplayName("processMessage still settles exactly once when the store precondition itself throws")
+    void process_message_settles_when_the_store_precondition_throws() {
+        final StoreGate throwingStore = new StoreGate() {
+            @Override
+            public boolean storeAvailable() {
+                throw new IllegalStateException("the processed-log probe is unreachable");
+            }
+
+            @Override
+            public void suspendIntake() {
+                // asserted via verify(...) below, not recorded here
+            }
+        };
+        final StoreGate spiedStore = org.mockito.Mockito.spy(throwingStore);
+        final ProbationMessageListener listenerWithThrowingStore = new ProbationMessageListener(
+                parser, guard, runner, processedRequests, new MetricRegistry(meter), spiedStore, 5);
+        // The store precondition throws before the body is ever read, so only the delivery count
+        // (read first) needs stubbing here; contextFor()'s body stub would be an unused stubbing.
+        final ServiceBusReceivedMessageContext context =
+                org.mockito.Mockito.mock(ServiceBusReceivedMessageContext.class);
+        final ServiceBusReceivedMessage message =
+                org.mockito.Mockito.mock(ServiceBusReceivedMessage.class);
+        when(context.getMessage()).thenReturn(message);
+        when(message.getDeliveryCount()).thenReturn(1L);
+
+        assertThatCode(() -> listenerWithThrowingStore.processMessage(context))
+                .doesNotThrowAnyException();
+
+        verify(context).abandon();
+        verify(context, never()).complete();
+        verify(context, never()).deadLetter(any());
+        verify(spiedStore).suspendIntake();
+        assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(1.0d);
+    }
+
     private ServiceBusReceivedMessageContext contextFor(final String body) {
         final ServiceBusReceivedMessageContext context =
                 org.mockito.Mockito.mock(ServiceBusReceivedMessageContext.class);
