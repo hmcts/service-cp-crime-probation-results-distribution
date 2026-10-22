@@ -10,7 +10,10 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import com.azure.messaging.servicebus.ServiceBusClientBuilder;
 import com.azure.messaging.servicebus.ServiceBusMessage;
 import com.azure.messaging.servicebus.ServiceBusProcessorClient;
+import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
+import com.azure.messaging.servicebus.ServiceBusReceiverClient;
 import com.azure.messaging.servicebus.ServiceBusSenderClient;
+import com.azure.messaging.servicebus.models.SubQueue;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import io.lettuce.core.RedisClient;
@@ -52,6 +55,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunn
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IdempotencyGuard;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestFingerprint;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.DistributionCommandParser;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener;
@@ -203,6 +207,28 @@ public class EndToEndTestSupport {
                 .disableAutoComplete()
                 .maxConcurrentCalls(2)
                 .processMessage(listener()::processMessage)
+                .processError(context -> LOG.error("processor error", context.getException()))
+                .buildProcessorClient();
+        processor.start();
+    }
+
+    /**
+     * Starts a peek-lock processor dispatching to a caller-supplied listener, for suites that need a
+     * listener wired with test doubles (a throwing or stale runner, a custom delivery budget). The
+     * processor is tracked so {@code stopProcessor} closes it after the test.
+     *
+     * @param custom             the listener each delivery is handed to
+     * @param maxConcurrentCalls the processor concurrency
+     */
+    protected final void startProcessorWith(final ProbationMessageListener custom,
+                                            final int maxConcurrentCalls) {
+        processor = new ServiceBusClientBuilder()
+                .connectionString(SERVICE_BUS.getConnectionString())
+                .processor()
+                .queueName(QUEUE)
+                .disableAutoComplete()
+                .maxConcurrentCalls(maxConcurrentCalls)
+                .processMessage(custom::processMessage)
                 .processError(context -> LOG.error("processor error", context.getException()))
                 .buildProcessorClient();
         processor.start();
@@ -455,6 +481,130 @@ public class EndToEndTestSupport {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("interrupted while polling the store", e);
         }
+    }
+
+    /**
+     * Polls the dead-letter sub-queue for a message with the given {@code messageId} until it appears
+     * or the timeout elapses. Peeks only, so the message is not removed and parallel assertions see a
+     * stable view.
+     *
+     * @param messageId the message id to find
+     * @return the dead-lettered message, or empty when the timeout elapses with none
+     */
+    protected final Optional<ServiceBusReceivedMessage> awaitDeadLetter(final String messageId) {
+        final long deadline = System.nanoTime() + POLL_TIMEOUT.toNanos();
+        try (ServiceBusReceiverClient dlq = new ServiceBusClientBuilder()
+                .connectionString(SERVICE_BUS.getConnectionString())
+                .receiver()
+                .queueName(QUEUE)
+                .subQueue(SubQueue.DEAD_LETTER_QUEUE)
+                .buildClient()) {
+            while (System.nanoTime() < deadline) {
+                final Optional<ServiceBusReceivedMessage> found = scanDeadLetter(dlq, messageId);
+                if (found.isPresent()) {
+                    return found;
+                }
+                sleep();
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<ServiceBusReceivedMessage> scanDeadLetter(
+            final ServiceBusReceiverClient dlq, final String messageId) {
+        for (final ServiceBusReceivedMessage message : dlq.peekMessages(100, 0L)) {
+            if (messageId.equals(message.getMessageId())) {
+                return Optional.of(message);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The number of {@code processed_request} rows for a request id.
+     *
+     * @param requestId the request id
+     * @return the row count
+     */
+    protected final int processedRequestCount(final UUID requestId) {
+        return jdbc().sql("SELECT count(*) FROM processed_request WHERE request_id = :requestId")
+                .param("requestId", requestId)
+                .query(Integer.class)
+                .single();
+    }
+
+    /**
+     * The status of the one {@code processed_request} row for a request id, or empty when none exists.
+     *
+     * @param requestId the request id
+     * @return the request status
+     */
+    protected final Optional<String> requestStatus(final UUID requestId) {
+        return jdbc().sql("SELECT status FROM processed_request WHERE request_id = :requestId")
+                .param("requestId", requestId)
+                .query(String.class)
+                .optional();
+    }
+
+    /**
+     * Seeds a {@code processed_request} row and its attempt-1 {@code PENDING} leg for a command,
+     * using the real request fingerprint so the guard treats a later copy as the same key.
+     *
+     * @param command   the command whose identity and fingerprint are seeded
+     * @param status    the request status to seed
+     * @param claimLive whether to seed a live (far-future) claim
+     */
+    protected final void seedRequest(final DistributionCommand command, final String status,
+                                     final boolean claimLive) {
+        final String fingerprint = new RequestFingerprint().compute(command);
+        final String claimClause = claimLive
+                ? "gen_random_uuid(), gen_random_uuid(), now() + interval '1 hour'"
+                : "NULL, NULL, NULL";
+        final String failureClause = "FAILED".equals(status)
+                ? ", failure_reason = 'leg-exhausted', exhausted_message_id = 'RESULTS:"
+                        + command.requestId() + "'"
+                : "";
+        jdbc().sql("INSERT INTO processed_request (source, request_id, hearing_id, hearing_day, "
+                        + "shared_time, event_type, request_fingerprint, status, attempts, command, "
+                        + "claim_owner, claim_token, claim_expires_at) VALUES (:source, :requestId, "
+                        + ":hearingId, :hearingDay, :sharedTime, :eventType, :fingerprint, :status, 1, "
+                        + "'{}', " + claimClause + ")")
+                .param("source", command.source())
+                .param("requestId", command.requestId())
+                .param("hearingId", command.hearingId())
+                .param("hearingDay", command.hearingDay())
+                .param("sharedTime",
+                        java.time.OffsetDateTime.ofInstant(command.sharedTime(),
+                                java.time.ZoneOffset.UTC))
+                .param("eventType", command.eventType())
+                .param("fingerprint", fingerprint)
+                .param("status", status)
+                .update();
+        if (!failureClause.isEmpty()) {
+            jdbc().sql("UPDATE processed_request SET status = status" + failureClause
+                            + " WHERE source = :source AND request_id = :requestId")
+                    .param("source", command.source())
+                    .param("requestId", command.requestId())
+                    .update();
+        }
+    }
+
+    /**
+     * Seeds a {@code processed_request} row whose fingerprint deliberately differs from any command's,
+     * so a later copy of the same key is a collision.
+     *
+     * @param source    the command source
+     * @param requestId the request id
+     */
+    protected final void seedCollisionRow(final String source, final UUID requestId) {
+        jdbc().sql("INSERT INTO processed_request (source, request_id, hearing_id, hearing_day, "
+                        + "shared_time, event_type, request_fingerprint, status, attempts, command) "
+                        + "VALUES (:source, :requestId, gen_random_uuid(), DATE '2026-08-19', "
+                        + "TIMESTAMPTZ '2026-08-19T16:42:07.512Z', 'Hearing_Resulted', "
+                        + "'a-different-fingerprint', 'RECEIVED', 1, '{}')")
+                .param("source", source)
+                .param("requestId", requestId)
+                .update();
     }
 
     /**
