@@ -116,7 +116,7 @@ public final class ProbationMessageListener {
             // justified the settlement is already persisted, so the redelivery is handled idempotently.
             // The exception must never escape processMessage and leave the processor to its default
             // handling (FR-002-007): the listener owns every delivery's outcome.
-            metrics.processingFailure();
+            metrics.settlementFailure();
             LOG.error("failed to apply the settlement for a delivery; the lock will expire and the "
                     + "broker will redeliver; type={}", settlementFailure.getClass().getName());
         } finally {
