@@ -38,7 +38,7 @@
       a time bound.
 - [x] Success criteria are technology-agnostic (no implementation details). They are stated as
       classes, verdicts, pages, rows, steps and counts. No framework, store or tool is named.
-- [x] All acceptance scenarios are defined: 40 Given/When/Then scenarios across 7 stories.
+- [x] All acceptance scenarios are defined: 43 Given/When/Then scenarios across 7 stories.
 - [x] Edge cases are identified: 20, covering the replay, cutover, rollback, the soak and the
       dependencies on other slices.
 - [x] Scope is clearly bounded. Out of Scope and FR-006-051 bound it. The runbook itself,
@@ -47,12 +47,12 @@
 - [x] Dependencies and assumptions identified. The spec lists slices 001–005 by what each supplies,
       with their requirement ids where another slice owns the capability. It lists the external
       preconditions by owner (results team, platform team, operations and DevOps, HMPPS, the design
-      owner, the business, the data owner), 10 assumptions, and 16 open items carried from the
+      owner, the business, the data owner), 10 assumptions, and 15 open items carried from the
       design and from the other slices' open questions.
 
 ## Feature Readiness
 
-- [ ] All functional requirements have clear acceptance criteria. 49 of 52 have them.
+- [ ] All functional requirements have clear acceptance criteria. 50 of 53 have them.
       FR-006-010 and FR-006-024 cannot have complete criteria until their markers are answered, and
       FR-006-032 lacks only its row-9 entry's content. Their decided parts are covered: the
       comparison independent of the mechanics (US1, scenarios 1–9), the service side of the
@@ -142,6 +142,16 @@
     step 5 (§9.4, urgent rollback step 5; row A3-117 (iii); row A3-113's amended step 5), and the
     design wins over the digest. FR-006-042 and US3 scenario 3 therefore keep the design's order,
     and the digest's wording is raised for correction.
+- **Update, 2026-10-23 (H36–H38; row A3-118).** Alert 9's condition, rule type and runbook entry
+  follow A3-118, H37 and H38 (slice 003 answers its open question 2); FR-006-014, FR-006-018,
+  FR-006-019, SC-006-004, the alert-definition entity, assumptions 3 and 7 and Dependencies follow
+  H36 (Azure Monitor rules created by DevOps on a ticket, emailed to the Resulting Assistant team);
+  new FR-006-053 states the rule types and the per-pod reading, covered by User Story 4 scenarios
+  8–10. Open items: the alert routing and 003's open question 2 are closed; Q29 (the App Insights
+  resource) is added. Naming Azure Monitor and App Insights follows the design (H36), with the same
+  qualification as the first content-quality item. Every FR (53) appears in the traceability table.
+  The earlier notes of 2026-10-21 that call the alert routing open, carry 003's open question 2, or
+  count 52 FRs are history, superseded by this update.
 - **Public-repository hygiene.** A grep over `spec.md` and `checklists/requirements.md` for
   personal names, hostnames, URLs, cloud resource names, environment labels, production figures
   and attribution found none. The environment-specific names of the cutover (the subscription, its
