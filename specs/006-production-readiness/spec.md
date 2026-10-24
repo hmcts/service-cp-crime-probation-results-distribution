@@ -560,7 +560,7 @@ and check each item of §9.6 row 1 against its source.
 | 6 | Repeated 401s | `probation_leg_outcomes_total{reason="receiver-rejected", http="401"}` | > 3 in an hour (proposal) | The gateway is refusing the service's credentials. A 401 is terminal at once | H34; A3-115 |
 | 7 | Send re-run after a crash | `probation_crash_reruns_total` | Any increase | A possible duplicate at HMPPS: record the hearing for HMPPS | A3-115; A3-47 |
 | 8 | Case-hearing 400 spike | daily increase of `probation_leg_outcomes_total{reason="receiver-rejected", http="400", shape="case"}` | > 2 × the environment's normal daily level (proposal) | The daily count itself is counted, not paged (FR-006-022) | H34; A3-116 |
-| 9 | Body partition maintenance | `probation_body_default_partition_rows` (003's FR-003-022); `probation_body_maintenance_failures_total{step}` | DEFAULT partition not empty, or any `create` or `drop` failure. The rule reads the gauge as designed: the pod that ran sets it. Whether that changes is 003's open question 2 (its assumption AS-15) | 003's runbook: detach the DEFAULT partition, create the missing month, move its rows, re-attach | H20; A3-64; 003's AS-15 |
+| 9 | Body partition maintenance | `probation_body_default_partition_rows` (003's FR-003-022/031); `probation_body_maintenance_failures_total{step}`; `probation_body_job_last_success_age_seconds` (003's FR-003-032) | DEFAULT partition not empty, any `create` or `drop` failure, or last-success age above about two days. Both gauges are read independently at scrape time; age is process-local, so final cross-replica aggregation is settled here | [003's runbook](../../doc/operations/body-partition-maintenance.md): pause and drain intake, detach DEFAULT, create the missing month, move its rows, re-attach, verify and resume | H20; H35; A3-64; 003 clarification 2026-10-22 (C+D) |
 | 10 | Results switch unreadable | results' `probation_flag_read_failures_total` (the producer change) | Any increase | After cutover, each failed read is a share on neither path. Reconcile, and repair with submit-hearing while the `EXT_` payload is still in Redis | H26; A3-71; A3-89 |
 | 11 | Legacy function app active after cutover | The legacy function app's telemetry for the environment: HMPPS send lines and the orchestration-start trace | Any count > 0 after cutover; a query every 15 min over 15 min (proposal) | A "both": check the legacy subscription's filter and set it back to `TOGGLED-OFF`. Lapses at decommissioning | A3-75; §9.5 row 9 |
 
@@ -977,9 +977,10 @@ and check each item of §9.6 row 1 against its source.
   log line that the alerts and panels read (H34), readiness on the store only, the startup log line
   of the youth default, and the attempt rows that rows 1, 7 and 9 read.
 - **003-body-retention**: the body-maintenance signals behind alert 9, the DEFAULT-partition gauge
-  among them (FR-003-022), and the runbook for the DEFAULT partition. How alert 9 combines the
-  pods' DEFAULT-partition readings depends on 003's open question 2, carried there as assumption
-  AS-15.
+  among them (FR-003-022/031), the last-success age gauge (FR-003-032), and the
+  [DEFAULT recovery runbook](../../doc/operations/body-partition-maintenance.md). The 2026-10-22
+  clarification resolved open question 2 with independent scrape-time gauges (C+D). This slice
+  settles cross-replica aggregation for the process-local age signal.
 - **004-recovery**: the command-line runners (FR-004-042, FR-004-043) for the actions the runbook
   inputs use: pause and resume intake (FR-004-051), purge-queue (FR-004-053), replay (FR-004-014),
   submit-hearing (FR-004-054) and the request listing; replay of a request closed

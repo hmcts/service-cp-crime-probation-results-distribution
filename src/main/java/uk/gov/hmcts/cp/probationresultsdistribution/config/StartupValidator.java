@@ -42,6 +42,22 @@ public final class StartupValidator {
     }
 
     /**
+     * Validates the retention settings before the scheduled bean is constructed.
+     *
+     * @param properties the bound retention settings
+     */
+    public void validateBodyRetention(final BodyRetentionProperties properties) {
+        final java.time.Period retention = properties.bodyRetention();
+        require(retention != null && !retention.isNegative() && retention.getDays() == 0
+                        && retention.toTotalMonths() >= 1,
+                "distribution.body-retention", "must be a positive whole number of months");
+        final String cron = properties.bodyMaintenance().cron();
+        require(cron != null && cron.strip().split("\\s+").length == 6
+                        && org.springframework.scheduling.support.CronExpression.isValidExpression(cron),
+                "distribution.body-maintenance.cron", "must be a valid six-field cron expression");
+    }
+
+    /**
      * Refuses a forbidden property: a contract-validation mode (H13), an App Configuration source
      * (H22, H26) — a property name carrying {@code appconfiguration}/{@code app-configuration} or a
      * value holding an {@code azconfig.io} connection string/endpoint — or any

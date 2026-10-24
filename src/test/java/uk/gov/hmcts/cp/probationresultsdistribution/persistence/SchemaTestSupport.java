@@ -11,8 +11,11 @@ import org.testcontainers.utility.DockerImageName;
  * Shared Testcontainers base for the V1 schema suites. One PostgreSQL 15 container is started once
  * for the JVM and reused across every schema IT, with Flyway run from {@code classpath:db/migration}
  * so each suite sees exactly the migration under test. Ryuk removes the container at the end.
+ *
+ * <p>Public so slices beyond the one that owns {@code persistence} (e.g. 003's maintenance job ITs)
+ * can extend it directly rather than duplicating the Testcontainers/Flyway bootstrap.
  */
-class SchemaTestSupport {
+public class SchemaTestSupport {
 
     private static final PostgreSQLContainer POSTGRES =
             new PostgreSQLContainer(DockerImageName.parse("postgres:15-alpine"));
@@ -24,7 +27,10 @@ class SchemaTestSupport {
 
     private final DataSource ds = buildDataSource();
 
-    SchemaTestSupport() {
+    /**
+     * Ensures the shared container is migrated before a subclass's fields are built.
+     */
+    protected SchemaTestSupport() {
         migrateOnce();
     }
 
@@ -54,11 +60,21 @@ class SchemaTestSupport {
         }
     }
 
-    final DataSource datasource() {
+    /**
+     * The shared container's data source.
+     *
+     * @return the data source
+     */
+    protected final DataSource datasource() {
         return ds;
     }
 
-    final JdbcClient jdbc() {
+    /**
+     * A fresh {@link JdbcClient} over the shared container's data source.
+     *
+     * @return the JDBC client
+     */
+    protected final JdbcClient jdbc() {
         return JdbcClient.create(ds);
     }
 
@@ -67,7 +83,7 @@ class SchemaTestSupport {
      *
      * @param sql the statement to run
      */
-    final void execute(final String sql) {
+    protected final void execute(final String sql) {
         jdbc().sql(sql).update();
     }
 
@@ -77,7 +93,7 @@ class SchemaTestSupport {
      * @param source    the command source
      * @param requestId the request id
      */
-    final void insertReceivedRequest(final String source, final String requestId) {
+    protected final void insertReceivedRequest(final String source, final String requestId) {
         execute("INSERT INTO processed_request "
                 + "(source, request_id, hearing_id, hearing_day, shared_time, event_type, "
                 + " request_fingerprint, status, command) VALUES ("

@@ -18,8 +18,17 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.BodyRetentionJob;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.DatabaseClock;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.MaintenanceMetrics;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionCatalogue;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionMaintenanceRepository;
 
 /** Exercises the deployed readiness group with a live Actuator endpoint and a failed broker. */
+// This fixture has no store; maintenance is exercised against PostgreSQL by its own ITs.
+@MockitoBean(types = {BodyRetentionJob.class, DatabaseClock.class, MaintenanceMetrics.class,
+    PartitionCatalogue.class, PartitionMaintenanceRepository.class})
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "management.endpoint.health.group.readiness.include=db")
 @ActiveProfiles("test")

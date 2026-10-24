@@ -64,6 +64,9 @@ class DomainVocabularyTest {
                     "unknown-request", "not-eligible", "resend-in-progress", "request-claimed");
             assertThat(wireValues(BodyMaintenanceStep.class))
                     .containsExactlyInAnyOrder("lock", "create", "drop");
+            assertThat(wireValues(MaintenanceFailureCause.class)).containsExactlyInAnyOrder(
+                    "lock-timeout", "default-has-rows", "partition-overlap", "store-unavailable",
+                    "other");
             assertThat(wireValues(OperationsAction.class))
                     .containsExactlyInAnyOrder("replay", "resend-leg");
             assertThat(wireValues(OperationsFailure.class)).containsExactlyInAnyOrder(
@@ -96,6 +99,7 @@ class DomainVocabularyTest {
             roundTrip(ReplayRoute.class, ReplayRoute::fromValue);
             roundTrip(ResendRefusal.class, ResendRefusal::fromValue);
             roundTrip(BodyMaintenanceStep.class, BodyMaintenanceStep::fromValue);
+            roundTrip(MaintenanceFailureCause.class, MaintenanceFailureCause::fromValue);
             roundTrip(OperationsAction.class, OperationsAction::fromValue);
             roundTrip(OperationsFailure.class, OperationsFailure::fromValue);
             roundTrip(NoteForm.class, NoteForm::fromValue);
