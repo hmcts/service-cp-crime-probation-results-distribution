@@ -22,14 +22,25 @@
  * {@code SubmitHearingAction} and {@code RequestIdRecipe} are the submit-hearing repair (design
  * §4.8 action 5).
  *
- * <p>The ports are declared here, as interfaces, by the side that uses them:
- * {@code HearingPayloadSource}, {@code YouthFilterSource}, {@code HmppsSender},
- * {@code OutboundLog} and the request store the guard settles through.
+ * <p>The outbound ports are declared here, as interfaces, by the side that uses them:
+ * {@code HearingPayloadSource}, {@code YouthFilterSource}, {@code HmppsSender} and
+ * {@code OutboundLog}. The processed-log store the guard claims through
+ * ({@code persistence.ProcessedRequestRepository}) is an infra-free interface declared in
+ * {@code persistence} with the rest of the store, per {@code design_rules.md}'s package tree, and
+ * carries only {@code domain} types; the guard depends on it from here. The claim and outcome
+ * shapes those store interfaces carry ({@code RunClaim}, {@code LegOutcome}) live in {@code domain},
+ * not here, precisely so that {@code persistence} depends on {@code domain} only and never back on
+ * this package.
  *
  * <p><strong>Dependency direction.</strong> This package depends on {@code domain},
- * {@code pipeline} and its own port interfaces only. It never imports from {@code inbound},
- * {@code api}, {@code adapter}, {@code persistence} or {@code config}: an adapter is reached only
- * through the port it implements, and the concrete choice is made in {@code config}. That is what
- * lets the stub sources stand in for the live ones in the local and test profiles.
+ * {@code pipeline}, its own outbound port interfaces and the persistence-declared
+ * {@code ProcessedRequestRepository} port the guard admits through. It never imports from
+ * {@code inbound}, {@code api}, {@code adapter} or {@code config}, and from {@code persistence}
+ * only that one store interface (never a JDBC adapter): an adapter is reached only through the port
+ * it implements, and the concrete choice is made in {@code config}. That is what lets the stub
+ * sources stand in for the live ones in the local and test profiles. The dependency is one
+ * direction only: {@code application} → {@code persistence} (that one interface) and
+ * {@code application} → {@code domain}; nothing in {@code persistence} imports from
+ * {@code application}.
  */
 package uk.gov.hmcts.cp.probationresultsdistribution.application;

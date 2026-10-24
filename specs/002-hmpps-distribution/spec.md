@@ -55,9 +55,19 @@ Later slices extend this core. They do not redefine it.
 ### Session 2026-10-21
 
 The ambiguities found while writing this spec were resolved from the digest and the design; one,
-the reading of row A2-67's "no settlement", rests on the constitution's settlement rule. Three
-remain open as design gaps (FR-002-024, FR-002-038, FR-002-061). Each answer below is applied in the
-requirement it names.
+the reading of row A2-67's "no settlement", rests on the constitution's settlement rule. The
+three later design gaps (FR-002-024, FR-002-038, FR-002-061) are resolved here. Each answer below
+is applied in the requirement it names.
+
+- Q: Which cause labels a 2xx users-groups response whose first permission is null? → A:
+  `EMPTY_PERMISSIONS`. The first permission is unusable, like an empty or missing list; no new
+  cause or metric label is added. (A2-28; FR-002-024)
+- Q: How does a gateway answer outside 2xx, 4xx and 5xx settle, and which `http` bucket records it?
+  → A: Park as `gateway-transient`, or fail with that reason on the final delivery; record the
+  answer under a new `other` HTTP bucket. There is no in-run retry. (FR-002-038; FR-002-059)
+- Q: Is a crash during a re-run of a `PARKED` row counted in `probation_crash_reruns_total`? → A:
+  No. Count only an expired-claim re-run of a `PENDING` attempt-1 row. A `PARKED` row has no marker
+  that distinguishes a crashed re-run from an ordinary one. (A3-115; FR-002-061)
 
 - Q: Which deliveries does this slice admit, given that replay belongs to slice 004? → A: Two kinds:
   a new share, and a reclaim of an expired claim on a `RECEIVED` or `RETRYING` request. Slice 004
@@ -146,8 +156,6 @@ Three more requirements have no story of their own:
   `contract=invalid` stay in the vocabulary, reserved.
 - FR-002-074, the deviation register, is verified by SC-002-010. Each row's pinning test sits with
   the story that exercises its behaviour.
-
-FR-002-038 is left out until its marker is resolved.
 
 ### User Story 1 — A resulted hearing reaches HMPPS once, and the record says exactly what was sent (Priority: P1)
 
@@ -427,7 +435,8 @@ because of the switch alone.
 6. **Given** users-groups never answers, **When** the switch is read, **Then** each attempt is bounded
    by 2 s to connect and 5 s to read. After three attempts, within 23 s, the read is
    `UNREADABLE(TIMEOUT)`. The hearing is still sent.
-7. **Given** a 2xx with an empty or missing `permissions` list, **Then** the read is
+7. **Given** a 2xx with an empty or missing `permissions` list, or a list whose first entry is
+   `null`, **Then** the read is
    `UNREADABLE(EMPTY_PERMISSIONS)`. **Given** a 2xx whose body does not parse, **Then** it is
    `UNREADABLE(UNPARSEABLE)`. Neither is retried.
 8. **Given** the default is configured `INACTIVE` and the switch is unreadable, **When** the hearing
@@ -449,20 +458,20 @@ because of the switch alone.
 The gateway forwards the POST to HMPPS and retries a backend 5xx on its own, and the results POST is
 not idempotent. The service therefore retries within the run only what cannot have reached HMPPS: a
 connection that never carried the request, and a 429 that the gateway's rate limit returned before
-forwarding. When the gateway's answer leaves the outcome unknown — a 5xx, a 408, a read timeout
-after the request was written — the leg parks at once, and the broker redelivers the message. When
-the final permitted delivery still fails, the leg and the request fail, visibly.
+forwarding. When the gateway's answer leaves the outcome unknown — a 5xx, a 408, a 3xx, a read
+timeout after the request was written — the leg parks at once, and the broker redelivers the
+message. When the final permitted delivery still fails, the leg and the request fail, visibly.
 
 **Why this priority**: the legacy has no timeout and no retry, and reports success whatever happened
 (P04, P05). Retrying an outcome-unknown answer in-run would turn a gateway slowdown into duplicate
 results at HMPPS.
 
 **Independent Test**: with a stub gateway, run each answer class in turn: a refused connection, a
-429 with `Retry-After`, a 503, a 408, a stalled response, a 5xx answer followed by 200 on
+429 with `Retry-After`, a 503, a 408, a 302, a stalled response, a 5xx answer followed by 200 on
 redelivery, and a 5xx on every delivery. Count the POSTs per delivery, and check the outcomes, the
 stored bodies, the recovery counts and the final dead-letter.
 
-**Requirements exercised**: FR-002-012, FR-002-013, FR-002-032 to FR-002-037, FR-002-039 to
+**Requirements exercised**: FR-002-012, FR-002-013, FR-002-032 to FR-002-039,
 FR-002-042, FR-002-047, FR-002-049, FR-002-058, FR-002-060, FR-002-061.
 
 **Acceptance Scenarios**:
@@ -507,6 +516,13 @@ FR-002-042, FR-002-047, FR-002-049, FR-002-058, FR-002-060, FR-002-061.
     - `probation_crash_reruns_total` is incremented.
 11. **Given** a `Retry-After` that is not a number of seconds, **When** a 429 is retried, **Then**
     the computed back-off is used.
+12. **Given** the gateway answers 302, **When** the message is processed, **Then** exactly one POST
+    is made, no redirect is followed, the row is `PARKED(gateway-transient)` with
+    `http_status = 302`, and the outcome metric uses `http="other"`. On the final permitted
+    delivery, the row is `FAILED(gateway-transient)`.
+13. **Given** a `PARKED` row whose re-run POSTs and crashes before recording its outcome, **When**
+    its claim expires and the next delivery re-runs it, **Then** the row is re-run in place and
+    `probation_crash_reruns_total` is not incremented for that delivery.
 
 ---
 
@@ -596,7 +612,7 @@ H34 signal can be selected by its labels, the gauges, and the privacy sweeps.
 - **A database failure after the POST, before the record.** The outcome cannot be written, so the
   message is handed back. The redelivery reclaims the request once the lease expires, re-runs the
   row, and POSTs again: this is the at-least-once window. The re-run of a `PENDING` row is counted
-  as a crash re-run; the re-run of a `PARKED` row is the open question of FR-002-061.
+  as a crash re-run; a re-run of a `PARKED` row is not counted by that metric (FR-002-061).
 - **A `sharedTime` with an offset other than `Z`** is admitted. The service takes `requestId` from
   the wire, and in this slice never recomputes it.
 - **A message carrying operator application properties** (`origin = REPLAY` or `SUPPORT`) is
@@ -612,7 +628,8 @@ H34 signal can be selected by its labels, the gauges, and the privacy sweeps.
 - **A users-groups 2xx that is an HTML error page** is `UNREADABLE(UNPARSEABLE)`.
 - **More than one permission, with conflicting values.** The first decides (P17, carried), and the
   ambiguity is counted.
-- **A gateway status outside 2xx, 4xx and 5xx** is not classified by the design; see FR-002-038.
+- **A gateway status outside 2xx, 4xx and 5xx** parks as `gateway-transient`, or fails with that
+  reason on the final delivery. It uses the `other` HTTP bucket and is not followed as a redirect.
 
 ## Requirements *(mandatory)*
 
@@ -833,15 +850,11 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   |---|---|
   | `HTTP_FAILURE` | a non-2xx answer, or a failure with no response other than a timeout, once the retry rule stops |
   | `TIMEOUT` | the last attempt timed out, or the 25 s stage ran out |
-  | `EMPTY_PERMISSIONS` | a 2xx whose `permissions` list is empty or missing |
+  | `EMPTY_PERMISSIONS` | a 2xx whose `permissions` list is empty or missing, or whose first entry is `null` |
   | `UNPARSEABLE` | a 2xx body that does not parse |
 
-  H8 makes a 2xx whose `permissions[0]` is `null` an `UNREADABLE` read, with cause
-  [NEEDS CLARIFICATION: which cause labels an unreadable read whose 2xx body parses and whose
-  non-empty `permissions` list has `null` as its first element? None of the four causes is mapped
-  to it (design gap §4.4 / A2-28; digest §16). The cause is the `cause` label on
-  `probation_youth_switch_unreadable_total` and a field of the outcome log line]. The cause is never
-  stored in a column. (A2-28; H8)
+  The cause is the `cause` label on `probation_youth_switch_unreadable_total` and a field of the
+  outcome log line. It is never stored in a column. (A2-28; H8)
 - **FR-002-025**: An `UNREADABLE` switch MUST resolve to
   `distribution.youth-switch.default-when-unreadable` (default `ACTIVE`):
   - the row records `UNREADABLE_DEFAULTED_ACTIVE` or `UNREADABLE_DEFAULTED_INACTIVE`;
@@ -913,16 +926,18 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   | any 2xx | `SENT`, with the status recorded. A status other than 200 is also logged at WARN and counted in `probation_gateway_non200_success_total{status}` (`201`, `202`, `204`, `other`) |
   | a 4xx other than 408 and 429 (400 and 401 included) | `FAILED(receiver-rejected)`, terminal; no retry |
   | an outcome-unknown answer: a 5xx, a 408, a read timeout after the request was written, or an I/O failure once writing began | `PARKED(gateway-transient)` at once, with no in-run retry; `FAILED(gateway-transient)` on the final permitted delivery |
+  | an answer outside 2xx, 4xx and 5xx (for example, 3xx) | `PARKED(gateway-transient)` at once, with no in-run retry; `FAILED(gateway-transient)` on the final permitted delivery |
   | a connection failure or a 429, still failing when the retries or the stage run out | `PARKED(gateway-transient)`; `FAILED(gateway-transient)` on the final permitted delivery |
 
   (Digest §9; H11, H12, H15; A3-45)
 - **FR-002-037**: The publisher MUST never throw past its outcome. It returns `SENT(status)`,
-  `FAILED_NON_TRANSIENT(status)` or `TRANSIENT_EXHAUSTED`, with the bytes it sent. Only the runner
-  maps these to a (status, reason). (Digest §9)
-- **FR-002-038**: A gateway answer outside 2xx, 4xx and 5xx MUST map to [NEEDS CLARIFICATION: which
-  leg outcome and which `http` label bucket does such an answer take, in practice a 3xx? The
-  design's answer table (§9, §4.4) and the closed `http` label (A3-116) cover only 2xx, 4xx, 5xx
-  and no answer, and the publisher's outcome set is closed].
+  `FAILED_NON_TRANSIENT(status)` or `TRANSIENT_EXHAUSTED`, with the bytes it sent and the last
+  gateway status, if any. Only the runner maps these to a (status, reason). (Digest §9)
+- **FR-002-038**: A gateway answer outside 2xx, 4xx and 5xx, in practice a 3xx, MUST NOT be
+  followed as a redirect or retried within the run. The publisher MUST return
+  `TRANSIENT_EXHAUSTED` with that status, and the runner MUST write
+  `PARKED(gateway-transient)` or `FAILED(gateway-transient)` on the final permitted delivery. The
+  row MUST retain the actual `http_status`; `probation_leg_outcomes_total` MUST use `http="other"`.
 - **FR-002-039**: `SENT` MUST mean only that the gateway answered 2xx. Nothing the service writes —
   code, comment, log or document — may promise more. The results POST is not idempotent, so a
   crash-window re-run, and a redelivery after an outcome-unknown answer, are genuine duplicates at
@@ -1147,7 +1162,7 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   | `origin` | the run's `runOrigin` |
   | `forced` | `false` (`true` only on slice 004's forced resend) |
   | `shape` | `application-only` when the body sent carries court applications and no prosecution case; `case` otherwise |
-  | `http` | the row's `http_status`, bucketed into `200`, `2xx-other`, `400`, `401`, `408`, `429`, `4xx-other`, `5xx`, or `none` (no answer) |
+  | `http` | the row's `http_status`, bucketed into `200`, `2xx-other`, `400`, `401`, `408`, `429`, `4xx-other`, `5xx`, `other` (an answer outside 2xx, 4xx and 5xx), or `none` (no answer) |
 
   (A3-36, A3-114, A3-116, A2-71, R1-31)
 - **FR-002-060**: `probation_gateway_recovered_total` MUST count each recovery when it happens:
@@ -1158,12 +1173,10 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   The re-run overwrites the row, so the count cannot be read back later. (A3-116; A2-39)
 - **FR-002-061**: `probation_crash_reruns_total{leg}` MUST count each delivery that re-runs a
   `PENDING` attempt-1 row whose request claim had expired, because the earlier run may have POSTed
-  before it died. A crash during the re-run of a `PARKED` row leaves the row `PARKED`, and is not
-  told apart from an ordinary re-run: [NEEDS CLARIFICATION: how is a crash during the re-run of a
-  `PARKED` row counted, given that the re-run writes no `PENDING` first and so leaves nothing a
-  redelivery can detect? Should it be counted, and on what evidence, or accepted as uncounted? The
-  design counts only `PENDING` attempt-1 re-runs and leaves the rest not established (A3-115;
-  digest §16); the replay's `FAILED` re-run case is slice 004's]. (A3-115; §4.5 crash window)
+  before it died. It MUST NOT count a re-run of a `PARKED` row, including one after a crash during
+  an earlier re-run: the row remains `PARKED`, so that crash cannot be distinguished from an
+  ordinary re-run. The replay's `FAILED` re-run case belongs to slice 004. (A3-115; §4.5 crash
+  window)
 - **FR-002-062**: The gauges MUST report:
 
   | Gauge | What it reports |
@@ -1200,7 +1213,7 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   | a send still failing after its last delivery, or a rules exception | `probation_leg_outcomes_total{status="FAILED", reason=~"gateway-transient\|payload-unavailable\|rules-exception"}`; slice 004's `payload-changed` and `rolled-back` join it until Q28 is decided |
   | repeated 401s | `probation_leg_outcomes_total{reason="receiver-rejected", http="401"}` |
   | a hearing sent on an assumed switch value | the rate of `probation_youth_switch_unreadable_total` |
-  | a send re-run after a crash | `probation_crash_reruns_total` |
+  | an expired-claim re-run of a `PENDING` attempt-1 row | `probation_crash_reruns_total` |
   | a spike in case-hearing 400s | the daily `probation_leg_outcomes_total{reason="receiver-rejected", http="400", shape="case"}` |
 
   | Counted, not paged | Series |
@@ -1383,8 +1396,8 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
 - **SC-002-005**: With the default settings, no stage outlasts its budget (60 s, 25 s, 130 s), and no
   message's stages together exceed 215 s, below the 4-minute deadline. Each stage, driven past its
   budget, ends in its defined outcome.
-- **SC-002-006**: An outcome-unknown gateway answer (5xx, 408, read timeout) produces exactly 1 POST
-  per delivery. A connection failure or a 429 produces at most 3.
+- **SC-002-006**: An outcome-unknown gateway answer (5xx, 408, 3xx, read timeout) produces exactly
+  1 POST per delivery. A connection failure or a 429 produces at most 3.
 - **SC-002-007**: For each unreadable cause, 100% of hearings are still sent. The body equals the
   default-state body, and the assumption is recorded on the row and counted.
 - **SC-002-008**: Support can answer "was this hearing sent to HMPPS on this day, when, with what
@@ -1524,7 +1537,7 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
 | H8, DV-25, A3-23, A3-25, A3-27, P16 | FR-002-024, FR-002-025, FR-002-058, FR-002-063, FR-002-074; User Story 4 |
 | A3-24, A3-29 | FR-002-026 |
 | A3-13, A3-14, A3-22, DV-24 | FR-002-023, FR-002-074 |
-| A2-28 (gap) | FR-002-024 (open) |
+| A2-28 | FR-002-024; Clarifications |
 | H11, H15, A3-43, A3-54, DV-04 | FR-002-035, FR-002-036, FR-002-074; User Story 5 |
 | H12, A3-45, A3-47 | FR-002-036, FR-002-039 |
 | H13, A3-50 | FR-002-031, FR-002-057, FR-002-069 |
@@ -1582,4 +1595,4 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
 | App. B.2 | FR-002-050 to FR-002-056 |
 | Digest §12 | FR-002-066 to FR-002-070 |
 | Digest §13 | FR-002-057 to FR-002-065 |
-| (gap; no design id) — the gateway answer outside 2xx, 4xx and 5xx | FR-002-038 (open) |
+| (gap; no design id) — the gateway answer outside 2xx, 4xx and 5xx | FR-002-038; Clarifications |

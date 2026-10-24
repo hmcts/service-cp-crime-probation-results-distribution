@@ -1,0 +1,39 @@
+{
+  "hearing": {
+    "id": "00000000-0000-0000-0000-000000000002",
+    "judiciary": [
+      {
+        "name": "hearing-judiciary"
+      }
+    ],
+    "prosecutionCases": [
+      {
+        "defendants": [
+          {
+            "associatedPersons": [
+              {
+                "ref": "ap"
+              }
+            ],
+            "offences": [
+              {
+                "judicialResults": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "judiciary": [
+    {
+      "top": true
+    }
+  ],
+  "associatedPersons": [
+    {
+      "top": true
+    }
+  ],
+  "sharedTime": "2026-01-01T09:00:00.000Z"
+}

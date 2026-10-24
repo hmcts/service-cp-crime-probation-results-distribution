@@ -46,6 +46,18 @@
              style used throughout this project; requiring a comment justifying default access on
              every one of them adds no value. -->
         <exclude name="CommentDefaultAccessModifier"/>
+        <!-- Single-exit is not a property worth buying in test code and in the parity pack's own
+             comparator (copied unchanged from the informant register, reused by slice 006's STE
+             replay). The reports here are guard-and-return helpers and the comparator's recursive
+             walk, where an early return states the special case and leaves the body unindented;
+             rewriting them to one exit adds nesting and a mutable result variable. The rule is
+             deliberately still enforced on main sources, where a single exit does help reason
+             about state changes. -->
+        <exclude name="OnlyOneReturn"/>
+        <!-- A test/parity DSL is read aloud in the code that calls it: JsonParity's `at(path)`
+             renders a JSON pointer for a failure message. Two- and three-letter names are the
+             point, not an oversight. -->
+        <exclude name="ShortMethodName"/>
         <!-- LinguisticNaming is deliberately NOT excluded. The sibling repo excludes it because a
              camelCase test named after a getter under test reads to the rule as a JavaBean getter
              returning void; this suite's names are underscore-separated throughout
@@ -61,6 +73,11 @@
              the same rule catches genuine magic-string duplication. -->
         <exclude name="AvoidDuplicateLiterals"/>
     </rule>
-    <rule ref="category/java/performance.xml"/>
+    <rule ref="category/java/performance.xml">
+        <!-- Sizing a StringBuilder to its eventual content is a micro-optimisation with no
+             readable benefit in the parity comparator's diff-message builder (copied unchanged
+             from the informant register). -->
+        <exclude name="InsufficientStringBufferDeclaration"/>
+    </rule>
     <rule ref="category/java/security.xml"/>
 </ruleset>

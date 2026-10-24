@@ -169,7 +169,9 @@ park the message as `MaxDeliveryCountExceeded`. Each settlement is counted in
 
 A youth switch that cannot be read is **not** a dead-letter, and not a failure. The leg assumes
 `distribution.youth-switch.default-when-unreadable` (`ACTIVE` unless configured otherwise) and the
-hearing is sent as normal. The message settles by the outcome of that send (DV-25).
+hearing is sent as normal. The recorded unreadable causes are `HTTP_FAILURE`, `TIMEOUT`,
+`EMPTY_PERMISSIONS` and `UNPARSEABLE`; a 2xx response whose first permission is null or missing uses
+`EMPTY_PERMISSIONS`. The message settles by the outcome of that send (DV-25).
 
 ### Dead-letter runbook (design §4.8)
 
@@ -246,11 +248,16 @@ checks it over the corpus.
 | Any other 2xx | Not retried; logged at WARN and counted as an anomaly | `SENT(status)` |
 | Connection failure (the request was never sent; a connect timeout included), 429 | Retried in-run with bounded attempts and backoff; `Retry-After` is honoured in delta-seconds up to a cap | Still failing at the end: `PARKED(gateway-transient)` and the message is abandoned for redelivery. On the final delivery or a resend it is `FAILED(gateway-transient)` |
 | 5xx (after the gateway's own retries), 408, a read timeout or I/O failure after the request was written | **Not retried in-run.** The outcome is unknown: HMPPS may have accepted the hearing | `PARKED(gateway-transient)` at once and the message is abandoned for broker redelivery. On the final delivery `FAILED(gateway-transient)`; on a resend `FAILED(gateway-transient)` at once |
+| 3xx or another answer outside 2xx, 4xx and 5xx | Redirect is not followed; no in-run retry. Keep the actual HTTP status and count it in `http="other"` (slice 002 clarification, 2026-10-21) | `PARKED(gateway-transient)` at once; `FAILED(gateway-transient)` on the final delivery or a resend |
 | Any other 4xx, 401 included | Not retried | `FAILED(receiver-rejected)`. The receiver's status is recorded |
 
 Each broker redelivery is a new POST, which the gateway may itself retry, and the POST is not
 idempotent: a redelivery after an outcome-unknown answer can be a genuine duplicate at HMPPS. A
 `FAILED(gateway-transient)` leg is therefore confirmed with HMPPS before anyone re-sends it by hand.
+`probation_crash_reruns_total{leg}` counts only an expired-claim reclaim whose attempt-1 row is still
+`PENDING` (the crash window after send but before recording); reclaiming a `PARKED` row is not a crash
+rerun. A successful redelivery after a parked 5xx is counted separately as
+`probation_gateway_recovered_total{after="5xx-redelivery"}`.
 
 The publisher never throws past its outcome. Every admitted share ends with exactly one recorded
 outcome per attempt of the HMPPS leg. The legacy's second receiver is not built, and the per-leg
