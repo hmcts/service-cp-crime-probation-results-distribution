@@ -3,8 +3,8 @@
 **Feature Branch**: `003-body-retention`  
 **Created**: 2026-10-21  
 **Status**: Draft  
-**Input**: Design rev 3.6 (2026-10-20; decisions H1–H34) and H35 (2026-10-21) — H20, H28, H34 and
-H35; rows A3-63 … A3-65, A3-98, A3-99, A3-105 and A3-115; design §4.1, §4.6, §4.7, §4.8, §8.1,
+**Input**: Design rev 3.6 (2026-10-20; decisions H1–H34), H35 (2026-10-21), H36 … H38 (2026-10-23) —
+H20, H28, H34 … H38; rows A3-63 … A3-65, A3-98, A3-99, A3-105, A3-115, A3-118 and A3-119; design §4.1, §4.6, §4.7, §4.8, §8.1,
 §8.4 ask 5, §10.1, §10.2, §10.3, Appendix A and Appendix B.2 — as restated in
 `doc/design/DIGEST.md` §2 (the service runs one scheduled task), §8 (`outbound_body`, "Retention
 job", "Sizing floor", "Data protection"), §12 (configuration keys), §13 (metrics and alerts) and
@@ -44,9 +44,10 @@ An ambiguity scan of the slice against design rev 3.6 and the digest found the p
 answered from the design; where an answer is an inference rather than a statement of the design, it
 says so and names the rows it rests on. Two points could not be answered from the design. One
 blocked a requirement (FR-003-011, open question 1) until the design owner answered it the same day
-with option A, recorded in the design as H35 (the last point below); the other, open question 2, was
-answered the next day (2026-10-22 session below), closing AS-15. Both are set out, with their
-options, in `checklists/requirements.md`.
+with option A, recorded in the design as H35 (the last point below); the other has the design's
+own default, which stood, and was carried as assumption AS-15 (open question 2) until the design
+owner answered it on 2026-10-23 with rows A3-118 and A3-119 (Session 2026-10-23 below). Both are
+set out, with their options, in `checklists/requirements.md`.
 
 - Q: Which clock decides "now", the current month and the cut-off? → A: The database clock, read in
   UTC. The scheduler's zone (UTC) decides only when a run starts. (§4.6 and DIGEST §8: "the database
@@ -77,7 +78,7 @@ options, in `checklists/requirements.md`.
   set.) Applied in FR-003-002 and FR-003-003.
 - Q: Is the 5 s lock timeout a property? → A: No. §8.1 lists none, and a `distribution.*` property
   not in the catalogue does not exist (DIGEST §12); the timeout is a fixed 5 s (A3-64 (b), which
-  calls it the default). The same holds for the two months created ahead and for the lock's key.
+  calls it the default). The same holds for the months created ahead (the next three since H37) and for the lock's key.
   Applied in FR-003-016 and FR-003-027.
 - Q: Is a statement that fails retried within the run? → A: No: on the next scheduled run
   (A3-64 (b)). Applied in FR-003-017.
@@ -103,7 +104,7 @@ options, in `checklists/requirements.md`.
   FR-003-006 and FR-003-007.
 - Q: Does the job move DEFAULT rows into their month, or create partitions for past months? → A:
   Neither. It deletes DEFAULT rows older than the cut-off and leaves the rest; moving them is "a
-  runbook step, alerted" (A3-64; §4.8). It creates only the current month and the next two. Applied
+  runbook step, alerted" (A3-64; §4.8). It creates only the current month and the next three (H37). Applied
   in FR-003-014 and FR-003-015.
 - Q: When is the DEFAULT-partition gauge read? → A: After the run's delete of DEFAULT rows older than
   the cut-off, so that it shows what remains (A3-64 (c): "the DEFAULT alert still fires while any
@@ -145,18 +146,43 @@ options, in `checklists/requirements.md`.
   stay, and V1 is unchanged. Applied in FR-003-002, FR-003-011, FR-003-012, FR-003-016, FR-003-017,
   SC-003-013 and AS-13.
 
-### Session 2026-10-22
+### Session 2026-10-23
 
-- Q: How is a job that does not run, or a stale DEFAULT reading, noticed? → A: Option C and D
-  combined. The DEFAULT partition's row count is read and the gauge set independently of a run — on
-  the normal metrics-collection cycle, not only after a run that holds the lock — so every pod's
-  reading stays current whether or not the job itself is running. In addition, the service publishes
-  a new age gauge, the time since the job's last successful completion, alerted when it exceeds about
-  two days, closing the gap a fresh DEFAULT reading alone leaves: a stopped job is caught within about
-  two days, not only once the two-month create-ahead buffer is exhausted and a body has already
-  spilled into DEFAULT. This resolves open question 2 (AS-15); the design's own default (option A) no
-  longer stands (slice 003 clarification, 2026-10-22). Applied in FR-003-022, FR-003-031, FR-003-032,
+The design owner answered open question 2 with rows A3-118 and A3-119, and decided H36 (how the
+alerts are delivered), H37 (three months ahead) and H38 (the last successful run kept in the
+database). The answers were then checked by an independent review, whose corrections are included.
+
+- Q: How is a job that does not run, or a stale reading, noticed? (open question 2) → A: A3-118, a
+  custom answer close to option D. The months ahead and the DEFAULT row count are read from the
+  database whenever the metrics are collected, on every pod, lock or not (cached 5 minutes), so the
+  pods agree and a missing next month is seen while the job is not running; the end of the last run
+  with no failure is kept in the database (H38) and read the same way. A failed read reports `-1`,
+  which meets the alert condition, and a gauge with no sample in the rule's window alerts too. The alert
+  "Body partition maintenance" also fires when fewer than two months ahead have a partition (H37),
+  or when no run has succeeded for more than 48 hours (proposals). Applied in FR-003-022, FR-003-023,
+  FR-003-031, FR-003-032, SC-003-015 and AS-15.
+- Q: What does the job log beyond its failures? → A: A3-119. A start line on every trigger; a skip
+  line from a pod without the lock; one summary line per run that held the lock (created, dropped,
+  failed, months ahead, DEFAULT rows, duration); WARNs on the months ahead (H37,
+  below); and the failure's `sqlState` (the five-character code, or `unavailable`) on each ERROR line. Line texts
+  and field names are proposals. Applied in FR-003-017, FR-003-020, FR-003-024, FR-003-030 and
   SC-003-014.
+- Q: Where do these signals go? → A: H36. The App Insights Java agent exports the meters to
+  `customMetrics` (about every 60 s) and the logs to `traces`; nothing scrapes the pods for
+  Prometheus. The alert rule and its routing stay slice 006's. Applied in FR-003-031 (the collection
+  read) and Dependencies.
+- Q: Where is the last successful run kept? → A: H38. In a one-row table `body_maintenance_state`
+  (`last_success_at`; names proposed), created and seeded with the migration time by a Flyway `V2`
+  of this slice — V1 is unchanged — and updated by a run that held the lock and ended with no
+  failure. A per-pod value would be lost when the pod that ran restarts, and would have no value at
+  first deployment. Applied in FR-003-032, User Story 4 and SC-003-015.
+- Q: How many months are created ahead, and when is the WARN checked? → A: H37. The job keeps the
+  current month and the next three (V1 still creates the next two; the job's first run adds the
+  third). A run that holds the lock logs a WARN at its start when fewer than two months ahead have a
+  partition — with three kept ahead, the month rollover only takes the count from three to two, so
+  it never warns by mistake — and a run with no failure logs a WARN at its end when fewer than three
+  remain. The ahead alert fires below two. Applied in FR-003-006, FR-003-023, FR-003-027,
+  FR-003-030, SC-003-003, SC-003-014, User Stories 1 and 4, the edge cases and AS-6.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -168,31 +194,32 @@ them can rely on, day after day.
 
 ### User Story 1 - The coming months always have somewhere to put a body (Priority: P1)
 
-Every day the job makes sure that the current UTC month and the next two each have a partition of
+Every day the job makes sure that the current UTC month and the next three each have a partition of
 `outbound_body`, creating any that is missing, with the name and the bounds V1 uses. A body written
 at any moment of those months lands in its own month's partition, and none lands in DEFAULT.
 
 **Why this priority**: it is the first part of the job anyone depends on. V1 creates only the
-migration month and the next two, so a body written in the fourth month has nowhere to go but the
+migration month and the next two (the job keeps three, H37), so a body written in the fourth month has nowhere to go but the
 DEFAULT partition unless the job has run — and a month whose bodies are in DEFAULT can no longer be
 created without the recovery procedure of User Story 6 (A3-64).
 
 **Independent Test**: on a PostgreSQL 15 store migrated by V1, remove the newest month's partition,
-run the job once, and assert that the three months exist with the expected names and bounds, owned
-by the service's role, and that the created counter rose by exactly one.
+run the job once, and assert that the current month and the next three exist with the expected
+names and bounds, owned by the service's role, and that the created counter rose by exactly two.
 
 **Acceptance Scenarios**:
 
 1. **Given** a store with partitions for October and November 2026 only, **When** a run at 02:15 UTC
    on 21 October 2026 completes, **Then** `outbound_body_2026_12` exists, bounded from 1 December
-   2026 00:00 UTC (inclusive) to 1 January 2027 00:00 UTC (exclusive); its creation is logged; and
-   `probation_body_partitions_created_total` has risen by exactly one.
-2. **Given** the current month and the next two already have partitions, **When** a run completes,
+   2026 00:00 UTC (inclusive) to 1 January 2027 00:00 UTC (exclusive), and `outbound_body_2027_01`,
+   bounded by 1 January and 1 February 2027 00:00 UTC; each creation is logged; and
+   `probation_body_partitions_created_total` has risen by exactly two.
+2. **Given** the current month and the next three already have partitions, **When** a run completes,
    **Then** no partition is created, nothing is logged as created and the created counter does not
    move.
 3. **Given** a run at 02:15 UTC on 30 November 2026, **When** it completes, **Then**
-   `outbound_body_2027_01` exists, bounded by 1 January and 1 February 2027 00:00 UTC: the year rolls
-   over.
+   `outbound_body_2027_01` and `outbound_body_2027_02` exist, bounded by 1 January, 1 February and
+   1 March 2027 00:00 UTC: the year rolls over.
 4. **Given** a partition under another name already covers November 2026, and no table has V1's
    name for November, **When** a run in October 2026 completes, **Then** the creation of
    `outbound_body_2026_11` is refused because it would overlap that partition, is logged at ERROR
@@ -301,7 +328,12 @@ Each creation and each removal is logged and counted. Each failure is logged at 
 step, its month and its cause from a closed set, and counted under its step. After every run the
 DEFAULT partition's row count is published, so a body that landed outside its month is seen. The
 §10.3 alert "Body partition maintenance" reads these signals and pages when the DEFAULT partition
-is not empty, or when a creation or a removal fails.
+is not empty, or when a creation or a removal fails. Every pod also reports, whenever its metrics are
+collected, how many consecutive months ahead have a partition, how many rows the DEFAULT partition
+holds and when the last run with no failure ended (kept in the database, H38); the alert also pages
+when fewer than two months ahead have a partition (H37), when no run has succeeded for more than 48
+hours, when a reading fails or when a reading stops arriving (A3-118). Each trigger, skip and
+finished run leaves a log line, so the cause of an alert can be read from the logs (A3-119).
 
 **Why this priority**: H34 puts body-retention failures among the genuine issues that page. A
 creation that fails quietly means the next month's bodies land in DEFAULT; a removal that fails
@@ -320,7 +352,7 @@ body.
    failure is counted.
 2. **Given** a creation that fails, **Then** `probation_body_maintenance_failures_total{step="create"}`
    rises by one and one ERROR line names the step, the month and its cause (FR-003-017), and no line
-   at INFO or above carries the database's own error text; **given** a removal, or the delete of
+   at any level carries the database's own error text (A3-119); **given** a removal, or the delete of
    DEFAULT rows older than the cut-off, that fails, **Then** the step is `drop` (assumption AS-7).
 3. **Given** the DEFAULT partition holds 5 rows after a run's delete of rows older than the cut-off,
    **Then** `probation_body_default_partition_rows` reads 5; **and given** a later run after the
@@ -329,13 +361,30 @@ body.
    any `create` or `drop` failure, and never by a skipped run.
 5. **Given** any run, successful or not, **Then** no log line, metric label or exception message it
    produces contains any part of a stored body.
-6. **Given** the job has not completed a successful run for longer than about two days — no pod up at
-   the scheduled time, a valid schedule that never fires, or every recent run failing before its last
-   statement — **Then** the last-successful-run age gauge exceeds the paging threshold and the alert
-   fires, whether or not any body has yet spilled into DEFAULT (FR-003-032).
-7. **Given** no run is in progress anywhere, **Then** `probation_body_default_partition_rows` is still
-   read on the normal metrics-collection cycle and reflects the database's current DEFAULT row count,
-   not a reading frozen from the last run that held the lock (FR-003-031).
+6. **Given** two pods triggered at the same instant, **Then** each logs one start line; the pod
+   without the lock logs one skip line and nothing else; the pod with it logs one summary line
+   carrying its created, dropped and failed counts, the months ahead, the DEFAULT rows and the
+   duration (A3-119).
+7. **Given** a run that starts with one month ahead, **Then** one start WARN is logged; **given** a
+   run with no failure that ends with two months ahead (the creation of the third skipped by a test
+   seam), **Then** one end WARN is logged; **and given** a run on the 1st of a month that starts
+   with two months ahead and ends with three, **Then** no WARN is logged (A3-119; H37).
+8. **Given** a creation that fails on a lock timeout, **Then** its ERROR line carries `sqlState`
+   `55P03`; **given** a failure the driver gives no code for (a lost connection), **Then** it carries
+   `sqlState` `unavailable`; and no line at any level carries the database's own error text (A3-119).
+9. **Given** the next month's partition dropped by hand and no run since, **Then** every pod reports
+   `probation_body_partitions_ahead_months` 0 at its next collection (after the 5-minute cache);
+   **given** rows put in the DEFAULT partition and no run since, **Then** every pod reports them;
+   **given** the database cannot be read, **Then** every pod reports `-1` for the three gauges;
+   **and given** the schedule never fires, **Then** `probation_body_maintenance_last_success_seconds`
+   stops advancing on every pod, and keeps its value when the pod that last ran restarts (A3-118;
+   H38).
+10. **Given** a fresh migration, **Then** `body_maintenance_state` holds exactly one row, seeded with
+   the migration time; **given** a run with no failure, **Then** it advances to that run's end;
+   **and given** a skipped run, a run with a failed statement, a run whose update of the row fails
+   (ERROR, step `state`), or a run whose fresh end read fails (ERROR, step `read`, the summary's
+   field `-1`, `failed` counting it), **Then** it is unchanged and the failure counter does not move
+   for the last two (H38).
 
 ---
 
@@ -385,7 +434,7 @@ design prescribes: detach the DEFAULT partition, create the missing month, move 
 and re-attach the DEFAULT partition. After it, the next run is clean.
 
 **Why this priority**: it is needed only after something else has gone wrong — the job not running
-for two months or more, or a creation failing for that long — and nothing is lost meanwhile: the
+for three months or more, or a creation failing for that long — and nothing is lost meanwhile: the
 bodies are stored, in DEFAULT, and alerted.
 
 **Independent Test**: put bodies for a month with no partition into DEFAULT; confirm that a run
@@ -432,19 +481,19 @@ matching its attempt's `body_digest`.
   into DEFAULT, and refuses to create a month while DEFAULT holds rows of it. The test fixtures
   respect that.
 - **DEFAULT holds rows of a month the job should create** — the current month, after the job has not
-  run for two months or more. The creation is refused on every run, counted `create` (cause
+  run for three months or more. The creation is refused on every run, counted `create` (cause
   `default-has-rows`) and alerted; the bodies stay stored; the procedure of User Story 6 recovers.
 - **DEFAULT holds rows of a past month.** The job never creates past months. The rows stay, on the
   gauge and alerted, until they pass the cut-off and are deleted, or until an operator moves them
   with the procedure.
 - **No pod running at the scheduled time** — an environment scaled down at that hour, for example.
-  There is no run that day. The months created ahead absorb at least two months of missed runs
+  There is no run that day. The months created ahead absorb at least three months of missed runs
   before a body lands in DEFAULT, and the schedule is a property, so such an environment can choose
-  an hour at which the service runs. The last-successful-run age gauge rises and pages at about two
-  days regardless, well before a body would spill into DEFAULT (FR-003-032; AS-15, resolved).
+  an hour at which the service runs. A job that never runs is noticed: the last-success reading stops
+  advancing and the alert fires after 48 hours (A3-118; FR-003-032; AS-15).
 - **A valid schedule that never fires** (30 February, for example). It passes the startup check,
-  which checks only validity (§8.1), and the job never runs; the age gauge pages at about two days
-  the same as any other stopped job (FR-003-032; AS-15, resolved).
+  which checks only validity (§8.1), and the job never runs; the last-success reading stops advancing
+  and the alert fires after 48 hours (A3-118; FR-003-032; AS-15).
 - **Two triggers at the same instant; two triggers a little apart.** One runs and one skips; or both
   run, one after the other, and the second finds nothing to do.
 - **A long transaction on `outbound_body`** (an investigation query, for example). A statement that
@@ -465,8 +514,9 @@ matching its attempt's `body_digest`.
   status and the metadata remain (row A3-65). A resend re-reads the payload, so nothing in the
   service depends on a stored body (row A3-65).
 - **The first deployment.** V1 has just created the migration month and the next two, so the first
-  run normally has nothing to do; if it falls in a later month than the migration, it creates the
-  one month still missing.
+  run creates the third month ahead (H37), and more if it falls in a later month than the migration.
+  It starts with two months ahead, so it logs no start WARN. The last success is seeded with the
+  migration time, so the 48-hour condition cannot fire before the job has had two chances to run.
 
 ## Requirements *(mandatory)*
 
@@ -499,7 +549,7 @@ matching its attempt's `body_digest`.
 
 **The months ahead**
 
-- **FR-003-006**: Each run MUST ensure that the current UTC month and the next two each have a
+- **FR-003-006**: Each run MUST ensure that the current UTC month and the next three (H37) each have a
   partition of `outbound_body`, creating every one that is missing with the name and bounds slice
   002's V1 uses (002's FR-002-054): `outbound_body_YYYY_MM`, from the first instant of the UTC
   month (inclusive) to the first instant of the next (exclusive). *(H20; A3-63; A3-64;
@@ -559,7 +609,9 @@ matching its attempt's `body_digest`.
   creation refused because the DEFAULT partition holds rows of that month), `partition-overlap` (a
   creation refused because another partition covers all or part of the month), `store-unavailable`
   (the store could not be reached, or the connection was lost) or `other`; a `lock` failure
-  (FR-003-003) carries one too. The database's own error text MUST NOT be logged at INFO or above.
+  (FR-003-003) carries one too. The ERROR line MUST also carry the failure's `sqlState`, the
+  five-character PostgreSQL code only, or `unavailable` when the driver gives none (A3-119). The
+  database's own error text MUST NOT be logged at any level.
   A failed statement MUST NOT be retried within the run: the next scheduled run retries it. It MUST
   NOT undo the statements the run has already completed, and the run MUST still attempt its
   remaining statements; a statement that shares the lock's transaction (AS-13; never a removal,
@@ -578,18 +630,27 @@ matching its attempt's `body_digest`.
   `probation_body_partitions_created_total`; each partition it removes MUST be logged with its month
   and counted once on `probation_body_partitions_dropped_total`. Neither counter carries a label, and
   the partitions V1 creates are not counted. (The series are registered in slice 002's shared
-  registry, FR-002-057; this slice only increments them.) *(A3-64; §10.1; FR-002-057)*
+  registry, FR-002-057; this slice only increments them.) Each trigger MUST log one INFO start
+  line; a pod that does not get the lock MUST log one INFO skip line; each run that held the lock
+  MUST end with one INFO summary line carrying `created`, `dropped`, `failed`, `monthsAhead`,
+  `defaultRows` and `durationMs` — `monthsAhead` and `defaultRows` read fresh from the database after
+  its statements, never from the metrics cache (line texts and field names proposed, A3-119). *(A3-64; A3-119;
+  §10.1; §10.2; FR-002-057)*
 - **FR-003-021**: Failures MUST be counted on `probation_body_maintenance_failures_total`, labelled
   `step` ∈ {`lock`, `create`, `drop`} and nothing else. A skipped run is not a failure. (The series
   and its step label set, `BodyMaintenanceStep`, are registered in slice 002's shared core,
   FR-002-057 and FR-002-072; this slice only increments them.) *(A3-64; §10.1; FR-002-057;
   FR-002-072; constitution Principle VII)*
-- **FR-003-022**: Each run that holds the lock MUST set `probation_body_default_partition_rows` to
-  the number of rows left in the DEFAULT partition after its delete of rows older than the cut-off.
-  *(A3-64; A3-64 (c); §10.1)*
+- **FR-003-022**: `probation_body_default_partition_rows` MUST report the number of rows in the
+  DEFAULT partition, read from the database whenever the metrics are collected, on every pod, lock
+  or not, at most 5 minutes old (a cached read); after a run's delete of rows older than the
+  cut-off, the next reading reflects it. A failed read MUST report `-1` and MUST NOT be cached.
+  *(A3-64; A3-64 (c); A3-118; §10.1)*
 - **FR-003-023**: The job's signals MUST let the §10.3 alert "Body partition maintenance" fire on a
-  non-empty DEFAULT partition, or on any `create` or `drop` failure, and a skipped run MUST NOT be
-  able to trigger it. Whether a `lock` failure pages is the alert rule's (assumption AS-8); the rule
+  non-empty DEFAULT partition, on any `create` or `drop` failure, on fewer than two months ahead with a
+  partition (FR-003-031; H37), on no successful run for more than 48 hours (FR-003-032), on a
+  reading of `-1` (a failed read), or on a gauge with no sample in the rule's window (thresholds
+  proposed, A3-118), and a skipped run MUST NOT be able to trigger it. Whether a `lock` failure pages is the alert rule's (assumption AS-8); the rule
   and its routing are slice 006's. *(§10.3; H34; A3-115)*
 - **FR-003-031**: `probation_body_default_partition_rows` MUST also be read and set independently of
   a run: on the service's normal metrics-collection cycle, whether or not a run is in progress, holds
@@ -606,7 +667,37 @@ matching its attempt's `body_digest`.
   AS-15; slice 003 clarification, 2026-10-22)*
 - **FR-003-024**: The job MUST NOT put any part of a stored body in a log line, at any level, in a
   metric label or in an exception message. Its log lines carry partition names, months, counts,
-  steps and the causes of FR-003-017 only. *(H18; A3-60; DV-09; §10.2; constitution Principle VII)*
+  steps, durations, the causes and `sqlState` of FR-003-017 and the fields of FR-003-020 only. *(H18; A3-60; DV-09; §10.2; constitution Principle VII)*
+- **FR-003-030**: A run that holds the lock MUST log one WARN line, with the months ahead, when it
+  starts with fewer than two whole months after the current one covered by a partition (a run or
+  more was missed; with three kept ahead, the month rollover alone leaves two), and one WARN line
+  when it ends with no failure and fewer than three (the run did not top up). A pod that skips the
+  run makes neither check. Both checks MUST read the catalogue fresh, never the metrics cache, so
+  that the end check sees the run's own creations. *(A3-119; H37)*
+- **FR-003-031**: `probation_body_partitions_ahead_months` *(proposed)*, a gauge with no label,
+  MUST report the number of consecutive whole months after the current UTC month that have a
+  partition, bounds read from the catalogue (FR-003-010), whenever the metrics are collected, on
+  every pod, lock or not, at most 5 minutes old (a cached read). The job MUST NOT set it. A failed
+  read MUST report `-1` and MUST NOT be cached. This slice registers the series. *(A3-118;
+  H36; §10.1)*
+- **FR-003-032**: A Flyway `V2` of this slice MUST create a one-row table `body_maintenance_state`
+  *(proposed)* holding `last_success_at` (timestamptz, not null), seeded with the migration time;
+  V1 is unchanged. A run that held the lock and ended with no failure MUST set `last_success_at` to
+  the database's wall clock at that moment (`clock_timestamp()`, not `now()`, which in the run's long
+  lock transaction is its start), affecting exactly one row, as the last statement of the advisory
+  lock's own transaction, under its own savepoint, after every removal has committed (FR-003-011) and
+  after the fresh end reads of FR-003-020 and FR-003-030 — so the lock is held until it is recorded,
+  and a failed commit undoes it together with the creations (whatever arrangement AS-13 leaves to the
+  plan for them, the update commits no earlier than they do); a run that skips or has a failure MUST leave it unchanged. A failure of
+  that update, or of a fresh read of FR-003-020 or FR-003-030, MUST be logged at ERROR with step
+  `state` or `read`, its cause and `sqlState`, MUST count in the summary's `failed`, MUST leave
+  `last_success_at` unchanged, and MUST NOT be counted on `probation_body_maintenance_failures_total`
+  (its `step` set stays closed, FR-003-021); a failed fresh read logs its field as `-1`. The 48-hour
+  condition of FR-003-023 is what alerts it.
+  `probation_body_maintenance_last_success_seconds` *(proposed)*, a gauge with no label, MUST report
+  it in epoch seconds, read whenever the metrics are collected, on every pod, lock or not, at most 5
+  minutes old (a cached read); a failed read MUST report `-1` and MUST NOT be cached. This slice
+  registers the series. *(A3-118; H38; §10.1)*
 
 **Configuration**
 
@@ -618,7 +709,7 @@ matching its attempt's `body_digest`.
   week); any other value, the scheduler's "disabled" value included, MUST stop startup, naming the
   property. *(§8.1; A3-64; DIGEST §12)*
 - **FR-003-027**: This slice MUST NOT add a `distribution.*` property: the lock timeout (5 s), the
-  months created ahead (the current one and the next two) and the lock's key are fixed. It MUST NOT
+  months created ahead (the current one and the next three, H37) and the lock's key are fixed. It MUST NOT
   map a named environment variable to either property while that binding is open in the design.
   *(§8.1; Appendix A; DIGEST §12, §16)*
 
@@ -646,6 +737,8 @@ matching its attempt's `body_digest`.
 - **Cut-off**: the first instant of the UTC month N months before the current UTC month — the line
   before which months are removed and DEFAULT rows deleted.
 - **Maintenance schedule**: `distribution.body-maintenance.cron`, six fields, read in UTC.
+- **Maintenance state**: `body_maintenance_state`, one row: when the last run with no failure
+  ended (H38). Created by this slice's `V2`.
 - **Maintenance run**: one execution on one pod. Either skipped (no lock) or run (the lock held
   throughout); each of its statements succeeds or fails on its own.
 - **Maintenance step**: `lock`, `create` or `drop` — the bounded label a failure is counted under.
@@ -665,8 +758,8 @@ matching its attempt's `body_digest`.
   by a test that walks a simulated calendar of at least 14 months, a year end included.
 - **SC-003-002**: No stored body is removed before it is N months old: zero early removals over the
   same simulated calendar, with runs on the first, the last and a middle day of each month.
-- **SC-003-003**: After every completed run, the current month and the next two are ready to take
-  bodies (3 of 3), so that, with daily runs, no body written in normal operation is stored outside
+- **SC-003-003**: After every completed run, the current month and the next three are ready to take
+  bodies (4 of 4; H37), so that, with daily runs, no body written in normal operation is stored outside
   its own month.
 - **SC-003-004**: 100% of the request and attempt records present before a run are present and
   unchanged after it, whatever the run removes.
@@ -679,10 +772,11 @@ matching its attempt's `body_digest`.
 - **SC-003-007**: A second run on the same day creates nothing, removes nothing, deletes nothing and
   records no failure.
 - **SC-003-008**: Every failed maintenance step produces exactly one ERROR line, carrying its cause,
-  and one failure count under the right step — 100% of the failure cases in the test matrix — and a
+  and one failure count under the right step (a `lock`, `create` or `drop` step; a failed update of
+  the maintenance state or a failed fresh read is logged and summarised but not counted, FR-003-032) — 100% of the failure cases in the test matrix — and a
   body stored outside its month is visible in the published DEFAULT count after the next run.
 - **SC-003-009**: Zero log lines, metric labels or exception messages produced by the job contain any
-  part of a stored body, and zero lines at INFO or above carry the database's own error text, checked
+  part of a stored body, and zero lines at any level carry the database's own error text, checked
   by the repository's privacy tests extended to the job.
 - **SC-003-010**: A run creates and removes exactly the same months whatever the database session's
   time zone and the pod's default zone, checked in UTC and in at least one zone with daylight saving,
@@ -699,12 +793,16 @@ matching its attempt's `body_digest`.
   takes, because each removal is committed on its own (H35); one written while a creation holds or
   waits for them is stored by the end of that run at the latest, whichever arrangement the plan
   chooses for creations (AS-13).
-- **SC-003-014**: With the job prevented from completing a single run for a simulated period beyond
-  the paging threshold, the last-successful-run age gauge is shown to keep rising and the alert
-  condition is shown to be met, without any row needing to have reached the DEFAULT partition; and
-  the DEFAULT row count, read on the normal metrics cycle while no run is in progress, is shown to
-  match the database's own count at that moment, in at least one check with the job not running at
-  all.
+- **SC-003-014**: 100% of triggers in the test matrix leave exactly one start line, and each either
+  one skip line or one summary line; a run that starts with fewer than two months ahead leaves
+  exactly one start WARN, a run with no failure that ends with fewer than three leaves exactly one
+  end WARN, and a run on the 1st of a month that starts with two and ends with three leaves no WARN
+  (A3-119; H37).
+- **SC-003-015**: With the job never running, a missing month ahead is reported by every pod within
+  the cache's 5 minutes plus the next metrics export (about 60 s), and the alert fires within the
+  rule's evaluation window after that; the last-success reading stops advancing and survives a pod
+  restart, so the alert condition is met within 48 hours of the last successful run plus the same
+  delays (A3-118; H38).
 
 ## Assumptions
 
@@ -723,8 +821,8 @@ matching its attempt's `body_digest`.
   (platform ask 5; row A3-105), so the job needs no grant beyond those V1 needs.
 - **AS-5 — Every pod carries the job.** One image and one to two replicas to start (O-2): every pod's
   trigger fires, which is why the single-runner lock exists.
-- **AS-6 — Daily runs.** The schedule fires once a day. Two months are created ahead, so at least two
-  months of missed runs pass before a body lands in DEFAULT.
+- **AS-6 — Daily runs.** The schedule fires once a day. Three months are created ahead (H37), so at least
+  three months of missed runs pass before a body lands in DEFAULT.
 - **AS-7 — The DEFAULT delete counts as `drop`.** The step set is closed (`lock`, `create`, `drop`;
   §10.1). The delete of DEFAULT rows older than the cut-off is part of the purge, so its failure is
   counted `drop` and pages like a failed removal: bodies past the retention are being kept.
@@ -771,19 +869,17 @@ matching its attempt's `body_digest`.
   every failure (§10.2; constitution Principle VI) and counts the job's failures by step only
   (§10.1); it names no causes. FR-003-017 closes the set so that "sanitised" can be tested. The
   cause is a log field, not a metric label: `step` stays the failure counter's only label. The
-  database's own error text stays out of every line at INFO or above because PostgreSQL's error
-  detail can quote a failing row, a body included; FR-003-024 keeps any part of a body out of every
+  database's own error text stays out of every line at every level (A3-119) because PostgreSQL's
+  error detail can quote a failing row, a body included; FR-003-024 keeps any part of a body out of every
   line at every level.
-- **AS-15 — Resolved, 2026-10-22 (was: a job that does not run is not noticed by the service, as
-  designed).** The design's signals all come from a run (A3-64; §10.1), so without a change a job
-  that never runs — no pod up at the scheduled time, a valid schedule that never fires, a fault in
-  the scheduler — would count no failure and change no gauge, and only the pod holding the lock would
-  ever set the DEFAULT gauge. Open question 2 asked the design owner whether to leave this as
-  designed or close it; it is now closed (option C and D combined, slice 003 clarification,
-  2026-10-22; see Clarifications): the DEFAULT gauge is read independently of the lock and of whether
-  the job has ever run (FR-003-031), and a new last-successful-run age gauge pages before the
-  create-ahead buffer would otherwise hide the problem for up to two months (FR-003-032). Slice 006's
-  alert set is built against both signals.
+- **AS-15 — A job that does not run is noticed (A3-118; was open question 2).** Originally every
+  signal of the job came from a run, so a job that never ran counted no failure and changed no gauge,
+  and with two replicas the pod that skipped kept a stale DEFAULT reading. The design owner answered
+  on 2026-10-23 (A3-118): the months ahead and the DEFAULT row count are read from the database
+  whenever the metrics are collected, on every pod, lock or not (FR-003-022, FR-003-031), and so is
+  the end of the last run with no failure, kept in the database (H38; FR-003-032). Slice 006's rule
+  fires below two months ahead (H37), after 48 hours without a successful run, on a failed read
+  (`-1`) or on a missing sample (FR-003-023).
 
 ## Dependencies
 
@@ -799,9 +895,10 @@ matching its attempt's `body_digest`.
   2026-10-21), a plain `DROP` of each expired month, so V1 is unchanged and keeps
   `outbound_body_default` (A3-63; 002's FR-002-054 and Assumptions).
 - **Slice 006-production-readiness.** The §10.3 alert rule "Body partition maintenance", its routing
-  and owner, and the dashboard; the alert links this slice's recovery procedure, and pages on the new
-  last-successful-run age gauge as well as the DEFAULT row count (FR-003-031, FR-003-032; open
-  question 2 resolved). Its SIT → STE replay reads `outbound_body` well within the retention (H21).
+  and owner, and the dashboard; the alert links this slice's recovery procedure. Every pod reports the
+  same three body readings, so the rule reads the latest sample, treating `-1` and a missing sample
+  as alerting (A3-118; H38; AS-15). The rules are Azure Monitor log search alerts on `customMetrics`, created by
+  DevOps on a ticket and emailed to the Resulting Assistant team (H36). Its SIT → STE replay reads `outbound_body` well within the retention (H21).
 - **Slices 004-recovery and 005-operations-api.** No build dependency. Investigations of what was
   sent read `outbound_body` within the window this slice enforces (§4.8, the dead-letter runbook).
   The documented recovery of FR-003-028 uses pause-intake and resume-intake (§4.8 action 4; AS-9),
@@ -811,8 +908,9 @@ matching its attempt's `body_digest`.
 - **Slice 001-parity-kernel.** None.
 - **External.** Platform ask 5: the service's own database, owned by its role, on PostgreSQL ≥ 13 for
   V1's trigger (15 confirmed, row A3-105). The data owner and the DPIA, informed that bodies are held
-  about six months and then removed (row A3-65; a note, not a gate). Open questions 1 and 2 are both
-  answered (H35; FR-003-011. Slice 003 clarification, 2026-10-22; FR-003-031, FR-003-032).
+  about six months and then removed (row A3-65; a note, not a gate). Both open questions are answered
+  (H35, FR-003-011; A3-118, AS-15). The App Insights resource per environment (Q29, H36) decides
+  where slice 006's rule reads the signals.
 
 ## Out of Scope
 
@@ -845,7 +943,7 @@ matching its attempt's `body_digest`.
 | Slice 003 clarification, 2026-10-22 | Option C and D combined for open question 2: the DEFAULT gauge is read independently of the lock and of whether the job has ever run; a new age gauge for time since the job's last successful completion pages at ~2 days, catching a stopped job before the create-ahead buffer would otherwise hide it for up to two months (answers open question 2; resolves AS-15) | FR-003-022, FR-003-031, FR-003-032; SC-003-014; AS-15 |
 | A3-60 | Bodies never logged and never in a metric | FR-003-024; SC-003-009 |
 | A3-63 | Monthly partitions on UTC bounds, the DEFAULT partition, V1's three months; an in-place re-run replaces the body; "digest ⇒ body" is not a constraint | FR-003-006, FR-003-010, FR-003-013; Edge cases |
-| A3-64 | The job: schedule, single runner, creation ahead "if absent", removal, counts, the DEFAULT alert and the recovery step; every signal comes from a run | FR-003-001, FR-003-002, FR-003-003, FR-003-006, FR-003-007, FR-003-009, FR-003-014, FR-003-015, FR-003-018, FR-003-020, FR-003-021, FR-003-022, FR-003-025, FR-003-026, FR-003-028; AS-13, AS-15 |
+| A3-64 | The job: schedule, single runner, creation ahead "if absent", removal, counts, the DEFAULT alert and the recovery step; the counters and log lines come from a run, the gauges from collection (A3-118) | FR-003-001, FR-003-002, FR-003-003, FR-003-006, FR-003-007, FR-003-009, FR-003-014, FR-003-015, FR-003-018, FR-003-020, FR-003-021, FR-003-022, FR-003-025, FR-003-026, FR-003-028; AS-13 |
 | A3-64 (a) | The cut-off in UTC; bounds read from the catalogue, never the name (the drop rule); the scheduler's zone UTC | FR-003-005, FR-003-009, FR-003-010; SC-003-010 |
 | A3-64 (b) | Lock timeout 5 s; a failed statement retried on the next run; removal by a plain `DROP` in its own short transaction, as amended by H35 (the concurrent detach then drop it first prescribed is refused while the DEFAULT partition exists) | FR-003-011, FR-003-012, FR-003-016, FR-003-017; SC-003-006, SC-003-013; AS-13 |
 | A3-64 (c) | DEFAULT rows older than the cut-off deleted; the alert fires while any remain | FR-003-014, FR-003-022 |
@@ -854,14 +952,19 @@ matching its attempt's `body_digest`.
 | A3-98, A3-99 | The sizing floor's figures; no further measurement | SC-003-012; AS-11 |
 | A3-105 | PostgreSQL 15; the database owned by the service's role; the PostgreSQL 13 fallback not needed for the version (H35 makes the plain `DROP` the removal on every version) | FR-003-008, FR-003-011; AS-3, AS-4 |
 | A3-115 | The alert set, "body partition maintenance" kept | FR-003-023 |
+| A3-118 | Partitions not being created are alerted: months ahead, DEFAULT rows and last success read at collection on every pod, `-1` on a failed read; alert on too few months ahead or > 48 h without success (answers open question 2) | FR-003-022, FR-003-023, FR-003-031, FR-003-032; SC-003-015; AS-15 |
+| A3-119 | Start, skip and summary log lines; the months-ahead WARNs; `sqlState` on the ERROR line | FR-003-017, FR-003-020, FR-003-024, FR-003-030; SC-003-014 |
+| H36 | Meters exported by the App Insights agent to `customMetrics`; alerts are Azure Monitor rules by DevOps ticket, emailed to the Resulting Assistant team | FR-003-031; Dependencies |
+| H37 | Three months kept ahead (V1 unchanged); WARN at the start below two and at the end below three; the ahead alert below two | FR-003-006, FR-003-023, FR-003-027, FR-003-030; SC-003-003, SC-003-014; AS-6 |
+| H38 | The last successful run kept in a one-row table, created and seeded by this slice's Flyway `V2`; V1 unchanged | FR-003-032; SC-003-015 |
 | §4.1, §4.7 | One image, no batch job, one in-service scheduled task | FR-003-001 |
 | §4.6, Appendix B.2 | The database clock is the time authority; V1's partition names and bounds, and its creation of a month only if its name is absent (002's FR-002-054) | FR-003-005, FR-003-006, FR-003-007 |
 | §4.8 | Pause and resume act on intake; the six-month window for investigations; the DEFAULT recovery | FR-003-004, FR-003-015, FR-003-028 |
 | §8.1 | `distribution.body-retention` and `distribution.body-maintenance.cron`, with their startup checks | FR-003-001, FR-003-025, FR-003-026, FR-003-027; SC-003-011 |
 | §8.4 ask 5 | The database owned by the service's role | FR-003-008; AS-4 |
-| §10.1 | The four `probation_body_*` metrics; a skipped run is not a failure | FR-003-002, FR-003-003, FR-003-017, FR-003-020, FR-003-021, FR-003-022; AS-15 |
-| §10.2 | Every failure path emits a sanitised ERROR line and a metric; the stored body is never logged | FR-003-017, FR-003-024; SC-003-008, SC-003-009; AS-14 |
-| §10.3 | The "Body partition maintenance" alert condition, extended by the slice 003 clarification of 2026-10-22 to page on the last-successful-run age as well as the DEFAULT row count | FR-003-023, FR-003-031, FR-003-032; AS-15 |
+| §10.1 | The six `probation_body_*` metrics; a skipped run is not a failure | FR-003-002, FR-003-003, FR-003-017, FR-003-020, FR-003-021, FR-003-022, FR-003-031, FR-003-032; AS-15 |
+| §10.2 | Every failure path emits a sanitised ERROR line and a metric; the stored body is never logged; the job's run lines (A3-119) | FR-003-017, FR-003-020, FR-003-024, FR-003-030; SC-003-008, SC-003-009, SC-003-014; AS-14 |
+| §10.3 | The "Body partition maintenance" alert condition, extended by A3-118 and H37 | FR-003-023; SC-003-015; AS-15 |
 | Appendix A | Environment variable names proposed, not bound | FR-003-027; AS-2 |
 | DV-09 | No payload or defendant data in logs | FR-003-024 |
 | DIGEST §6, §13 | Readiness is the store only | FR-003-019 |

@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Baseline | Design rev 3.6 (draft, 2026-10-20), decisions H1–H35 (H35 decided 2026-10-21). Frozen for this repo until a later amendment. |
+| Baseline | Design rev 3.6 (draft, 2026-10-20), decisions H1–H38 (H35 decided 2026-10-21; H36–H38 and rows A3-118, A3-119 on 2026-10-23). Frozen for this repo until a later amendment. |
 | Source of truth | [Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service) (Confluence) |
 | How to use | Rules only; the reasoning is on Confluence. Where this digest differs from the design, the design wins. A Confluence section that still predates a rev 3.6 decision (H1–H34) or H35 does not override that decision: the decision applies, and the difference is raised with the design owner as an open issue (constitution, Governance). |
 | Tags | Ids from the design record: H-n, D-n decisions; A2-n, A3-n, R1-n, R2-n, Q-n, O-n design rows; DV-n deviations; P-n legacy defects; R0–R12 HMPPS rules; §n and App. A/B are sections of design rev 3.6. The Confluence page states the same design in plain English, without ids. |
@@ -43,7 +43,7 @@
 - Reused from the informant parity pack: the `recorded/` layout with pinned digests, `comparator-vectors/vectors.json`, `JsonParity`, `ParityCase`, and `RegisteredFieldDeviations` keyed on `doc/DEVIATIONS.md` (§6.1).
 - Before cutover: one week of SIT events is replayed into STE against a stub gateway. STE's `outbound_body` is compared hearing by hearing with SIT's logged bodies; any unexplained difference blocks cutover (A3-68, §6.5).
 
-## 3. Decisions H1–H35
+## 3. Decisions H1–H38
 
 | Id | Rule |
 |---|---|
@@ -82,6 +82,9 @@
 | H33 | Application-only 400s are counted daily (`shape="application-only"`), not alerted. *Generalised by H34.* |
 | H34 | Alerts page only for genuine issues. Known recurring behaviour is counted on the dashboard and in the daily reconciliation. Thresholds are proposals, tuned after go-live (§13). |
 | H35 | An expired `outbound_body` month is removed with a plain `DROP` of its partition, with no `DETACH` (concurrent or not). Each `DROP` runs under `lock_timeout` 5 s in its own short transaction that commits at once; the single-runner advisory lock stays on its own transaction for the whole run. A timed-out `DROP` is retried on the next run. The DEFAULT partition, its alert and its recovery stay; V1 is unchanged (amends A3-64 (b)). |
+| H36 | Nothing scrapes the pods for Prometheus. The App Insights Java agent exports the Micrometer meters to `customMetrics` (about every 60 s). Every alert is an Azure Monitor alert rule, created by hand by DevOps on a ticket with the runbook, and emailed to the Resulting Assistant team. The App Insights resource per environment is decided later (Q29). |
+| H37 | The retention job keeps the current month and the next three (V1 still creates the current month and the next two; the job's first run adds the third). WARN at the start of a run that holds the lock when fewer than 2 months ahead; WARN at the end of a run with no failure when fewer than 3. The ahead alert fires below 2. |
+| H38 | The last successful run of the retention job is kept in a one-row table `body_maintenance_state` (`last_success_at`; names proposed), created and seeded with the migration time by Flyway `V2` (slice 003; V1 unchanged), set by a run that held the lock and had no failure, as the last statement of the advisory lock's transaction, under a savepoint, after the removals have committed and the fresh end reads: `clock_timestamp()` (not `now()`), exactly one row; it commits with the lock's transaction, so a failed commit records no success. A failed update, or a failed fresh read for the WARNs and summary (A3-119), is logged at ERROR with step `state` / `read`, counts in the summary's `failed`, leaves `last_success_at` unchanged, and is not counted on `probation_body_maintenance_failures_total` (its `step` set stays closed); the 48-hour condition alerts it. |
 
 **Other decisions in force**
 - D1: lift and shift. Rules and payload are copied verbatim; delivery and reliability defects are fixed by construction, each as a numbered DV with its own test.
@@ -410,7 +413,7 @@ Flyway `V1__create_processed_log.sql` creates three tables and one view. The dat
 | `created_at` | timestamptz NN, default `now()` |
 
 - PK `(outbound_message_id, created_at)`; `PARTITION BY RANGE (created_at)`.
-- Monthly partitions `outbound_body_YYYY_MM` on UTC month bounds, plus `outbound_body_default`. V1 creates the current month and the next two.
+- Monthly partitions `outbound_body_YYYY_MM` on UTC month bounds, plus `outbound_body_default`. V1 creates the current month and the next two; the job keeps three ahead (H37). Flyway `V2` (slice 003) adds the one-row `body_maintenance_state` (H38).
 - Trigger `outbound_body_digest_trg` (`BEFORE INSERT OR UPDATE`, per row): refuses a body if the parent's `body_digest` is NULL or differs from `encode(sha256(convert_to(body, 'UTF8')), 'hex')`. A missing parent is left to the FK.
 - A body row exists only for an attempt with a `body_digest`. It is written after the outcome UPDATE, in the same transaction.
 - An in-place re-run deletes the earlier body row and inserts the new one in the same transaction. "The body" is the latest row by `created_at`.
@@ -421,11 +424,14 @@ Flyway `V1__create_processed_log.sql` creates three tables and one view. The dat
 - `outbound_body` is maintained daily on `distribution.body-maintenance.cron`, with the scheduler zone UTC; not `pg_cron`.
 - Single runner: `pg_try_advisory_xact_lock` on a fixed key, its transaction open on its own for the whole run (H35). A pod that does not get the lock skips the run; that is not a failure.
 - Each run:
-  - pre-creates the current month's partition and the next two;
+  - pre-creates the current month's partition and the next three (H37);
   - drops each partition whose upper bound ≤ `date_trunc('month', (now() AT TIME ZONE 'UTC') - retention)` (the bound is read from the catalogue, never parsed from the name) with a plain `DROP`, each in its own short transaction that commits at once, never the lock's (H35);
   - deletes DEFAULT rows older than the cut-off;
   - runs each DDL under `lock_timeout` 5 s, retrying on the next run;
-  - counts creates, drops and failures, and gauges the DEFAULT row count.
+  - counts creates, drops and failures, and gauges the DEFAULT row count;
+  - sets `body_maintenance_state.last_success_at` to its end time when no statement failed (H38);
+  - logs a start line (or a skip line, without the lock); with the lock, a WARN if the months ahead, read fresh from the catalogue, are < 2 at its start, one summary line with fresh counts, and a WARN if it ends with no failure and < 3 months ahead (A3-119, H37).
+- Read from the database whenever the metrics are collected (cached 5 min), on every pod, lock or not: the months ahead (consecutive whole months after the current UTC month with a partition), the DEFAULT row count and `last_success_at` (A3-118, H38). A failed read reports `-1` and is not cached.
 - Partitions are created, and so owned, by the service role.
 - PostgreSQL ≥ 13 for the trigger; the platform runs 15 (A3-105). The plain `DROP` (H35) needs no later version.
 - DEFAULT non-empty → alert. Runbook: detach DEFAULT, create the month, move the rows, re-attach.
@@ -623,7 +629,9 @@ Label values come only from the closed sets below. A label never carries a heari
 | `probation_resend_refusals_total` | counter | `reason` ∈ unknown-request / not-eligible / resend-in-progress / request-claimed |
 | `probation_body_partitions_created_total`, `probation_body_partitions_dropped_total` | counter | — |
 | `probation_body_maintenance_failures_total` | counter | `step` ∈ lock / create / drop |
-| `probation_body_default_partition_rows` | gauge | — |
+| `probation_body_default_partition_rows` | gauge | — (read at collection, every pod; `-1` on a failed read; A3-118) |
+| `probation_body_partitions_ahead_months` *(proposed)* | gauge | — (consecutive whole months after the current UTC month with a partition, normally 3; read at collection, every pod; `-1` on a failed read; A3-118, H37) |
+| `probation_body_maintenance_last_success_seconds` *(proposed)* | gauge | — (`body_maintenance_state.last_success_at`, epoch s; read at collection, every pod; `-1` on a failed read; H38) |
 | `probation_gateway_non200_success_total` | counter | `status` ∈ 201 / 202 / 204 / other |
 | `probation_gateway_recovered_total` *(proposed)* | counter | `after` ∈ 429-in-run / 5xx-redelivery; counted when it happens |
 | `probation_crash_reruns_total` *(proposed)* | counter | `leg`; a redelivery that re-runs a `PENDING` attempt-1 row with an expired request claim; a `PARKED` re-run is not counted (slice 002 clarification, 2026-10-21) |
@@ -643,6 +651,7 @@ Not built: `probation_contract_violations_total` (H13). DLQ depth comes from the
   - `youth_switch`, and the cause on a defaulted read.
 - A defaulted switch read and a non-200 2xx are logged at WARN.
 - Every failure path writes a sanitised ERROR line and a metric.
+- Body-maintenance job (A3-119; names proposed): INFO `body-maintenance run started` on every trigger; INFO `body-maintenance run skipped` without the lock; with the lock, a WARN when `monthsAhead` < 2 at its start, one INFO `body-maintenance run finished` with `created`, `dropped`, `failed`, `monthsAhead`, `defaultRows`, `durationMs`, and a WARN when a run with no failure ends with `monthsAhead` < 3 (H37) — the months ahead and DEFAULT rows read fresh, never from the metrics cache; each failed statement's ERROR line carries step, month, cause and `sqlState` (the 5-character code, or `unavailable`). The database's own error text is never logged, at any level.
 - The privacy tests are copied from the sibling repos: `TelemetryPrivacyTest` and `LogStatementSweepTest`.
 
 **Alerts (page)** — every alert reads all origins (R1-31)
@@ -657,9 +666,11 @@ Not built: `probation_contract_violations_total` (H13). DLQ depth comes from the
 | Repeated 401s | `probation_leg_outcomes_total{reason="receiver-rejected", http="401"}` | > 3 in an hour (proposal) |
 | Send re-run after a crash | `probation_crash_reruns_total` | Any increase; record it for HMPPS |
 | Case-hearing 400 spike | daily `probation_leg_outcomes_total{reason="receiver-rejected", http="400", shape="case"}` | > 2 × the normal daily level (proposal) |
-| Body partition maintenance | `probation_body_default_partition_rows`; `probation_body_maintenance_failures_total` | DEFAULT non-empty, or any create or drop failure |
+| Body partition maintenance | `probation_body_default_partition_rows`; `probation_body_maintenance_failures_total`; `probation_body_partitions_ahead_months`; `probation_body_maintenance_last_success_seconds` | DEFAULT non-empty, any create or drop failure, months ahead < 2 (H37), no successful run for > 48 h, any pod reporting `-1`, or any gauge with no sample in the window — each pod's latest sample first (proposals; A3-118, H38) |
 | Results switch unreadable | results' `probation_flag_read_failures_total` | Any increase |
 | Legacy app active after cutover | The legacy function app's telemetry for the environment: HMPPS send lines and the orchestration-start trace (§9.5 row 9) | Any count > 0 after cutover. Scheduled query every 15 min over 15 min (proposal). Lapses at decommissioning |
+
+**Delivery (H36)**: the DLQ alert is an Azure Monitor metric alert on `DeadletteredMessages`; the legacy-app and results-switch alerts are log search alerts on their own telemetry; every other alert is a log search alert on the service's `customMetrics`. Rules by DevOps ticket with the runbook; email to the Resulting Assistant team. Check the metric names as the agent exports them in SIT before writing the rules (Q29).
 
 **Counted, not paged** (dashboard and daily reconciliation; A3-116)
 - application-only 400s (`shape="application-only"`);
@@ -755,6 +766,7 @@ Operations only: rows 2, 8 and 22. G1 is parked; the other rows are closed or an
 - A3-75: the "legacy app active" alert query is proposed, not designed; telemetry resources for environments other than SIT and PRD are not established.
 - A3-89: the timeout of results' `FeatureControlGuard` call (results side).
 - P36 / §10.3: whether counting 400s instead of paging satisfies the legacy alert-on-failure ticket.
+- Q29 (H36): the App Insights resource the service reports to in each environment (`APPLICATIONINSIGHTS_CONNECTION_STRING`), which fixes where the alert rules are created; and the metric names as the agent exports them.
 - H5: business confirmation that VEP is not needed.
 - A3-56: where a normal (unforced) resend's free-text reason is recorded is not stated. A forced resend's goes to `audit_note`.
 - §4.4: where the body-retention job sits in the package tree. The scaffold keeps the `outbound_body` writes in `persistence` behind `OutboundLog`; the first spec that needs the job places it.

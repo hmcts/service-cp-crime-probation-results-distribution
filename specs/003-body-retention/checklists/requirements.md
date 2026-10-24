@@ -7,8 +7,8 @@
 ## Content Quality
 
 - [x] No implementation details (languages, frameworks, APIs) — the spec names what the design fixes
-      for this job (A3-64; H35): the two properties, the four `probation_body_*` metrics and their
-      `step` label, V1's partition names and bounds, and the PostgreSQL mechanisms the design
+      for this job (A3-64; H35): the two properties, the six `probation_body_*` metrics and their
+      `step` label, the one-row maintenance-state table (H38), V1's partition names and bounds, and the PostgreSQL mechanisms the design
       prescribes (a transaction-scoped advisory lock, a lock timeout, partition bounds read from the
       catalogue, a plain `DROP` of an expired partition in its own transaction). The design's SQL is
       quoted only where the design is cited (the Clarifications and open question 1), and the slice
@@ -33,13 +33,9 @@
       states it.
 
       Open question 2 — how a job that never runs, or a DEFAULT reading left stale on the pod that
-      skipped, is noticed — was never a marker (the slice could be planned while it was open), and is
-      now answered too: option C and D combined (slice 003 clarification, 2026-10-22), closing
-      assumption AS-15. FR-003-031 adds the independently-read DEFAULT gauge and FR-003-032 adds the
-      new last-successful-run age gauge and its page threshold (deliberately not FR-003-029: that id
-      was allocated and withdrawn in an earlier validation pass — see the notes below — and is not
-      reused). Both questions, with their options,
-      are at the end of this checklist.
+      skipped, is noticed — was never a marker, and was answered by the design owner on 2026-10-23
+      (A3-118, with A3-119, H36 and H37): FR-003-022, FR-003-030 … FR-003-032 and AS-15 now state
+      it. Both questions, with their options and answers, are at the end of this checklist.
 
       Twenty-two points were settled in the Clarifications session of 2026-10-21, each with its
       design reference: eighteen answered from the design (the inferred ones say so); one by the
@@ -52,15 +48,16 @@
       check, and a failure's cause is one of a closed set (FR-003-017; AS-14). FR-003-011 states
       the removal H35 decides — a plain `DROP`, committed in its own transaction while the lock's
       transaction stays open, under the lock timeout and retried on the next run — with its failure
-      behaviour (FR-003-012, FR-003-016, FR-003-017); and the gauge's value after a run is stated as
-      designed (FR-003-022), whatever open question 2's answer
+      behaviour (FR-003-012, FR-003-016, FR-003-017); and the three body gauges are read at collection
+      on every pod, with `-1` for a failed read (FR-003-022, FR-003-031, FR-003-032), as open
+      question 2's answer (A3-118, H38) decides
 - [x] Success criteria are measurable — each has a count, a duration, a percentage or a test matrix
-      (SC-003-001 … SC-003-013); SC-003-013's bound is stated for a removal, which commits on its own
+      (SC-003-001 … SC-003-015); SC-003-013's bound is stated for a removal, which commits on its own
       (H35), and for a creation, whichever way the plan arranges it (AS-13)
 - [x] Success criteria are technology-agnostic (no implementation details) — they speak of bodies,
       months, runs, failures and settings; "partition" appears only in SC-003-012, as the unit in
       which a month's storage is read
-- [x] All acceptance scenarios are defined — six stories, 32 Given/When/Then scenarios
+- [x] All acceptance scenarios are defined — six stories, 37 Given/When/Then scenarios
 - [x] Edge cases are identified — 20, including the cut-off on a bound, the turn of the year, a
       non-UTC database session (checked against PostgreSQL 15), clock changes, missed runs, a
       schedule that never fires, which months DEFAULT can hold at all, DEFAULT rows of a current or
@@ -73,7 +70,9 @@
 ## Feature Readiness
 
 - [x] All functional requirements have clear acceptance criteria — each of FR-003-001 … FR-003-028
-      is exercised by a scenario of User Stories 1–6: among them FR-003-007 by User Story 1
+      and FR-003-030 … FR-003-032 (FR-003-029 withdrawn)
+      is exercised by a scenario of User Stories 1–6 — FR-003-030 … FR-003-032 by User Story 4
+      scenarios 6–9: among them FR-003-007 by User Story 1
       scenarios 2 and 4 (a present month left alone; an overlapping creation refused and counted),
       FR-003-011 by User Story 3 scenarios 4 and 7 (a removal that gives up is retried; a removal
       commits on its own while the lock is held, H35), FR-003-015 by User Story 2 scenario 4 (no
@@ -85,7 +84,7 @@
 - [x] Feature meets measurable outcomes defined in Success Criteria — every criterion is an outcome
       of this slice (SC-003-012 reads the storage of the months this slice keeps in their own
       partitions), and they hold under the answer to question 1 (option A, H35, which keeps the
-      DEFAULT partition, so nothing is withdrawn) and under every option of question 2
+      DEFAULT partition, so nothing is withdrawn) and under the answer to question 2 (A3-118, H37, H38)
 - [x] No implementation details leak into specification — as the first item: only what the design
       fixes
 
@@ -172,22 +171,28 @@
     now say that the question is answered and that V1 keeps the DEFAULT partition.
 
   Every item passes; no marker remains.
-- Validation run 5 (2026-10-22, open question 2 answered). Open question 2 was never a marker, but
-  was raised with the design owner and is now answered: option C and D combined, closing AS-15.
-  - FR-003-022 stands unchanged (the gauge set after a run's own delete). Two new requirements are
-    added, not reusing the withdrawn FR-003-029: FR-003-031 (the DEFAULT row count read and the
-    gauge set independently of the lock and of whether the job has ever run, on the normal
-    metrics-collection cycle) and FR-003-032 (a new age gauge for time since the job's last
-    successful completion, paging at about two days).
-  - SC-003-014 is added, exercising both new requirements with the job prevented from completing a
-    run.
-  - User Story 4 gains two acceptance scenarios (6 and 7) for the new signals; the two Edge Cases
-    that previously said a job which never runs is "unnoticed by the service, as designed" are
-    corrected to say the age gauge now pages at about two days regardless.
-  - AS-15 is rewritten as resolved rather than carried; the Dependencies section (slice 006) and the
-    Design traceability table (a new row for this session; the §10.3 row extended) follow it.
+- Validation run 5 (2026-10-23, open question 2 answered; A3-118, A3-119, H36, H37). The spec was
+  updated to match:
+  - FR-003-022 reads the DEFAULT row count at collection on every pod; new FR-003-031 (months ahead,
+    read at collection) and FR-003-032 (last success, per pod), registered by this slice; FR-003-023
+    adds the two alert conditions; AS-15 is rewritten as answered.
+  - FR-003-017 adds `sqlState`; FR-003-020 adds the start, skip and summary lines; FR-003-024 widens
+    the allowed fields; new FR-003-030, the two months-ahead WARNs (start below two, end below
+    three). FR-003-029 stays withdrawn and is not reused.
+  - H37: three months kept ahead — FR-003-006, FR-003-027, SC-003-003, User Story 1 (independent
+    test and scenarios 1–3), User Story 6, the edge cases and AS-6. V1 (002's FR-002-054) is
+    unchanged; the job's first run adds the third month.
+  - User Story 4 scenarios 6–9, SC-003-014, SC-003-015, a Clarifications session, the Input line,
+    Dependencies and the traceability table (rows A3-118, A3-119, H36, H37) follow.
+  - An independent review then found that a per-pod last-success value is lost on a restart and has
+    none at first deployment: H38 keeps it in a one-row table created and seeded by this slice's
+    Flyway `V2` (FR-003-032; V1 unchanged; slice 002 has no `V2`). Also from that review: a failed
+    gauge read reports `-1` and is not cached; the WARNs and the summary read the catalogue fresh,
+    not the metrics cache; the database's error text is never logged at any level and `sqlState` is
+    `unavailable` when the driver gives none; "months ahead" is consecutive months everywhere;
+    SC-003-015 states the cache, export and evaluation delays.
 
-  Every item passes; no marker remains, and no question is left open for the design owner.
+  Every item passes; no marker remains.
 - This spec was written directly in `specs/003-body-retention/`. `.specify/feature.json` does not
   point at it; a developer starting the feature branches `003-body-retention` from `main` (or sets
   `feature.json`) before running `/speckit-plan`.
@@ -199,9 +204,8 @@ Two points could not be answered from the design, and both went to the design ow
 blocked FR-003-011; the design owner answered it on 2026-10-21 with option A, recorded in the
 design as H35, and FR-003-011 now states it. Option C, which would have removed the DEFAULT
 partition and changed V1 in slice 002 (002's FR-002-054), was not chosen: V1 is unchanged.
-Question 2 was not a marker — the slice could be planned while it was open, and the outcomes
-FR-003-022 and FR-003-023 held under every option — but it is now answered too: option C and D
-combined (slice 003 clarification, 2026-10-22), closing AS-15. FR-003-031 and FR-003-032 state it.
+Question 2 was never a marker; the design owner answered it on 2026-10-23 (A3-118, H37, H38), and
+FR-003-022, FR-003-023, FR-003-031, FR-003-032 and AS-15 now state it.
 
 ### Question 1: How is an expired month removed? (FR-003-011; answered, H35)
 
@@ -267,8 +271,9 @@ lock, and whether a run that is overdue should be signalled.
 | D | B or C, plus a new signal of when the last run completed, alerted when it is more than about two days old | Closes the gap. A new metric and a new alert: a change to design §10.1 and §10.3 |
 | Custom | Another mechanism | Stated by the design owner |
 
-**Your choice**: C and D combined (slice 003 clarification, 2026-10-22) — the DEFAULT row count is
-read independently of the lock and of whether the job has ever run, on the normal metrics-collection
-cycle; and a new gauge of the time since the job's last successful completion pages at about two
-days, so a stopped job is caught well before the create-ahead buffer would otherwise hide it for up
-to two months. Applied in FR-003-022, FR-003-031, FR-003-032; SC-003-014.
+**Your choice**: Custom, close to D (A3-118, 2026-10-23) — the months ahead (a new gauge) and the
+DEFAULT row count are read from the database whenever the metrics are collected, on every pod, lock
+or not (cached 5 minutes), and so is the end of the last run with no failure, kept in a one-row
+table created by this slice's Flyway `V2` (H38); a failed read reports `-1`; the alert also fires on too few months ahead (fewer than
+two, H37, with three kept ahead) or more than 48 hours without a successful run. A3-119 adds the run
+log lines; H36 says how the alerts are delivered.

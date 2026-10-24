@@ -8,7 +8,7 @@ SIT → STE replay proof against a stub gateway, the alert rules and dashboards 
 the go/no-go evidence, the cutover and rollback runbook inputs, the 'both paths' alert and the
 decommissioning list; the results producer change and platform provisioning are external
 preconditions." Written against design rev 3.6 (decisions H1–H34; §6.4–§6.5, §9.2–§9.6,
-§10.1–§10.4, §11) and `doc/design/DIGEST.md` §2 (quality gate), §13 (observability), §14 (producer
+§10.1–§10.4, §11), amended on 2026-10-23 by H36–H38 and row A3-118, and `doc/design/DIGEST.md` §2 (quality gate), §13 (observability), §14 (producer
 contract), §15 (platform prerequisites and go-live gates) and §16 (open items). Where the two
 differ, the design wins.
 
@@ -112,6 +112,29 @@ So every ordering rule prefers a known gap that can be repaired to a duplicate a
 - Q: Do production baselines and figures go into this repository? → A: No. Thresholds are
   proposals, tuned after go-live and set per environment. The repository is public and holds no
   environment-specific values (H34; the repository's public-repository rule).
+
+### Session 2026-10-23
+
+The design owner decided H36 (how the alerts are delivered), H37 (three months ahead) and H38 (the
+body-retention job's last success kept in the database), with row A3-118 (alerting when partitions
+are not being created). Slice 003 answers its open question 2 with them (003's AS-15).
+
+- Q: What is alert 9's condition now? → A: The DEFAULT partition not empty; any `create` or `drop`
+  failure; fewer than two consecutive months ahead with a partition (H37: three are kept); more than
+  48 hours since the last successful run (H38); any pod reporting `-1` (a failed database read); or a
+  body gauge with no sample in the window. Every pod reads the three body gauges from the database,
+  so the rule reads each pod's latest sample before it aggregates (A3-118). Applied in alert 9,
+  FR-006-018 and FR-006-053.
+- Q: How are the alerts delivered? → A: H36. Nothing scrapes the pods; the App Insights Java agent
+  exports the service's meters to `customMetrics`. Every alert is an Azure Monitor alert rule: a
+  metric alert on `DeadletteredMessages` for alert 1, log search alerts for the rest. Applied in
+  FR-006-019 and FR-006-053.
+- Q: Who creates the rules, and where do they go? → A: H36. DevOps create them by hand on a ticket,
+  with the runbook, as for the switches; they email the owning team, the Resulting Assistant team
+  (H31), through an action group. The address lives on the ticket, not in this public repository.
+  Applied in FR-006-014, assumptions 3 and 7, and Dependencies.
+- Q: Which App Insights resource does the service report to? → A: Not decided (Q29). The catalogue
+  names it as an input of each rule. Applied in FR-006-053 and the open items.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -300,6 +323,15 @@ it.
    evaluates, **Then** it fires, until Q28 decides otherwise.
 7. **Given** a rule that names a metric or a label value the service does not emit, **When** the
    catalogue test runs, **Then** the test fails.
+8. **Given** fewer than two consecutive months ahead with a partition, **When** alert 9 evaluates,
+   **Then** it pages; with three or two ahead, and every other alert-9 condition healthy, it does
+   not (A3-118; H37).
+9. **Given** one pod reporting `-1` for a body gauge while another reports a healthy value, or no
+   sample of a body gauge in the window, **When** alert 9 evaluates, **Then** it pages, because each
+   pod's latest sample is read first and missing data is not healthy (A3-118).
+10. **Given** more than 48 hours since the last successful body-maintenance run, **When** alert 9
+    evaluates, **Then** it pages; **and given** only skipped runs within those 48 hours, after a
+    successful one, **Then** it does not (H38).
 
 ---
 
@@ -544,11 +576,14 @@ and check each item of §9.6 row 1 against its source.
 - **FR-006-014**: The repository MUST hold one alert catalogue that lists exactly the eleven paging
   alerts below, which are the alerts of design §10.3 as H34 amends it. For each alert the catalogue
   gives: its backing series and the bounded label values it selects; its condition and evaluation
-  window; whether its threshold is a design proposal, tuned after go-live; its routing (open;
-  owner: the owning team, A3-111); its runbook entry; and when it lapses. The catalogue is the
+  window; whether its threshold is a design proposal, tuned after go-live; its Azure Monitor rule
+  type (FR-006-053); its routing (email to the owning team, the Resulting Assistant team, through an
+  action group; H36, H31, A3-111); its runbook entry; and when it lapses. DevOps create the rules by
+  hand on a ticket, with the runbook (H36): the catalogue and the rule definitions are this
+  repository's input to that ticket. The catalogue is the
   complete list of paging alerts this service asks the platform to deploy, and the operations
   reference states that no other alert is requested, 005's proposed operations-failure counter
-  included (FR-006-022). *(H34; A3-115; §10.3; R1-18; H31; A3-111)*
+  included (FR-006-022). *(H34; A3-115; §10.3; R1-18; H31; A3-111; H36)*
 
 | # | Alert | Backing series | Condition | Runbook entry (from the design) | Design ids |
 |---|---|---|---|---|---|
@@ -560,7 +595,7 @@ and check each item of §9.6 row 1 against its source.
 | 6 | Repeated 401s | `probation_leg_outcomes_total{reason="receiver-rejected", http="401"}` | > 3 in an hour (proposal) | The gateway is refusing the service's credentials. A 401 is terminal at once | H34; A3-115 |
 | 7 | Send re-run after a crash | `probation_crash_reruns_total` | Any increase | A possible duplicate at HMPPS: record the hearing for HMPPS | A3-115; A3-47 |
 | 8 | Case-hearing 400 spike | daily increase of `probation_leg_outcomes_total{reason="receiver-rejected", http="400", shape="case"}` | > 2 × the environment's normal daily level (proposal) | The daily count itself is counted, not paged (FR-006-022) | H34; A3-116 |
-| 9 | Body partition maintenance | `probation_body_default_partition_rows` (003's FR-003-022/031); `probation_body_maintenance_failures_total{step}`; `probation_body_job_last_success_age_seconds` (003's FR-003-032) | DEFAULT partition not empty, any `create` or `drop` failure, or last-success age above about two days. Both gauges are read independently at scrape time; age is process-local, so final cross-replica aggregation is settled here | [003's runbook](../../doc/operations/body-partition-maintenance.md): pause and drain intake, detach DEFAULT, create the missing month, move its rows, re-attach, verify and resume | H20; H35; A3-64; 003 clarification 2026-10-22 (C+D) |
+| 9 | Body partition maintenance | `probation_body_default_partition_rows` (003's FR-003-022), `probation_body_partitions_ahead_months` (FR-003-031), `probation_body_maintenance_last_success_seconds` (FR-003-032) — all three read from the database at collection on every pod, `-1` on a failed read; `probation_body_maintenance_failures_total{step}` | DEFAULT partition not empty; any `create` or `drop` failure; fewer than 2 consecutive months ahead (H37); more than 48 h since the last success (H38); any pod reporting `-1`; or a body gauge with no sample in the window. Evaluated hourly over 2 h, each pod's latest sample first (proposals) | 003's runbook: for a DEFAULT spill, detach the DEFAULT partition, create the missing month, move its rows, re-attach; for partitions not being created, check the scheduler and the advisory lock, wait for the next run, or create the missing month by hand with V1's name and bounds; for `-1`, check the database connection. The ERROR lines give the cause (003's FR-003-017; FR-003-032 for a `state` or `read` failure), and the run lines show whether the job ran (FR-003-020, FR-003-030) | H20; A3-64; A3-118; H37; H38; 003's AS-15 |
 | 10 | Results switch unreadable | results' `probation_flag_read_failures_total` (the producer change) | Any increase | After cutover, each failed read is a share on neither path. Reconcile, and repair with submit-hearing while the `EXT_` payload is still in Redis | H26; A3-71; A3-89 |
 | 11 | Legacy function app active after cutover | The legacy function app's telemetry for the environment: HMPPS send lines and the orchestration-start trace | Any count > 0 after cutover; a query every 15 min over 15 min (proposal) | A "both": check the legacy subscription's filter and set it back to `TOGGLED-OFF`. Lapses at decommissioning | A3-75; §9.5 row 9 |
 
@@ -578,15 +613,20 @@ and check each item of §9.6 row 1 against its source.
   §9.4 step 7)*
 - **FR-006-018**: The thresholds the design marks as proposals MUST be parameters of their rules.
   They are: more than three 401s in an hour; a day's case-hearing 400s above double the normal
-  daily level; and the 15-minute schedule of the legacy-app query. The normal daily level is set
+  daily level; the 15-minute schedule of the legacy-app query; and alert 9's fewer than two months
+  ahead, its 48 hours since the last success, and its hourly evaluation over 2 hours (A3-118, H37,
+  H38). The normal daily level is set
   for each environment from that environment's observed baseline. No production figure is written
-  into this repository. *(H34; A3-115; A3-116; A3-75)*
+  into this repository. *(H34; A3-115; A3-116; A3-75; A3-118)*
 - **FR-006-019**: Every service series that an alert or a dashboard panel reads MUST be one the
   service emits, and the label values the rule selects MUST come from the bounded sets of design
   §10.1. A test MUST prove this; inspection is not enough. A series the service does not emit MUST
   be named with its owner. There are three: the dead-letter count (Azure Monitor's
   `DeadletteredMessages`), results' `probation_flag_read_failures_total` (the producer change) and
-  the legacy function app's telemetry. *(§10.1; §10.3; R1-18; Principle VII)*
+  the legacy function app's telemetry. The service's series reach Azure as App Insights
+  `customMetrics` through the Java agent (H36); the names the rules use MUST be the names the agent
+  exports, checked in SIT before the rules are written (Q29). *(§10.1; §10.3; R1-18; Principle VII;
+  H36)*
 - **FR-006-020**: The legacy-app-active alert MUST count, in the legacy function app's telemetry
   for the environment, the HMPPS send lines and the orchestration-start trace since cutover. It
   MUST page on any count above zero after cutover. Its query is proposed, not designed: a
@@ -597,6 +637,15 @@ and check each item of §9.6 row 1 against its source.
   runbook are deployed. A design is not enough. Whether counting 400s instead of paging on them
   satisfies the legacy alert-on-failure ticket MUST be recorded as a question for that ticket's
   owner, not answered here. *(P36; §10.3; R1-18; H34)*
+- **FR-006-053**: Each alert definition MUST name its Azure Monitor rule type: a metric alert on the
+  Service Bus `DeadletteredMessages` metric for alert 1; log search alerts for the others — over the
+  legacy function app's telemetry for alert 11, results' telemetry for alert 10, and the service's
+  `customMetrics` for the rest. On `customMetrics` a counter arrives as per-interval values, so a
+  counter condition sums them over the rule's window. Alert 9's three body gauges MUST be read as
+  each pod's latest sample before aggregating, so that a failed read on one pod is not hidden by
+  another pod's healthy sample, and alert 9 MUST page when one of them has no sample in its window. The App
+  Insights resource each environment reports to is open (Q29): the catalogue names it as an input
+  of each rule, never as a value. *(H36; A3-118; H38; §10.3)*
 
 **Counted, not paged**
 
@@ -884,7 +933,7 @@ and check each item of §9.6 row 1 against its source.
   when it matches no current difference or share.
 - **Alert definition**: one of the eleven paging alerts. It holds the backing series and the
   bounded labels it selects, its condition and window, the status of its threshold (fixed, or a
-  proposal), its routing, its runbook entry and its lapse.
+  proposal), its Azure Monitor rule type, its routing, its runbook entry and its lapse.
 - **Counted signal**: one of the five known-issue classes. It holds its series and labels, and its
   place on the dashboard and in the daily reconciliation.
 - **Daily reconciliation**: one day's comparison of results' shares, the requests received and
@@ -910,7 +959,7 @@ and check each item of §9.6 row 1 against its source.
 - **SC-006-003**: Zero input values appear in any report or evidence output of this slice. A sweep for
   sentinel values planted in every seeded payload and body finds none of them.
 - **SC-006-004**: The alert catalogue holds all 11 paging alerts of design §10.3 as H34 amends it, each
-  with its series, condition, runbook entry and routing status. None of the 5 counted classes
+  with its series, condition, rule type, runbook entry and routing (email to the owning team, H36). None of the 5 counted classes
   pages.
 - **SC-006-005**: There are no dead alerts. A test shows that the service emits every service series
   and label value that an alert or a dashboard panel names.
@@ -943,8 +992,8 @@ and check each item of §9.6 row 1 against its source.
    corpus controls, and this slice commits none of them.
 3. **Alerting is deployed outside this repository.** The alert rules, the dashboards and the
    legacy-app query are deployed through the platform's monitoring. This repository holds their
-   catalogue and definitions, and the plan chooses their machine-readable form. Where the platform
-   keeps rule definitions is not established (platform team).
+   catalogue and definitions, and the plan chooses their machine-readable form. DevOps create the
+   rules by hand on a ticket, with the runbook, not in infrastructure code (H36).
 4. **The normal daily level is set per environment.** The level behind the spike in case-hearing
    400s is set from each environment's observed baseline, and tuned after go-live. No production
    baseline is written here.
@@ -955,7 +1004,7 @@ and check each item of §9.6 row 1 against its source.
    is watched. The design makes it a post-soak criterion (§9.6 row 1), not a §9.2 row, and this
    spec adds no gate.
 7. **The owning team owns** the replay and its report, the alert routing and the daily
-   reconciliation (H31; A3-111).
+   reconciliation (H31; A3-111). The alerts email the Resulting Assistant team (H36).
 8. **Names the design marks as proposed are used as proposed.** These include
    `probation_crash_reruns_total`, `probation_gateway_recovered_total`, the `shape` and `http`
    labels, `probation_flag_read_failures_total` and `RequestIdRecipe`.
@@ -976,11 +1025,11 @@ and check each item of §9.6 row 1 against its source.
 - **002-hmpps-distribution**: V1 (the tables and the view that the queries read), every metric and
   log line that the alerts and panels read (H34), readiness on the store only, the startup log line
   of the youth default, and the attempt rows that rows 1, 7 and 9 read.
-- **003-body-retention**: the body-maintenance signals behind alert 9, the DEFAULT-partition gauge
-  among them (FR-003-022/031), the last-success age gauge (FR-003-032), and the
-  [DEFAULT recovery runbook](../../doc/operations/body-partition-maintenance.md). The 2026-10-22
-  clarification resolved open question 2 with independent scrape-time gauges (C+D). This slice
-  settles cross-replica aggregation for the process-local age signal.
+- **003-body-retention**: the body-maintenance signals behind alert 9 — the DEFAULT-partition,
+  months-ahead and last-success gauges, read from the database on every pod (FR-003-022,
+  FR-003-031, FR-003-032), the last success kept in `body_maintenance_state` by 003's Flyway `V2`
+  (H38), and the failure counter — the run log lines (FR-003-020, FR-003-030), and the runbook for
+  the DEFAULT partition. 003's open question 2 is answered (A3-118; its AS-15).
 - **004-recovery**: the command-line runners (FR-004-042, FR-004-043) for the actions the runbook
   inputs use: pause and resume intake (FR-004-051), purge-queue (FR-004-053), replay (FR-004-014),
   submit-hearing (FR-004-054) and the request listing; replay of a request closed
@@ -1044,8 +1093,9 @@ and check each item of §9.6 row 1 against its source.
 - Ask 15: DevOps rights to change the legacy subscription's filter, by hand, on the cutover ticket.
 - Ask 16: the service's own system user. A static-data patch adds it with the system-users role,
   and its id is held in Key Vault. The patch is re-applied after every STE rebuild.
-- The deployment of the alerting and the dashboards, with the routing the owning team sets (open,
-  A3-111; P36).
+- The deployment of the alerting and the dashboards: Azure Monitor rules created by DevOps by hand
+  on a ticket, with the runbook, emailing the Resulting Assistant team through an action group (H36;
+  A3-111; P36), on the App Insights resource each environment reports to (Q29).
 - For the replay: an STE stack with the service deployed; a stub gateway that answers 200 over
   https; STE's network policy, which stops egress to HMPPS; and STE's `EMYouthFilter` feature
   permission in users-groups, reading inactive, in place again with the service's system user after
@@ -1109,11 +1159,9 @@ gate; H18).
   supported execution path runs it (DIGEST §16). The design owner places one (004 raises the
   question, FR-004-049). Once it is placed, the cross-spec pass records which slice builds it, and
   FR-006-040's inputs name it.
-- **The alert routing (§10.3; A3-111)**: open, with the owning team as its owner (FR-006-014).
-- **003's open question 2** (003's assumption AS-15): how a job that does not run, or a stale
-  DEFAULT-partition reading, is noticed, and so how alert 9 combines the pods' readings. Until the
-  design owner answers, the design's default stands: the pod that runs sets the gauge
-  (FR-003-022).
+- **Q29 (H36)**: the App Insights resource the service reports to in each environment
+  (`APPLICATIONINSIGHTS_CONNECTION_STRING`), which fixes where DevOps create the rules, and the metric
+  names as the agent exports them (FR-006-019, FR-006-053).
 - **Q20 and D9**: the landing order of the results branch chains, whether the helper is shared or
   forked, and taking the vector again.
 - **§11.3**: which header, if any, carries a gateway request id. This is known after the row-9 test
@@ -1157,6 +1205,7 @@ gate; H18).
 | §10.4; A2-49 | FR-006-023 – FR-006-030 |
 | H12 | FR-006-029, FR-006-031, FR-006-032 |
 | H31; A3-111; A3-112; O-3 | FR-006-013, FR-006-014, FR-006-028, FR-006-047 |
+| H36; H37; H38; A3-118 | FR-006-014, FR-006-018, FR-006-019, FR-006-053 |
 | §9.2; §9.5; DIGEST §15; A2-10; A2-32 | FR-006-031, FR-006-032, FR-006-035, FR-006-038 |
 | A3-107; A3-108; A3-109 | FR-006-031 |
 | Q13 | FR-006-032 (row 12) |
