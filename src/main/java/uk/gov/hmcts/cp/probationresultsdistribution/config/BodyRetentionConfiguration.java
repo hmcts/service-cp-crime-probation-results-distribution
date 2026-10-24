@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.support.TransactionTemplate;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.BodyMaintenanceStateRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.BodyRetentionJob;
 import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.DatabaseClock;
 import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.MaintenanceMetrics;
@@ -44,18 +45,29 @@ public class BodyRetentionConfiguration {
     }
 
     /* default */ @Bean
+    BodyMaintenanceStateRepository bodyMaintenanceStateRepository(final JdbcClient jdbc,
+                                                                  final DataSource source) {
+        return new BodyMaintenanceStateRepository(jdbc,
+                new TransactionTemplate(new DataSourceTransactionManager(source)));
+    }
+
+    /* default */ @Bean
     MaintenanceMetrics bodyMaintenanceMetrics(final MeterRegistry registry,
-                                              final PartitionMaintenanceRepository repository) {
-        return new MaintenanceMetrics(registry, repository);
+                                              final PartitionMaintenanceRepository repository,
+                                              final PartitionCatalogue catalogue,
+                                              final DatabaseClock clock,
+                                              final BodyMaintenanceStateRepository stateRepository) {
+        return new MaintenanceMetrics(registry, repository, catalogue, clock, stateRepository);
     }
 
     /* default */ @Bean
     BodyRetentionJob bodyRetentionJob(final BodyRetentionProperties properties,
                                       final DatabaseClock clock, final PartitionCatalogue catalogue,
                                       final PartitionMaintenanceRepository repository,
-                                      final DataSource source, final MaintenanceMetrics metrics) {
+                                      final DataSource source, final MaintenanceMetrics metrics,
+                                      final BodyMaintenanceStateRepository stateRepository) {
         new StartupValidator().validateBodyRetention(properties);
         return new BodyRetentionJob(clock, catalogue, repository, properties.bodyRetention(),
-                () -> new SingleRunnerLock(source), metrics);
+                () -> new SingleRunnerLock(source), metrics, stateRepository);
     }
 }

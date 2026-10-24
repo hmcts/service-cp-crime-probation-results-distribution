@@ -34,7 +34,7 @@ class MaintenancePrivacyTest {
         when(clock.nowUtc()).thenReturn(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC));
         final BodyRetentionJob job = new BodyRetentionJob(clock, catalogue,
                 mock(PartitionMaintenanceRepository.class), java.time.Period.ofMonths(6),
-                () -> lock, mock(MaintenanceMetrics.class));
+                () -> lock, mock(MaintenanceMetrics.class), mock(BodyMaintenanceStateRepository.class));
 
         assertThatThrownBy(job::run).hasNoCause().hasMessageNotContaining("synthetic-body-marker");
         org.mockito.Mockito.verify(lock).release(false);

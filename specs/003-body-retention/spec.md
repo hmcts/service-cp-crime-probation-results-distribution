@@ -652,19 +652,6 @@ matching its attempt's `body_digest`.
   reading of `-1` (a failed read), or on a gauge with no sample in the rule's window (thresholds
   proposed, A3-118), and a skipped run MUST NOT be able to trigger it. Whether a `lock` failure pages is the alert rule's (assumption AS-8); the rule
   and its routing are slice 006's. *(§10.3; H34; A3-115)*
-- **FR-003-031**: `probation_body_default_partition_rows` MUST also be read and set independently of
-  a run: on the service's normal metrics-collection cycle, whether or not a run is in progress, holds
-  the lock, or has ever run. This read MUST only count rows; it MUST NOT delete, move or otherwise
-  change any row, and MUST NOT take the single-runner lock. Every pod's reading of the gauge MUST
-  therefore agree, and a reading MUST NOT go stale because the job itself has stopped running.
-  *(Resolves open question 2, AS-15; slice 003 clarification, 2026-10-22)*
-- **FR-003-032**: The service MUST publish a gauge of the time elapsed since the job's last
-  successfully completed run (a run that held the lock and finished its last statement without
-  itself failing to complete, whatever statements inside it failed and were counted). The §10.3 alert
-  set MUST page when this age exceeds a threshold of approximately two days, independently of
-  FR-003-023's conditions, so that a job which has stopped running is noticed before the create-ahead
-  buffer is exhausted and a body spills into DEFAULT, not only after. *(Resolves open question 2,
-  AS-15; slice 003 clarification, 2026-10-22)*
 - **FR-003-024**: The job MUST NOT put any part of a stored body in a log line, at any level, in a
   metric label or in an exception message. Its log lines carry partition names, months, counts,
   steps, durations, the causes and `sqlState` of FR-003-017 and the fields of FR-003-020 only. *(H18; A3-60; DV-09; §10.2; constitution Principle VII)*
@@ -940,7 +927,6 @@ matching its attempt's `body_digest`.
 | H28 | The sizing floor: at least ~24 KB a body on average, ~100 MB a day, ~20 GB held; the real figure from partition sizes after go-live | SC-003-012; AS-11 |
 | H34 | Body-retention failures page; known issues are counted | FR-003-023 |
 | H35 | An expired month removed by a plain `DROP`, each in its own short transaction under the 5 s lock timeout; the advisory lock on its own transaction for the whole run; a timed-out `DROP` retried on the next run; the DEFAULT partition, its alert and its recovery kept; V1 unchanged (answers open question 1; amends A3-64 (b)) | FR-003-002, FR-003-011, FR-003-012, FR-003-016, FR-003-017; SC-003-013; AS-13 |
-| Slice 003 clarification, 2026-10-22 | Option C and D combined for open question 2: the DEFAULT gauge is read independently of the lock and of whether the job has ever run; a new age gauge for time since the job's last successful completion pages at ~2 days, catching a stopped job before the create-ahead buffer would otherwise hide it for up to two months (answers open question 2; resolves AS-15) | FR-003-022, FR-003-031, FR-003-032; SC-003-014; AS-15 |
 | A3-60 | Bodies never logged and never in a metric | FR-003-024; SC-003-009 |
 | A3-63 | Monthly partitions on UTC bounds, the DEFAULT partition, V1's three months; an in-place re-run replaces the body; "digest ⇒ body" is not a constraint | FR-003-006, FR-003-010, FR-003-013; Edge cases |
 | A3-64 | The job: schedule, single runner, creation ahead "if absent", removal, counts, the DEFAULT alert and the recovery step; the counters and log lines come from a run, the gauges from collection (A3-118) | FR-003-001, FR-003-002, FR-003-003, FR-003-006, FR-003-007, FR-003-009, FR-003-014, FR-003-015, FR-003-018, FR-003-020, FR-003-021, FR-003-022, FR-003-025, FR-003-026, FR-003-028; AS-13 |

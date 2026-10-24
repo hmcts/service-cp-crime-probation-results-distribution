@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -18,14 +19,22 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.SchemaTestSuppor
 @DisplayName("the DEFAULT-partition row gauge")
 class DefaultPartitionGaugeIT extends SchemaTestSupport {
 
+    private static final Duration TEST_CACHE_TTL = Duration.ofMillis(200);
+
     private final PartitionMaintenanceRepository repository = new PartitionMaintenanceRepository(
             jdbc(), new TransactionTemplate(new DataSourceTransactionManager(datasource())));
+    private final PartitionCatalogue catalogue = new PartitionCatalogue(jdbc(),
+            new TransactionTemplate(new DataSourceTransactionManager(datasource())));
+    private final BodyMaintenanceStateRepository stateRepository = new BodyMaintenanceStateRepository(
+            jdbc(), new TransactionTemplate(new DataSourceTransactionManager(datasource())));
+    private final DatabaseClock clock = new DatabaseClock(jdbc());
 
     @Test
-    @DisplayName("reflects the database's current count immediately, with no run in progress, never taking the lock")
-    void reflects_the_current_count_with_no_run_in_progress() {
+    @DisplayName("reflects the database's current count with no run in progress, never taking the lock, and is not read every scrape")
+    void reflects_the_current_count_within_its_cache_window() throws InterruptedException {
         final SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        new MaintenanceMetrics(registry, repository);
+        new MaintenanceMetrics(registry, repository, catalogue,
+                clock, stateRepository, TEST_CACHE_TTL);
 
         final double before = registry.get("probation_body_default_partition_rows").gauge().value();
 
@@ -34,11 +43,34 @@ class DefaultPartitionGaugeIT extends SchemaTestSupport {
         assertThat(lock.tryAcquire()).isTrue();
         try {
             insertDefaultRow(OffsetDateTime.now(ZoneOffset.UTC).plusYears(5));
-            final double after = registry.get("probation_body_default_partition_rows").gauge().value();
-            assertThat(after).isEqualTo(before + 1.0);
+            final double stillCached =
+                    registry.get("probation_body_default_partition_rows").gauge().value();
+            assertThat(stillCached).isEqualTo(before);
+
+            Thread.sleep(TEST_CACHE_TTL.plusMillis(100).toMillis());
+            final double afterTtl = registry.get("probation_body_default_partition_rows").gauge().value();
+            assertThat(afterTtl).isEqualTo(before + 1.0);
         } finally {
             lock.release(false);
         }
+    }
+
+    @Test
+    @DisplayName("reports -1 on a failed read, without caching the failure")
+    void reports_minus_one_on_a_failed_read_without_caching_it() {
+        final SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        final PartitionMaintenanceRepository failing =
+                org.mockito.Mockito.mock(PartitionMaintenanceRepository.class);
+        org.mockito.Mockito.when(failing.countDefaultRows()).thenThrow(
+                new PartitionMaintenanceException(
+                        uk.gov.hmcts.cp.probationresultsdistribution.domain.MaintenanceFailureCause
+                                .LOCK_TIMEOUT, "count", null))
+                .thenReturn(3L);
+        new MaintenanceMetrics(registry, failing, catalogue, clock,
+                stateRepository, TEST_CACHE_TTL);
+
+        assertThat(registry.get("probation_body_default_partition_rows").gauge().value()).isEqualTo(-1.0);
+        assertThat(registry.get("probation_body_default_partition_rows").gauge().value()).isEqualTo(3.0);
     }
 
     private void insertDefaultRow(final OffsetDateTime createdAt) {

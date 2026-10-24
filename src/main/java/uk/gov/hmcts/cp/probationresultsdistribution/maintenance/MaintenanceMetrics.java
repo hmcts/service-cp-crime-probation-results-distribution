@@ -5,16 +5,20 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
 import io.micrometer.core.instrument.Tags;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.concurrent.atomic.AtomicReference;
+import java.time.OffsetDateTime;
+import java.util.Set;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.BodyMaintenanceStep;
 
 /**
- * This slice's own five metrics, registered directly against the raw Micrometer {@link MeterRegistry}
+ * This slice's own six metrics, registered directly against the raw Micrometer {@link MeterRegistry}
  * — never through {@code application.OutcomeMetrics} (research.md "Metrics ownership", 2026-10-22).
- * The names below are duplicated, by value, from {@code config.MetricRegistry.METRIC_NAMES}'s four
- * pre-reserved {@code probation_body_*} entries plus the fifth, new one; a unit test asserts the two
- * catalogues agree, so production code never needs to import {@code config}.
+ * The three counter names below are duplicated, by value, from {@code config.MetricRegistry}'s
+ * pre-reserved {@code probation_body_*} entries; the three gauges — the DEFAULT-row count, the
+ * consecutive months ahead and the last-success instant in epoch seconds — are this slice's own
+ * (A3-118; H36; H38), read from the database whenever the metrics are collected, on every pod, lock
+ * or not, at most five minutes old (a cached read); a failed read reports {@code -1} and is never
+ * cached (FR-003-022, FR-003-031, FR-003-032). A unit test asserts the counter names agree with
+ * {@code config.MetricRegistry.METRIC_NAMES}, so production code never needs to import {@code config}.
  */
 public final class MaintenanceMetrics {
 
@@ -22,33 +26,55 @@ public final class MaintenanceMetrics {
     private static final String PARTITIONS_DROPPED_M = "probation_body_partitions_dropped_total";
     private static final String MAINTENANCE_FAILURES_M = "probation_body_maintenance_failures_total";
     private static final String DEFAULT_ROWS_M = "probation_body_default_partition_rows";
-    private static final String LAST_SUCCESS_AGE_M = "probation_body_job_last_success_age_seconds";
+    private static final String MONTHS_AHEAD_M = "probation_body_partitions_ahead_months";
+    private static final String LAST_SUCCESS_SECONDS_M =
+            "probation_body_maintenance_last_success_seconds";
     private static final String TAG_STEP = "step";
+    private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(5);
 
     /**
      * Every metric name this class owns, for the sync-check test against
      * {@code config.MetricRegistry.METRIC_NAMES}.
      */
-    public static final java.util.Set<String> METRIC_NAMES = java.util.Set.of(PARTITIONS_CREATED_M,
-            PARTITIONS_DROPPED_M, MAINTENANCE_FAILURES_M, DEFAULT_ROWS_M, LAST_SUCCESS_AGE_M);
+    public static final Set<String> METRIC_NAMES = Set.of(PARTITIONS_CREATED_M, PARTITIONS_DROPPED_M,
+            MAINTENANCE_FAILURES_M, DEFAULT_ROWS_M, MONTHS_AHEAD_M, LAST_SUCCESS_SECONDS_M);
 
     private final MeterRegistry registry;
-    private final AtomicReference<Instant> lastSuccess =
-            new AtomicReference<>(Instant.EPOCH);
 
     /**
-     * Creates and registers this slice's metrics.
+     * Creates and registers this slice's metrics, with the production five-minute cache TTL.
      *
-     * @param registry   the Micrometer registry to register against
-     * @param repository the repository the DEFAULT-rows gauge reads live, at every scrape
+     * @param registry         the Micrometer registry to register against
+     * @param repository       the repository the DEFAULT-rows gauge reads
+     * @param catalogue        the catalogue the months-ahead gauge reads
+     * @param clock            the database clock the months-ahead gauge's "current month" is taken from
+     * @param stateRepository  the repository the last-success gauge reads
      */
     public MaintenanceMetrics(final MeterRegistry registry,
-                              final PartitionMaintenanceRepository repository) {
+                              final PartitionMaintenanceRepository repository,
+                              final PartitionCatalogue catalogue, final DatabaseClock clock,
+                              final BodyMaintenanceStateRepository stateRepository) {
+        this(registry, repository, catalogue, clock, stateRepository, DEFAULT_CACHE_TTL);
+    }
+
+    // Package-private: lets this slice's own tests prove the five-minute caching behaviour (both
+    // "stays cached within the window" and "refreshes once it elapses") without a real five-minute
+    // wait, by substituting a short TTL. Production always uses the public constructor above.
+    /* default */ MaintenanceMetrics(final MeterRegistry registry,
+                                     final PartitionMaintenanceRepository repository,
+                                     final PartitionCatalogue catalogue, final DatabaseClock clock,
+                                     final BodyMaintenanceStateRepository stateRepository,
+                                     final Duration cacheTtl) {
         this.registry = registry;
-        Gauge.builder(DEFAULT_ROWS_M, repository, MaintenanceMetrics::safeDefaultRowCount)
-                .register(registry);
-        Gauge.builder(LAST_SUCCESS_AGE_M, lastSuccess,
-                        ref -> Duration.between(ref.get(), Instant.now()).toSeconds())
+        final CachedGaugeRead defaultRows =
+                new CachedGaugeRead(repository::countDefaultRows, cacheTtl);
+        final CachedGaugeRead monthsAhead = new CachedGaugeRead(
+                () -> catalogue.monthsAhead(currentMonthStart(clock.nowUtc())), cacheTtl);
+        final CachedGaugeRead lastSuccessSeconds = new CachedGaugeRead(
+                () -> stateRepository.lastSuccessAt().toEpochSecond(), cacheTtl);
+        Gauge.builder(DEFAULT_ROWS_M, defaultRows, CachedGaugeRead::value).register(registry);
+        Gauge.builder(MONTHS_AHEAD_M, monthsAhead, CachedGaugeRead::value).register(registry);
+        Gauge.builder(LAST_SUCCESS_SECONDS_M, lastSuccessSeconds, CachedGaugeRead::value)
                 .register(registry);
     }
 
@@ -67,7 +93,9 @@ public final class MaintenanceMetrics {
     }
 
     /**
-     * Counts one maintenance failure under its step (FR-003-021).
+     * Counts one maintenance failure under its step (FR-003-021). The step set stays closed to
+     * {@code lock}, {@code create} and {@code drop}: a {@code state} or {@code read} failure
+     * (FR-003-032) is logged and summarised but never reaches this counter.
      *
      * @param step the bounded step the failure is counted under
      */
@@ -76,24 +104,7 @@ public final class MaintenanceMetrics {
                 .increment();
     }
 
-    /**
-     * Records a run reaching its final commit, resetting the last-success-age gauge to (effectively)
-     * zero from this instant on.
-     *
-     * @param when the instant the run committed
-     */
-    public void recordSuccess(final Instant when) {
-        lastSuccess.set(when);
-    }
-
-    // A Micrometer value function must never throw: a lock-timeout or a lost connection on this
-    // live read would otherwise fail the whole scrape, not just this one series (FR-003-031).
-    @SuppressWarnings({"PMD.AvoidCatchingGenericException", "PMD.OnlyOneReturn"})
-    private static double safeDefaultRowCount(final PartitionMaintenanceRepository repository) {
-        try {
-            return repository.countDefaultRows();
-        } catch (final RuntimeException e) {
-            return Double.NaN;
-        }
+    private static OffsetDateTime currentMonthStart(final OffsetDateTime now) {
+        return now.withDayOfMonth(1).withHour(0).withMinute(0).withSecond(0).withNano(0);
     }
 }

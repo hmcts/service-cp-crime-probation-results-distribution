@@ -7,8 +7,8 @@
 
 A single daily scheduled job keeps `outbound_body` (partitioned by 002's V1 migration) supplied with
 somewhere to put each new body and clear of bodies past their retention. Every run first makes sure
-the current UTC month and the next two each have a partition (creating any that is missing, V1's
-naming and bounds, refusing and logging `partition-overlap` rather than clobbering a same-ranged
+the current UTC month and the next three each have a partition (H37; creating any that is missing,
+V1's naming and bounds, refusing and logging `partition-overlap` rather than clobbering a same-ranged
 partition under another name), then removes each whole partition whose month ends on or before the
 cut-off (`distribution.body-retention` months before the current UTC month) and deletes stranded
 `DEFAULT`-partition rows older than that same cut-off — `body_digest` and `service_version` stay on
@@ -17,14 +17,18 @@ and touches no leg, message or settlement — it is infrastructure maintenance o
 already writes. A single-runner advisory lock (`pg_try_advisory_xact_lock`) serialises concurrent
 pods; each creation or removal is a plain `CREATE`/`DROP` in its own short transaction, never the
 lock's; partition bounds are read from the PostgreSQL catalogue, never parsed from a name. Per the
-2026-10-22 clarification (Option C+D), the job also publishes two signals independent of whether it
-has ever run or is currently running: a continuously-updated gauge of `DEFAULT`-partition row count
-(`probation_body_default_partition_rows`, satisfied today by `BodyMaintenanceMetrics` from slice 002
-but re-scoped here to run on its own collection cycle, not only inside a job run) and a new gauge of
-time elapsed since the job's last successful completion
-(`probation_body_job_last_success_age_seconds`), alerted at ~2 days regardless of whether any row has
-ever reached `DEFAULT` — so a job that stops running is visible even when the misrouting symptom
-(FR-003-023) hasn't yet appeared.
+design owner's 2026-10-23 answer to open question 2 (A3-118, H36–H38), the job also publishes three
+signals independent of whether it has ever run or is currently running, each a database read cached
+for five minutes on every pod: the `DEFAULT`-partition row count
+(`probation_body_default_partition_rows`), the consecutive whole months ahead with a partition
+(`probation_body_partitions_ahead_months`), and the epoch-second timestamp of the job's last
+no-failure completion (`probation_body_maintenance_last_success_seconds`, kept in a new one-row table,
+`body_maintenance_state`, created and seeded by this slice's Flyway `V2`). A failed read reports `-1`
+and is never cached. The alert pages below two months ahead or after 48 hours without success,
+regardless of whether any row has yet reached `DEFAULT` — so a job that stops running is visible even
+when the misrouting symptom (FR-003-023) hasn't yet appeared. Each trigger, skip and finished run also
+leaves its own start/skip/summary log line, and every failure's ERROR line carries a `sqlState`
+(A3-119).
 
 ## Technical Context
 
@@ -35,9 +39,9 @@ through the existing `TaskScheduler`; `JdbcClient` and a raw `DataSource` connec
 lock (see Research, "Lock and transaction strategy"); Micrometer (`MeterRegistry`, already wired by
 `config`) for the job's gauges and counters — no new external library
 **Storage**: PostgreSQL 15 (production's version, row A3-105) — the existing `outbound_body` table and
-its monthly + `DEFAULT` partitions from `V1__create_processed_log.sql`; this slice adds no new table,
-only partition DDL executed at runtime and one Flyway migration if a maintenance-run audit column or
-index proves necessary during implementation (see Research)
+its monthly + `DEFAULT` partitions from `V1__create_processed_log.sql` (unchanged); this slice's own
+Flyway `V2` adds exactly one new table, the one-row `body_maintenance_state` (H38), plus the partition
+DDL it executes at runtime against `outbound_body`
 **Testing**: JUnit 5 + Mockito + AssertJ; Testcontainers (`PostgreSQLContainer`) for `BodyRetentionJobIT`
 (AS-12) exercising real partition CREATE/DROP against a throwaway schema; no Service Bus or Redis
 involvement — this feature has no queue, cache or gateway dependency
@@ -128,14 +132,20 @@ src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/
 │   ├── PartitionMaintenanceRepository.java # the short, separately-transacted DDL/DML statements:
 │   │                                        CREATE a missing month's partition, DROP an expired
 │   │                                        one, DELETE stranded DEFAULT rows, COUNT DEFAULT rows
-│   ├── MaintenanceMetrics.java             # owns all five of this slice's own metrics directly
+│   ├── BodyMaintenanceStateRepository.java # NEW (H38, FR-003-032) — body_maintenance_state's one
+│   │                                        row: an independent read for the last-success gauge,
+│   │                                        and the one statement that MUST run on the
+│   │                                        single-runner lock's own connection, under a savepoint
+│   ├── CachedGaugeRead.java                # NEW (A3-118) — a small five-minute-TTL cache wrapping
+│   │                                        a database read; -1 and no caching on a failed read
+│   ├── MaintenanceMetrics.java             # owns all six of this slice's own metrics directly
 │   │                                        against the raw Micrometer MeterRegistry — NOT through
 │   │                                        application/OutcomeMetrics (see research.md "Metrics
 │   │                                        ownership", 2026-10-22 update). Three counters
 │   │                                        (created/dropped/failures) incremented by
-│   │                                        BodyRetentionJob; two function-gauges (DEFAULT rows,
-│   │                                        last-success age) computed live at Micrometer scrape
-│   │                                        time — no separate @Scheduled collector needed
+│   │                                        BodyRetentionJob; three CachedGaugeRead-backed gauges
+│   │                                        (DEFAULT rows, months ahead, last-success seconds) —
+│   │                                        no separate @Scheduled collector needed
 │   ├── MaintenanceRunOutcome.java          # record: per-step results, for logging/metrics only —
 │   │                                        no table rows (the design's "three tables and one view"
 │   │                                        in persistence/ is unchanged by this slice)
@@ -158,14 +168,21 @@ src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/
 ├── maintenance/
 │   ├── BodyRetentionJobTest.java               # unit, plain mocks, no Spring context (Principle V)
 │   ├── BodyRetentionJobIT.java                 # Testcontainers Postgres — AS-12
+│   ├── BodyRetentionCalendarIT.java            # the 14-month simulated calendar (SC-003-001/002)
+│   ├── BodyRetentionIsolationIT.java           # controlled lock/transaction races
 │   ├── BodyRetentionRecoveryIT.java            # the User Story 6 DEFAULT-spill recovery procedure
+│   ├── BodyRetentionJobSignalLinesTest.java    # NEW (A3-119, H37) — start/skip/summary lines and
+│   │                                             the months-ahead start/end WARNs
 │   ├── DatabaseClockIT.java                    # Testcontainers Postgres
 │   ├── SingleRunnerLockIT.java                 # Testcontainers Postgres
 │   ├── PartitionCatalogueIT.java               # Testcontainers Postgres
 │   ├── PartitionMaintenanceRepositoryIT.java   # Testcontainers Postgres
+│   ├── BodyMaintenanceStateRepositoryIT.java   # NEW (H38) — Testcontainers Postgres
+│   ├── BodyMaintenanceStateRepositoryTest.java # NEW (H38) — unit, the savepoint/rollback path
 │   ├── MaintenanceRunOutcomeTest.java          # unit
-│   ├── DefaultPartitionGaugeIT.java            # Testcontainers Postgres
-│   ├── LastSuccessAgeGaugeTest.java            # unit
+│   ├── DefaultPartitionGaugeIT.java            # Testcontainers Postgres — five-minute cache + -1
+│   ├── MaintenanceCachedGaugesTest.java        # NEW (A3-118) — months-ahead/last-success gauges,
+│   │                                             the -1 sentinel, and the TTL cache behaviour
 │   └── MaintenancePrivacyTest.java             # reused pattern from 002's LogStatementSweepTest
 └── config/
     └── BodyRetentionPropertiesTest.java        # unit — the retention/cron validation matrix

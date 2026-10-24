@@ -29,7 +29,7 @@ class BodyRetentionIsolationIT extends MaintenanceTestStore {
     private static final String CREATE_STEP = "create";
     private static final String DROP_STEP = "drop";
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
-    private final MaintenanceMetrics metrics = new MaintenanceMetrics(registry, repository);
+    private final MaintenanceMetrics metrics = metrics(registry, NOW);
 
     @Test
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
@@ -164,6 +164,6 @@ class BodyRetentionIsolationIT extends MaintenanceTestStore {
         final DatabaseClock clock = org.mockito.Mockito.mock(DatabaseClock.class);
         org.mockito.Mockito.when(clock.nowUtc()).thenReturn(NOW);
         return new BodyRetentionJob(clock, selectedCatalogue, selectedRepository, Period.ofMonths(6),
-                () -> new SingleRunnerLock(source), metrics);
+                () -> new SingleRunnerLock(source), metrics, stateRepository);
     }
 }

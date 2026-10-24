@@ -196,6 +196,115 @@ rather than picking a side. Not pushed anywhere — local to this branch.
 
 ---
 
+## Phase 10: Rework for H36–H38 / A3-118 / A3-119 (2026-10-24)
+
+**Why**: `origin/main` carried the spec forward, past T001–T045's implementation, to the design
+owner's 2026-10-23 answer to open question 2 (A3-118, A3-119) and three new decisions (H36 alert
+delivery, H37 three months ahead, H38 the last-success state table), superseding the 2026-10-22
+"Option C+D" gauge design T028–T034 built against. This phase brings the code in line with the
+merged spec: no new user story, a correction of Phase 3's and Phase 6's prior work.
+
+- [x] T046 Add Flyway `V2__create_body_maintenance_state.sql`: the one-row `body_maintenance_state`
+  table (`last_success_at timestamptz NOT NULL`), seeded with the migration time; V1 unchanged (H38)
+- [x] T047 Implement `maintenance/BodyMaintenanceStateRepository.java`: an independent
+  `lastSuccessAt()` read (for the gauge) and `recordSuccessOnConnection(Connection)`, which MUST run
+  on the single-runner lock's own connection under a savepoint — not `PartitionMaintenanceRepository`'s
+  REQUIRES_NEW pattern — so a run's success commits together with the lock that computed it
+  (FR-003-032); `BodyMaintenanceStateRepositoryTest` (unit, savepoint/rollback) and
+  `BodyMaintenanceStateRepositoryIT` (Testcontainers) pin both paths
+- [x] T048 Add `SingleRunnerLock.heldConnection()`, exposing the lock's own connection for T047's
+  statement only (documented exception to "never share this connection")
+- [x] T049 Change the create-ahead window from the current month + two to the current month + three
+  (H37) in `BodyRetentionJob`; add `PartitionCatalogue.monthsAhead(OffsetDateTime)` (instance, one
+  catalogue read) and its pure static form over an already-read partition list, shared by the job's
+  start-of-run check and `MaintenanceMetrics`' independent gauge
+- [x] T050 Add `sqlState` to `PartitionMaintenanceException` (extracted from the SQLException found in
+  the cause chain, or `unavailable`), and carry it on every ERROR line (`BodyRetentionJob`,
+  `BodyMaintenanceStateRepository`) per A3-119; extend `MaintenanceSignalsTest` to assert it
+- [x] T051 Add the A3-119 log lines to `BodyRetentionJob`: one INFO start line on every trigger, one
+  INFO skip line when the lock is not acquired, one INFO summary line (`created`, `dropped`,
+  `failed`, `monthsAhead`, `defaultRows`, `durationMs`) on a run that held it; a start WARN below two
+  whole months ahead and an end WARN below three with no failure, both reading the catalogue fresh,
+  never the metrics cache (H37); a `state`/`read` failure (T047's update, or a fresh end-of-run read)
+  is logged and summarised but never counted on `probation_body_maintenance_failures_total`
+  (FR-003-021's step set stays closed) — pinned by the new `BodyRetentionJobSignalLinesTest`
+- [x] T052 Rework `MaintenanceMetrics`: remove the old in-process `recordSuccess`/last-success-age
+  gauge; add `CachedGaugeRead` (a five-minute-TTL cache over a database read, `-1` and no caching on
+  failure — a short TTL is injectable package-private for tests) and two new gauges,
+  `probation_body_partitions_ahead_months` and `probation_body_maintenance_last_success_seconds`
+  (epoch seconds, read from `BodyMaintenanceStateRepository`); `probation_body_default_partition_rows`
+  moves onto the same cached-read path. `MaintenanceMetrics.METRIC_NAMES` grows from five to six.
+  Renamed/rewritten `MaintenanceCachedGaugesTest` (was `LastSuccessAgeGaugeTest`) and rewritten
+  `DefaultPartitionGaugeIT` pin the cache window and the `-1` sentinel
+- [x] T053 Wire the new `BodyMaintenanceStateRepository` bean through `BodyRetentionConfiguration`
+  into both `MaintenanceMetrics` and `BodyRetentionJob`; add it to the `@MockitoBean` lists in
+  `ServiceBusReadinessIT` and `TestProfileContextTest` alongside the other maintenance beans
+- [x] T054 Update every test call site for the widened `BodyRetentionJob`/`MaintenanceMetrics`
+  constructors (`BodyRetentionJobTest`, `BodyRetentionJobLogLineTest`, `MaintenanceSignalsTest`,
+  `MaintenancePrivacyTest`, `MaintenanceTestStore` and its users); fix the window-dependent fixtures
+  this uncovered (`BodyRetentionCalendarIT`'s DST test now creates the fourth month ahead, not the
+  third)
+- [x] T055 Update `doc/operations/body-partition-maintenance.md`'s series table and signal
+  description for A3-118/A3-119/H36–H38 (the runbook's recovery SQL itself is unchanged: V1's schema
+  and the advisory lock key are untouched by this rework); update `data-model.md` and `plan.md` for
+  the new `body_maintenance_state` table, the three-months-ahead window and the six-metric set
+- [x] T056 Run `./gradlew build` (full suite + Checkstyle + PMD + JaCoCo) and fix any gate failure —
+  green: fixed a Mockito strict-stubbing gap in two new tests (missing `lenient()` on a
+  single-month `createPartition` stub, now one of four months tried under the widened window), a
+  `MaintenanceSignalsTest` fixture that left two months missing instead of one under the same
+  widened window, and 12 PMD findings (an unused local, an unnecessary `@SuppressWarnings`, missing
+  `/* default */` comments on three package-private members, four unnecessary numeric casts
+  superseded by method references, a field/method name collision on `PartitionMaintenanceException`
+  — renamed the field, not the public `sqlState()` accessor — the same collision on
+  `SingleRunnerLock` — renamed the method to `heldConnection()` — an `OnlyOneReturn` finding on the
+  new `sqlState`-extraction loop, two mocked-resource `CloseResource` findings in the new repository
+  unit test, two unused-variable findings in the rewritten gauge IT, and one field declared after a
+  method in `MaintenanceTestStore`)
+
+### Review loop — 2026-10-24 (Phase 10)
+
+A code-reviewer / qa / spec-validator pass was run against Phase 10's uncommitted working tree.
+spec-validator: **COMPLIANT** (0 HIGH, 0 MEDIUM; one LOW naming nit on an existing test, not this
+phase's code). code-reviewer: **PASS** (0 HIGH, 2 MEDIUM, 1 LOW), all three fixed:
+
+1. `package-info.java` still described the two-months-ahead window and cited the superseded
+   2026-10-22 session; updated to the three-months-ahead window (H37) and H36–H38/A3-118/A3-119.
+2. The `state`/`read` failure branch of `recordSuccessAndSummarise` (a failed fresh end-of-run read,
+   or a failed `body_maintenance_state` update) had no test. Added three cases to
+   `BodyRetentionJobSignalLinesTest`: a failed months-ahead read, a failed DEFAULT-rows read, and a
+   failed state update — each asserting the `step=state`/`step=read` ERROR line with its `sqlState`,
+   the inflated summary `failed=` count, and that `metrics.maintenanceFailure(...)` is never reached
+   (`verifyNoInteractions(metrics)`).
+3. An inline fully-qualified `java.sql.SQLException` in `PartitionMaintenanceException` replaced
+   with a proper import, for consistency with the sibling `BodyMaintenanceStateRepository.java`.
+
+qa: **FAIL**, on coverage gaps only (all existing tests green, no logic defect found). Closed:
+
+- `SingleRunnerLock.heldConnection()` was untested: added a unit case for the `IllegalStateException`
+  before acquisition and a case confirming it returns the exact connection the lock acquired on.
+- The real end-to-end wiring (`BodyRetentionJob` → `lock.heldConnection()` →
+  `BodyMaintenanceStateRepository.recordSuccessOnConnection`) was never exercised against real
+  PostgreSQL — only the repository's own connection-management, and the job's call-or-not decision
+  under mocks. Added `BodyRetentionJobIT.a_successful_run_advances_the_real_last_success_state`,
+  asserting `body_maintenance_state.last_success_at` genuinely advances after a real successful run.
+- `PartitionCatalogue.monthsAhead`'s "stops at the first gap" semantics had no gap-shaped fixture —
+  every existing case was either zero or full contiguous coverage. Added
+  `PartitionCatalogueMonthsAheadTest` (six cases: zero, full, a gap immediately after some coverage,
+  a gap further out, a partial-overlap exclusion, and DEFAULT-partition exclusion). This surfaced two
+  wrong expectations in the first draft of that new test, not a production defect: the method already
+  counted a single leading run of consecutive coverage correctly.
+- qa also flagged that Phase 10 (T046–T056) carries no recorded TDD red-run evidence, unlike
+  T001–T045, and that nothing in this phase is committed yet so there is no commit history to audit
+  either way. **Not closed**: this is a process gap for the repository owner to decide on (accept as
+  a documented exception, as T001–T027 were on 2026-10-24, or require another form of evidence)
+  rather than one this session can resolve unilaterally by asserting an exception on the owner's
+  behalf.
+
+`./gradlew build` green after every fix above, including the full `maintenance` suite, Checkstyle,
+PMD and the JaCoCo coverage gate.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

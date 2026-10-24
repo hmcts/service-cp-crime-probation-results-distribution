@@ -24,9 +24,15 @@ class BodyRetentionJobIT extends SchemaTestSupport {
             new TransactionTemplate(new DataSourceTransactionManager(datasource())));
     private final PartitionMaintenanceRepository repository = new PartitionMaintenanceRepository(
             jdbc(), new TransactionTemplate(new DataSourceTransactionManager(datasource())));
+    private final BodyMaintenanceStateRepository stateRepository = new BodyMaintenanceStateRepository(
+            jdbc(), new TransactionTemplate(new DataSourceTransactionManager(datasource())));
     private final io.micrometer.core.instrument.simple.SimpleMeterRegistry meterRegistry =
             new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
-    private final MaintenanceMetrics metrics = new MaintenanceMetrics(meterRegistry, repository);
+    private final DatabaseClock metricsClock = new DatabaseClock(jdbc());
+    // A near-zero TTL: this suite reads gauges immediately after changing what they report, so the
+    // production five-minute cache would otherwise mask the very change each assertion is checking.
+    private final MaintenanceMetrics metrics = new MaintenanceMetrics(meterRegistry, repository,
+            catalogue, metricsClock, stateRepository, java.time.Duration.ofMillis(1));
 
     @Nested
     @DisplayName("User Story 1 - the coming months always have somewhere to put a body")
@@ -257,7 +263,8 @@ class BodyRetentionJobIT extends SchemaTestSupport {
         void an_unreachable_store_is_a_lock_step_failure() {
             final javax.sql.DataSource unreachable = brokenDataSource();
             final BodyRetentionJob job = new BodyRetentionJob(new DatabaseClock(jdbc()), catalogue,
-                    repository, Period.ofMonths(6), () -> new SingleRunnerLock(unreachable), metrics);
+                    repository, Period.ofMonths(6), () -> new SingleRunnerLock(unreachable), metrics,
+                    stateRepository);
 
             final MaintenanceRunOutcome outcome = job.run();
 
@@ -304,6 +311,18 @@ class BodyRetentionJobIT extends SchemaTestSupport {
             source.setDriverClassName("org.postgresql.Driver");
             return source;
         }
+    }
+
+    @Test
+    @DisplayName("a successful run advances body_maintenance_state.last_success_at through the real SingleRunnerLock connection (FR-003-032, H38)")
+    void a_successful_run_advances_the_real_last_success_state() {
+        final OffsetDateTime before = stateRepository.lastSuccessAt();
+
+        final MaintenanceRunOutcome outcome = newJob().run();
+
+        assertThat(outcome.lockAcquired()).isTrue();
+        assertThat(outcome.failures()).isEmpty();
+        assertThat(stateRepository.lastSuccessAt()).isAfter(before);
     }
 
     @Test
@@ -360,7 +379,7 @@ class BodyRetentionJobIT extends SchemaTestSupport {
 
     private BodyRetentionJob newJob() {
         return new BodyRetentionJob(new DatabaseClock(jdbc()), catalogue, repository,
-                Period.ofMonths(6), () -> new SingleRunnerLock(datasource()), metrics);
+                Period.ofMonths(6), () -> new SingleRunnerLock(datasource()), metrics, stateRepository);
     }
 
     private static OffsetDateTime currentMonthStart() {

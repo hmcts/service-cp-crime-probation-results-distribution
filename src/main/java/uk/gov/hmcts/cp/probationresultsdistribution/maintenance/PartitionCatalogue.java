@@ -81,6 +81,44 @@ public final class PartitionCatalogue {
                 .param("name", name).query(Boolean.class).single();
     }
 
+    /**
+     * The number of consecutive whole months after {@code currentMonth} that have a partition whose
+     * bounds exactly cover that month (FR-003-031; H37) — bounds read from the catalogue
+     * (FR-003-010), never a partition's name. Reads the catalogue fresh; never cached.
+     *
+     * @param currentMonth the current UTC month's first instant
+     * @return how many consecutive following months are covered
+     */
+    public int monthsAhead(final OffsetDateTime currentMonth) {
+        return monthsAhead(currentMonth, partitions());
+    }
+
+    /**
+     * The pure form of {@link #monthsAhead(OffsetDateTime)}, over an already-read partition list, so
+     * a caller that has just read the catalogue for another reason (FR-003-030's start check) need
+     * not read it again.
+     *
+     * @param currentMonth the current UTC month's first instant
+     * @param partitions   the partitions to check coverage against
+     * @return how many consecutive following months are covered
+     */
+    public static int monthsAhead(final OffsetDateTime currentMonth,
+                                  final List<PartitionBound> partitions) {
+        int count = 0;
+        OffsetDateTime cursor = currentMonth.plusMonths(1);
+        while (true) {
+            final OffsetDateTime next = cursor.plusMonths(1);
+            final OffsetDateTime monthStart = cursor;
+            final boolean covered = partitions.stream().anyMatch(p -> !p.isDefault()
+                    && monthStart.isEqual(p.from()) && next.isEqual(p.to()));
+            if (!covered) {
+                return count;
+            }
+            count++;
+            cursor = next;
+        }
+    }
+
     // JDBC's row-mapper contract supplies an index this mapper does not need.
     @SuppressWarnings("PMD.UnusedFormalParameter")
     private static PartitionBound toBound(final ResultSet rs, final int rowNum) throws SQLException {

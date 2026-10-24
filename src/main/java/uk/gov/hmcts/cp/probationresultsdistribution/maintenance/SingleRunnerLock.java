@@ -72,6 +72,22 @@ public final class SingleRunnerLock {
     }
 
     /**
+     * The connection presently holding the advisory lock, for the one statement the design requires
+     * to run on it rather than its own, separate transaction: the {@code body_maintenance_state}
+     * update (FR-003-032), so that a run's success is recorded in the same transaction as the lock
+     * it was computed under and commits together with it.
+     *
+     * @return the held connection
+     * @throws IllegalStateException if the lock is not currently held
+     */
+    public Connection heldConnection() {
+        if (connection == null) {
+            throw new IllegalStateException("Lock not held");
+        }
+        return connection;
+    }
+
+    /**
      * Commits or rolls back the lock transaction, always closing its connection. Cleanup errors
      * propagate as a bounded failure; database messages never cross this boundary.
      *

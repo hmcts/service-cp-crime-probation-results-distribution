@@ -54,7 +54,7 @@ class BodyRetentionJobLogLineTest {
                         any(), any());
 
         new BodyRetentionJob(clock, catalogue, repository, Period.ofMonths(6), () -> lock,
-                mock(MaintenanceMetrics.class)).run();
+                mock(MaintenanceMetrics.class), mock(BodyMaintenanceStateRepository.class)).run();
 
         final List<ILoggingEvent> infoLines = appender.list.stream()
                 .filter(e -> e.getLevel() == Level.INFO).toList();
@@ -81,7 +81,7 @@ class BodyRetentionJobLogLineTest {
 
         new BodyRetentionJob(mock(DatabaseClock.class), mock(PartitionCatalogue.class),
                 mock(PartitionMaintenanceRepository.class), Period.ofMonths(6), () -> lock,
-                mock(MaintenanceMetrics.class)).run();
+                mock(MaintenanceMetrics.class), mock(BodyMaintenanceStateRepository.class)).run();
 
         assertThat(appender.list).noneMatch(e ->
                 e.getLevel() == Level.ERROR || e.getLevel() == Level.WARN);

@@ -23,7 +23,7 @@ class BodyRetentionRecoveryIT extends MaintenanceTestStore {
                 .param("id", message).query(String.class).single();
         final List<String> attemptsBefore = attempts();
         final SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        final MaintenanceMetrics metrics = new MaintenanceMetrics(registry, repository);
+        final MaintenanceMetrics metrics = metrics(registry, month);
         final MaintenanceRunOutcome refused = job(month.plusDays(4), Period.ofMonths(6), metrics).run();
         assertThat(refused.failures()).anySatisfy(failure ->
                 assertThat(failure.cause()).isEqualTo(MaintenanceFailureCause.DEFAULT_HAS_ROWS));

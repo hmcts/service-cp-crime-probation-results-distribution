@@ -15,11 +15,17 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.SchemaTestSuppor
 /** A disposable schema per test, keeping simulated calendars away from V1's shared baseline. */
 abstract class MaintenanceTestStore extends SchemaTestSupport {
 
+    // A near-zero TTL so this slice's other suites, which read a gauge immediately after changing the
+    // state it reports, see every change without waiting out the five-minute production cache; the
+    // caching behaviour itself (FR-003-022, FR-003-031, FR-003-032) has its own dedicated test.
+    private static final java.time.Duration TEST_CACHE_TTL = java.time.Duration.ofMillis(1);
+
     private final String schema = "retention_" + UUID.randomUUID().toString().replace("-", "");
     protected final DriverManagerDataSource source;
     protected final JdbcClient sql;
     protected final PartitionMaintenanceRepository repository;
     protected final PartitionCatalogue catalogue;
+    protected final BodyMaintenanceStateRepository stateRepository;
 
     protected MaintenanceTestStore() {
         execute("CREATE SCHEMA " + schema);
@@ -34,6 +40,8 @@ abstract class MaintenanceTestStore extends SchemaTestSupport {
                 new TransactionTemplate(new DataSourceTransactionManager(source)));
         catalogue = new PartitionCatalogue(sql,
                 new TransactionTemplate(new DataSourceTransactionManager(source)));
+        stateRepository = new BodyMaintenanceStateRepository(sql,
+                new TransactionTemplate(new DataSourceTransactionManager(source)));
     }
 
     @AfterEach
@@ -46,7 +54,15 @@ abstract class MaintenanceTestStore extends SchemaTestSupport {
         final DatabaseClock clock = org.mockito.Mockito.mock(DatabaseClock.class);
         org.mockito.Mockito.when(clock.nowUtc()).thenReturn(now);
         return new BodyRetentionJob(clock, catalogue, repository, retention,
-                () -> new SingleRunnerLock(source), metrics);
+                () -> new SingleRunnerLock(source), metrics, stateRepository);
+    }
+
+    protected final MaintenanceMetrics metrics(
+            final io.micrometer.core.instrument.MeterRegistry registry, final OffsetDateTime now) {
+        final DatabaseClock clock = org.mockito.Mockito.mock(DatabaseClock.class);
+        org.mockito.Mockito.when(clock.nowUtc()).thenReturn(now);
+        return new MaintenanceMetrics(registry, repository, catalogue, clock, stateRepository,
+                TEST_CACHE_TTL);
     }
 
     protected final UUID insertBody(final OffsetDateTime at) {

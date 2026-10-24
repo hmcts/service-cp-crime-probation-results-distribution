@@ -7,19 +7,32 @@ This entry supplies the recovery procedure and series those rules consume.
 |---|---|---|
 | `probation_body_partitions_created_total` | Successful monthly creations | Dashboard |
 | `probation_body_partitions_dropped_total` | Successful expired-month drops | Dashboard |
-| `probation_body_maintenance_failures_total{step}` | Failures; step is `lock`, `create` or `drop` only | Any new `create` or `drop` failure; DEFAULT-delete failures count as `drop` |
-| `probation_body_default_partition_rows` | Live count at every metrics scrape, independently of the runner lock | Greater than zero |
-| `probation_body_job_last_success_age_seconds` | Seconds since this process last completed a run's final commit | Greater than about two days, even with DEFAULT empty |
+| `probation_body_maintenance_failures_total{step}` | Failures; step is `lock`, `create` or `drop` only — a `state` or `read` failure (below) is logged and summarised but never counted here | Any new `create` or `drop` failure; DEFAULT-delete failures count as `drop` |
+| `probation_body_default_partition_rows` | Row count, read from the database whenever metrics are collected, on every pod, lock or not, at most five minutes old (a cached read) | Greater than zero, or a reading of `-1` (a failed read), or no sample in the rule's window |
+| `probation_body_partitions_ahead_months` | Consecutive whole months after the current one with a partition, read the same way (five-minute cache); the job never sets it | Fewer than two, or `-1`, or no sample |
+| `probation_body_maintenance_last_success_seconds` | The epoch-second timestamp of the job's last no-failure completion, kept in the database (`body_maintenance_state`, H38) and read the same way (five-minute cache) | More than 48 hours old, or `-1`, or no sample |
 
-The age starts at a high sentinel before the first completion. It resets after a run reaches its
-final commit, including a run with individually counted statement failures. A skipped run changes
-no counters and never resets the age. Assess age per pod; another pod winning the lock does not
-update this process's gauge. Final cross-replica alert aggregation belongs to slice 006.
+All three gauges are read independently of the single-runner lock and of whether the job has ever
+run on this pod (A3-118): every pod reports the same reading, a stopped job is seen once the
+create-ahead buffer runs out, and a failed read reports `-1` rather than going stale. The
+last-success timestamp survives a pod restart because it lives in the database, not in process
+memory; a skipped run or a run with any failure leaves it unchanged. Final alert rule and
+cross-pod aggregation belong to slice 006.
 
-A failure's ERROR line gives a bounded step, month where relevant, and cause: `lock-timeout`,
-`default-has-rows`, `partition-overlap`, `store-unavailable` or `other`. Database error text and stored
-bodies are excluded. Inspect partition names, UTC bounds and counts without selecting body content.
-A failed statement is retried by the next scheduled run. Readiness continues to reflect the store.
+Each trigger logs one INFO start line; a pod that does not get the lock logs one INFO skip line and
+nothing else; a run that holds the lock ends with one INFO summary line naming `created`, `dropped`,
+`failed`, `monthsAhead`, `defaultRows` and `durationMs` — the two counts read fresh from the
+catalogue and the database, never from the cached gauges above. A run logs a WARN when it starts
+with fewer than two whole months ahead, and another when it ends with no failure and fewer than
+three (H37).
+
+A failure's ERROR line gives a bounded step (`lock`, `create`, `drop`, or `state`/`read` for a
+failed `body_maintenance_state` update or fresh end-of-run read), month where relevant, cause
+(`lock-timeout`, `default-has-rows`, `partition-overlap`, `store-unavailable` or `other`) and
+`sqlState` (the five-character PostgreSQL code, or `unavailable`). Database error text and stored
+bodies are excluded from every line, at every level. Inspect partition names, UTC bounds and counts
+without selecting body content. A failed statement is retried by the next scheduled run. Readiness
+continues to reflect the store.
 
 ## Recover a DEFAULT spill
 

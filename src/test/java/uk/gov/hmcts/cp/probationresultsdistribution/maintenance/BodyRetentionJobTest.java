@@ -47,6 +47,8 @@ class BodyRetentionJobTest {
     private SingleRunnerLock lock;
     @Mock
     private MaintenanceMetrics metrics;
+    @Mock
+    private BodyMaintenanceStateRepository stateRepository;
 
     private BodyRetentionJob job;
 
@@ -55,11 +57,11 @@ class BodyRetentionJobTest {
         lenient().when(clock.nowUtc()).thenReturn(NOW);
         lenient().when(lock.tryAcquire()).thenReturn(true);
         job = new BodyRetentionJob(clock, catalogue, repository, Period.ofMonths(6), () -> lock,
-                metrics);
+                metrics, stateRepository);
     }
 
     @Test
-    @DisplayName("creates only the months absent among the current one and the next two")
+    @DisplayName("creates only the months absent among the current one and the next three")
     void creates_only_the_absent_months() {
         when(catalogue.partitions()).thenReturn(List.of(
                 new PartitionBound("outbound_body_2026_10", OCT, NOV)));
@@ -69,16 +71,17 @@ class BodyRetentionJobTest {
         verify(repository, never()).createPartition(eq("outbound_body_2026_10"), any(), any());
         verify(repository).createPartition("outbound_body_2026_11", NOV, DEC);
         verify(repository).createPartition("outbound_body_2026_12", DEC, JAN);
-        verify(repository, never()).createPartition(eq("outbound_body_2027_01"), any(), any());
+        verify(repository).createPartition("outbound_body_2027_01", JAN, JAN.plusMonths(1));
     }
 
     @Test
-    @DisplayName("creates nothing when the current month and the next two already exist")
+    @DisplayName("creates nothing when the current month and the next three already exist")
     void creates_nothing_when_all_present() {
         when(catalogue.partitions()).thenReturn(List.of(
                 new PartitionBound("outbound_body_2026_10", OCT, NOV),
                 new PartitionBound("outbound_body_2026_11", NOV, DEC),
-                new PartitionBound("outbound_body_2026_12", DEC, JAN)));
+                new PartitionBound("outbound_body_2026_12", DEC, JAN),
+                new PartitionBound("outbound_body_2027_01", JAN, JAN.plusMonths(1))));
 
         final MaintenanceRunOutcome outcome = job.run();
 
@@ -96,8 +99,8 @@ class BodyRetentionJobTest {
 
         final MaintenanceRunOutcome outcome = job.run();
 
-        assertThat(outcome.partitionsCreated())
-                .containsExactlyInAnyOrder("outbound_body_2026_10", "outbound_body_2026_12");
+        assertThat(outcome.partitionsCreated()).containsExactlyInAnyOrder(
+                "outbound_body_2026_10", "outbound_body_2026_12", "outbound_body_2027_01");
         assertThat(outcome.failures()).hasSize(1);
         assertThat(outcome.failures().get(0).step()).isEqualTo(BodyMaintenanceStep.CREATE);
         assertThat(outcome.failures().get(0).cause())
@@ -292,7 +295,7 @@ class BodyRetentionJobTest {
 
         job.run();
 
-        verify(metrics, org.mockito.Mockito.times(2)).partitionCreated();
+        verify(metrics, org.mockito.Mockito.times(3)).partitionCreated();
         verify(metrics).maintenanceFailure(BodyMaintenanceStep.CREATE);
     }
 
@@ -317,17 +320,18 @@ class BodyRetentionJobTest {
     }
 
     @Test
-    @DisplayName("records success only once the run completes, never when skipped or failed unexpectedly")
+    @DisplayName("records success on the lock's own connection before releasing it, never when skipped or failed unexpectedly")
     void records_success_only_on_completion() {
         when(catalogue.partitions()).thenReturn(List.of());
 
         job.run();
 
-        final org.mockito.InOrder order = org.mockito.Mockito.inOrder(repository, lock, metrics);
+        final org.mockito.InOrder order =
+                org.mockito.Mockito.inOrder(repository, stateRepository, lock);
         order.verify(repository).deleteDefaultRowsBefore(any());
         order.verify(repository).countDefaultRows();
+        order.verify(stateRepository).recordSuccessOnConnection(any());
         order.verify(lock).release(true);
-        order.verify(metrics).recordSuccess(any());
     }
 
     @Test
@@ -338,7 +342,7 @@ class BodyRetentionJobTest {
         assertThatThrownBy(job::run).isInstanceOf(PartitionMaintenanceException.class)
                 .hasNoCause().hasMessageNotContaining("synthetic-body-marker");
         verify(metrics).maintenanceFailure(BodyMaintenanceStep.LOCK);
-        verify(metrics, never()).recordSuccess(any());
+        verify(stateRepository).recordSuccessOnConnection(any());
     }
 
     @Test
@@ -348,7 +352,7 @@ class BodyRetentionJobTest {
 
         job.run();
 
-        verify(metrics, never()).recordSuccess(any());
+        verify(stateRepository, never()).recordSuccessOnConnection(any());
     }
 
     @Test
@@ -358,6 +362,19 @@ class BodyRetentionJobTest {
 
         assertThatThrownBy(job::run).isInstanceOf(PartitionMaintenanceException.class);
 
-        verify(metrics, never()).recordSuccess(any());
+        verify(stateRepository, never()).recordSuccessOnConnection(any());
+    }
+
+    @Test
+    @DisplayName("never records success when a creation or a removal failed this run")
+    void never_records_success_when_a_statement_failed() {
+        when(catalogue.partitions()).thenReturn(List.of());
+        lenient().doThrow(new PartitionMaintenanceException(MaintenanceFailureCause.PARTITION_OVERLAP,
+                "overlap", new RuntimeException()))
+                .when(repository).createPartition(eq("outbound_body_2026_11"), any(), any());
+
+        job.run();
+
+        verify(stateRepository, never()).recordSuccessOnConnection(any());
     }
 }
