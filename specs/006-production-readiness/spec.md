@@ -1027,7 +1027,7 @@ and check each item of §9.6 row 1 against its source.
   of the youth default, and the attempt rows that rows 1, 7 and 9 read.
 - **003-body-retention**: the body-maintenance signals behind alert 9 — the DEFAULT-partition,
   months-ahead and last-success gauges, read from the database on every pod (FR-003-022,
-  FR-003-031, FR-003-032), the last success kept in `body_maintenance_state` by 003's Flyway `V2`
+  FR-003-031, FR-003-032), the last success kept in `scheduled_job_status` by 003's Flyway `V2`
   (H38), and the failure counter — the run log lines (FR-003-020, FR-003-030), and the runbook for
   the DEFAULT partition. 003's open question 2 is answered (A3-118; its AS-15).
 - **004-recovery**: the command-line runners (FR-004-042, FR-004-043) for the actions the runbook

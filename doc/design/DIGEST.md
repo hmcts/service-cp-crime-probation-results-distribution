@@ -84,7 +84,7 @@
 | H35 | An expired `outbound_body` month is removed with a plain `DROP` of its partition, with no `DETACH` (concurrent or not). Each `DROP` runs under `lock_timeout` 5 s in its own short transaction that commits at once; the single-runner advisory lock stays on its own transaction for the whole run. A timed-out `DROP` is retried on the next run. The DEFAULT partition, its alert and its recovery stay; V1 is unchanged (amends A3-64 (b)). |
 | H36 | Nothing scrapes the pods for Prometheus. The App Insights Java agent exports the Micrometer meters to `customMetrics` (about every 60 s). Every alert is an Azure Monitor alert rule, created by hand by DevOps on a ticket with the runbook, and emailed to the Resulting Assistant team. The App Insights resource per environment is decided later (Q29). |
 | H37 | The retention job keeps the current month and the next three (V1 still creates the current month and the next two; the job's first run adds the third). WARN at the start of a run that holds the lock when fewer than 2 months ahead; WARN at the end of a run with no failure when fewer than 3. The ahead alert fires below 2. |
-| H38 | The last successful run of the retention job is kept in a one-row table `body_maintenance_state` (`last_success_at`; names proposed), created and seeded with the migration time by Flyway `V2` (slice 003; V1 unchanged), set by a run that held the lock and had no failure, as the last statement of the advisory lock's transaction, under a savepoint, after the removals have committed and the fresh end reads: `clock_timestamp()` (not `now()`), exactly one row; it commits with the lock's transaction, so a failed commit records no success. A failed update, or a failed fresh read for the WARNs and summary (A3-119), is logged at ERROR with step `state` / `read`, counts in the summary's `failed`, leaves `last_success_at` unchanged, and is not counted on `probation_body_maintenance_failures_total` (its `step` set stays closed); the 48-hour condition alerts it. |
+| H38 | The last successful run of the retention job is kept in the `body-retention` row of `scheduled_job_status` (`job_name` PK, `last_success_at`; names proposed; one row per scheduled job, amended 2026-10-24 from the one-row `body_maintenance_state`), created and that row seeded with the migration time by Flyway `V2` (slice 003; V1 unchanged), set by a run that held the lock and had no failure, as the last statement of the advisory lock's transaction, under a savepoint, after the removals have committed and the fresh end reads: `clock_timestamp()` (not `now()`), exactly that row; it commits with the lock's transaction, so a failed commit records no success. A failed update, or a failed fresh read for the WARNs and summary (A3-119), is logged at ERROR with step `state` / `read`, counts in the summary's `failed`, leaves `last_success_at` unchanged, and is not counted on `probation_body_maintenance_failures_total` (its `step` set stays closed); the 48-hour condition alerts it. |
 
 **Other decisions in force**
 - D1: lift and shift. Rules and payload are copied verbatim; delivery and reliability defects are fixed by construction, each as a numbered DV with its own test.
@@ -413,7 +413,7 @@ Flyway `V1__create_processed_log.sql` creates three tables and one view. The dat
 | `created_at` | timestamptz NN, default `now()` |
 
 - PK `(outbound_message_id, created_at)`; `PARTITION BY RANGE (created_at)`.
-- Monthly partitions `outbound_body_YYYY_MM` on UTC month bounds, plus `outbound_body_default`. V1 creates the current month and the next two; the job keeps three ahead (H37). Flyway `V2` (slice 003) adds the one-row `body_maintenance_state` (H38).
+- Monthly partitions `outbound_body_YYYY_MM` on UTC month bounds, plus `outbound_body_default`. V1 creates the current month and the next two; the job keeps three ahead (H37). Flyway `V2` (slice 003) adds `scheduled_job_status`, one row per scheduled job, seeded with the `body-retention` row (H38).
 - Trigger `outbound_body_digest_trg` (`BEFORE INSERT OR UPDATE`, per row): refuses a body if the parent's `body_digest` is NULL or differs from `encode(sha256(convert_to(body, 'UTF8')), 'hex')`. A missing parent is left to the FK.
 - A body row exists only for an attempt with a `body_digest`. It is written after the outcome UPDATE, in the same transaction.
 - An in-place re-run deletes the earlier body row and inserts the new one in the same transaction. "The body" is the latest row by `created_at`.
@@ -429,7 +429,7 @@ Flyway `V1__create_processed_log.sql` creates three tables and one view. The dat
   - deletes DEFAULT rows older than the cut-off;
   - runs each DDL under `lock_timeout` 5 s, retrying on the next run;
   - counts creates, drops and failures, and gauges the DEFAULT row count;
-  - sets `body_maintenance_state.last_success_at` to its end time when no statement failed (H38);
+  - sets `last_success_at` of the `body-retention` row of `scheduled_job_status` to its end time when no statement failed (H38);
   - logs a start line (or a skip line, without the lock); with the lock, a WARN if the months ahead, read fresh from the catalogue, are < 2 at its start, one summary line with fresh counts, and a WARN if it ends with no failure and < 3 months ahead (A3-119, H37).
 - Read from the database whenever the metrics are collected (cached 5 min), on every pod, lock or not: the months ahead (consecutive whole months after the current UTC month with a partition), the DEFAULT row count and `last_success_at` (A3-118, H38). A failed read reports `-1` and is not cached.
 - Partitions are created, and so owned, by the service role.
@@ -630,7 +630,7 @@ Label values come only from the closed sets below. A label never carries a heari
 | `probation_body_maintenance_failures_total` | counter | `step` ∈ lock / create / drop |
 | `probation_body_default_partition_rows` | gauge | — (read at collection, every pod; `-1` on a failed read; A3-118) |
 | `probation_body_partitions_ahead_months` *(proposed)* | gauge | — (consecutive whole months after the current UTC month with a partition, normally 3; read at collection, every pod; `-1` on a failed read; A3-118, H37) |
-| `probation_body_maintenance_last_success_seconds` *(proposed)* | gauge | — (`body_maintenance_state.last_success_at`, epoch s; read at collection, every pod; `-1` on a failed read; H38) |
+| `probation_body_maintenance_last_success_seconds` *(proposed)* | gauge | — (`scheduled_job_status.last_success_at`, row `body-retention`, epoch s; read at collection, every pod; `-1` on a failed read or a missing row; H38) |
 | `probation_gateway_non200_success_total` | counter | `status` ∈ 201 / 202 / 204 / other |
 | `probation_gateway_recovered_total` *(proposed)* | counter | `after` ∈ 429-in-run / 5xx-redelivery; counted when it happens |
 | `probation_crash_reruns_total` *(proposed)* | counter | `leg`; a redelivery that re-runs a `PENDING` attempt-1 row with an expired request claim |
