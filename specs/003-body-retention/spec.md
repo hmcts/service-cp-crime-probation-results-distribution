@@ -3,7 +3,7 @@
 **Feature Branch**: `003-body-retention`  
 **Created**: 2026-10-21  
 **Status**: Draft  
-**Input**: Design rev 3.6 (2026-10-20; decisions H1–H34), H35 (2026-10-21), H36 … H38 (2026-10-23) —
+**Input**: Design rev 3.6 (2026-10-20; decisions H1–H34), H35 (2026-10-21), H36 … H38 (2026-10-23; H38 amended 2026-10-24) —
 H20, H28, H34 … H38; rows A3-63 … A3-65, A3-98, A3-99, A3-105, A3-115, A3-118 and A3-119; design §4.1, §4.6, §4.7, §4.8, §8.1,
 §8.4 ask 5, §10.1, §10.2, §10.3, Appendix A and Appendix B.2 — as restated in
 `doc/design/DIGEST.md` §2 (the service runs one scheduled task), §8 (`outbound_body`, "Retention
@@ -171,8 +171,9 @@ database). The answers were then checked by an independent review, whose correct
   `customMetrics` (about every 60 s) and the logs to `traces`; nothing scrapes the pods for
   Prometheus. The alert rule and its routing stay slice 006's. Applied in FR-003-031 (the collection
   read) and Dependencies.
-- Q: Where is the last successful run kept? → A: H38. In a one-row table `body_maintenance_state`
-  (`last_success_at`; names proposed), created and seeded with the migration time by a Flyway `V2`
+- Q: Where is the last successful run kept? → A: H38. In a table `scheduled_job_status`
+  (`job_name`, `last_success_at`; names proposed; one row per scheduled job, this job's row
+  `body-retention`), created and that row seeded with the migration time by a Flyway `V2`
   of this slice — V1 is unchanged — and updated by a run that held the lock and ended with no
   failure. A per-pod value would be lost when the pod that ran restarts, and would have no value at
   first deployment. Applied in FR-003-032, User Story 4 and SC-003-015.
@@ -183,6 +184,15 @@ database). The answers were then checked by an independent review, whose correct
   it never warns by mistake — and a run with no failure logs a WARN at its end when fewer than three
   remain. The ahead alert fires below two. Applied in FR-003-006, FR-003-023, FR-003-027,
   FR-003-030, SC-003-003, SC-003-014, User Stories 1 and 4, the edge cases and AS-6.
+
+### Session 2026-10-24
+
+- Q: What is the last-success table called, and how is it keyed? → A: H38 amended by the design
+  owner. `scheduled_job_status`, one row per scheduled job keyed by `job_name` (text, no CHECK on
+  its values, so a later job adds its row without a schema change), instead of the one-row
+  `body_maintenance_state`. This job's row is `body-retention`; `V2` seeds it; a missing row reads
+  as a failed read (`-1`). The gauge's name does not change. Applied in FR-003-032, User Story 4
+  scenario 10 and the Key Entities.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -379,8 +389,8 @@ body.
    **and given** the schedule never fires, **Then** `probation_body_maintenance_last_success_seconds`
    stops advancing on every pod, and keeps its value when the pod that last ran restarts (A3-118;
    H38).
-10. **Given** a fresh migration, **Then** `body_maintenance_state` holds exactly one row, seeded with
-   the migration time; **given** a run with no failure, **Then** it advances to that run's end;
+10. **Given** a fresh migration, **Then** `scheduled_job_status` holds exactly one row, `body-retention`,
+   seeded with the migration time; **given** a run with no failure, **Then** it advances to that run's end;
    **and given** a skipped run, a run with a failed statement, a run whose update of the row fails
    (ERROR, step `state`), or a run whose fresh end read fails (ERROR, step `read`, the summary's
    field `-1`, `failed` counting it), **Then** it is unchanged and the failure counter does not move
@@ -667,11 +677,12 @@ matching its attempt's `body_digest`.
   every pod, lock or not, at most 5 minutes old (a cached read). The job MUST NOT set it. A failed
   read MUST report `-1` and MUST NOT be cached. This slice registers the series. *(A3-118;
   H36; §10.1)*
-- **FR-003-032**: A Flyway `V2` of this slice MUST create a one-row table `body_maintenance_state`
-  *(proposed)* holding `last_success_at` (timestamptz, not null), seeded with the migration time;
+- **FR-003-032**: A Flyway `V2` of this slice MUST create a table `scheduled_job_status`
+  *(proposed)*, one row per scheduled job keyed by `job_name` (text) and holding `last_success_at`
+  (timestamptz, not null), and MUST seed this job's row, `body-retention`, with the migration time;
   V1 is unchanged. A run that held the lock and ended with no failure MUST set `last_success_at` to
   the database's wall clock at that moment (`clock_timestamp()`, not `now()`, which in the run's long
-  lock transaction is its start), affecting exactly one row, as the last statement of the advisory
+  lock transaction is its start), affecting exactly the `body-retention` row, as the last statement of the advisory
   lock's own transaction, under its own savepoint, after every removal has committed (FR-003-011) and
   after the fresh end reads of FR-003-020 and FR-003-030 — so the lock is held until it is recorded,
   and a failed commit undoes it together with the creations (whatever arrangement AS-13 leaves to the
@@ -683,7 +694,8 @@ matching its attempt's `body_digest`.
   condition of FR-003-023 is what alerts it.
   `probation_body_maintenance_last_success_seconds` *(proposed)*, a gauge with no label, MUST report
   it in epoch seconds, read whenever the metrics are collected, on every pod, lock or not, at most 5
-  minutes old (a cached read); a failed read MUST report `-1` and MUST NOT be cached. This slice
+  minutes old (a cached read); a failed read, or a missing `body-retention` row, MUST report `-1` and
+  MUST NOT be cached. This slice
   registers the series. *(A3-118; H38; §10.1)*
 
 **Configuration**
@@ -724,8 +736,8 @@ matching its attempt's `body_digest`.
 - **Cut-off**: the first instant of the UTC month N months before the current UTC month — the line
   before which months are removed and DEFAULT rows deleted.
 - **Maintenance schedule**: `distribution.body-maintenance.cron`, six fields, read in UTC.
-- **Maintenance state**: `body_maintenance_state`, one row: when the last run with no failure
-  ended (H38). Created by this slice's `V2`.
+- **Scheduled job status**: `scheduled_job_status`, one row per scheduled job; this job's row,
+  `body-retention`, holds when its last run with no failure ended (H38). Created by this slice's `V2`.
 - **Maintenance run**: one execution on one pod. Either skipped (no lock) or run (the lock held
   throughout); each of its statements succeeds or fails on its own.
 - **Maintenance step**: `lock`, `create` or `drop` — the bounded label a failure is counted under.
@@ -760,7 +772,7 @@ matching its attempt's `body_digest`.
   records no failure.
 - **SC-003-008**: Every failed maintenance step produces exactly one ERROR line, carrying its cause,
   and one failure count under the right step (a `lock`, `create` or `drop` step; a failed update of
-  the maintenance state or a failed fresh read is logged and summarised but not counted, FR-003-032) — 100% of the failure cases in the test matrix — and a
+  the scheduled job status row or a failed fresh read is logged and summarised but not counted, FR-003-032) — 100% of the failure cases in the test matrix — and a
   body stored outside its month is visible in the published DEFAULT count after the next run.
 - **SC-003-009**: Zero log lines, metric labels or exception messages produced by the job contain any
   part of a stored body, and zero lines at any level carry the database's own error text, checked
@@ -942,7 +954,7 @@ matching its attempt's `body_digest`.
 | A3-119 | Start, skip and summary log lines; the months-ahead WARNs; `sqlState` on the ERROR line | FR-003-017, FR-003-020, FR-003-024, FR-003-030; SC-003-014 |
 | H36 | Meters exported by the App Insights agent to `customMetrics`; alerts are Azure Monitor rules by DevOps ticket, emailed to the Resulting Assistant team | FR-003-031; Dependencies |
 | H37 | Three months kept ahead (V1 unchanged); WARN at the start below two and at the end below three; the ahead alert below two | FR-003-006, FR-003-023, FR-003-027, FR-003-030; SC-003-003, SC-003-014; AS-6 |
-| H38 | The last successful run kept in a one-row table, created and seeded by this slice's Flyway `V2`; V1 unchanged | FR-003-032; SC-003-015 |
+| H38 | The last successful run kept in the `body-retention` row of `scheduled_job_status` (one row per scheduled job; amended 2026-10-24), created and seeded by this slice's Flyway `V2`; V1 unchanged | FR-003-032; SC-003-015 |
 | §4.1, §4.7 | One image, no batch job, one in-service scheduled task | FR-003-001 |
 | §4.6, Appendix B.2 | The database clock is the time authority; V1's partition names and bounds, and its creation of a month only if its name is absent (002's FR-002-054) | FR-003-005, FR-003-006, FR-003-007 |
 | §4.8 | Pause and resume act on intake; the six-month window for investigations; the DEFAULT recovery | FR-003-004, FR-003-015, FR-003-028 |
