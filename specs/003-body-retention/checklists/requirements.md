@@ -33,17 +33,21 @@
       states it.
 
       Open question 2 — how a job that never runs, or a DEFAULT reading left stale on the pod that
-      skipped, is noticed — is not a marker: the design's default stands (every signal comes from a
-      run, A3-64; §10.1), so nothing is blocked. It is carried as assumption AS-15, and the gauge
-      itself is a requirement as designed (FR-003-022). Both questions, with their options, are at
-      the end of this checklist.
+      skipped, is noticed — was never a marker (the slice could be planned while it was open), and is
+      now answered too: option C and D combined (slice 003 clarification, 2026-10-22), closing
+      assumption AS-15. FR-003-031 adds the independently-read DEFAULT gauge and FR-003-032 adds the
+      new last-successful-run age gauge and its page threshold (deliberately not FR-003-029: that id
+      was allocated and withdrawn in an earlier validation pass — see the notes below — and is not
+      reused). Both questions, with their options,
+      are at the end of this checklist.
 
       Twenty-two points were settled in the Clarifications session of 2026-10-21, each with its
       design reference: eighteen answered from the design (the inferred ones say so); one by the
       design owner's answer to open question 1 (H35); one answered as far as the design goes, which
       since H35 fixes the removals' transactions but not whether the run's other statements share
       the lock's (AS-13); and two the design does not establish, carried as assumptions (the
-      failure causes, AS-14; the job's package and the properties' binding, AS-1 and AS-2)
+      failure causes, AS-14; the job's package and the properties' binding, AS-1 and AS-2). A further
+      point was settled in the session of 2026-10-22: open question 2 itself, closing AS-15.
 - [x] Requirements are testable and unambiguous — every requirement states an outcome a test can
       check, and a failure's cause is one of a closed set (FR-003-017; AS-14). FR-003-011 states
       the removal H35 decides — a plain `DROP`, committed in its own transaction while the lock's
@@ -123,8 +127,9 @@
     the DEFAULT count, the `DROP` gives up after the 5 s lock timeout (checked on PostgreSQL 15.14
     the same day, for H35; AS-13).
 - Before `/speckit-plan`: open question 1 is answered (option A, H35, 2026-10-21), so the tasks for
-  FR-003-011 can be written, and slice 002 writes V1 unchanged (002's FR-002-054). Open question 2
-  blocks nothing: the design's default stands (AS-15). The plan also records where the job sits
+  FR-003-011 can be written, and slice 002 writes V1 unchanged (002's FR-002-054). Open question 2 is
+  also answered (option C and D combined, slice 003 clarification, 2026-10-22; FR-003-031,
+  FR-003-032), so AS-15 is closed rather than carried. The plan also records where the job sits
   (AS-1) and whether the creations, the DEFAULT delete and the gauge's read share the lock's
   transaction, within the constraint AS-13 states. The whole slice can be planned now.
 - Raised with the design owner alongside the two questions, as assumptions rather than markers: the
@@ -167,6 +172,22 @@
     now say that the question is answered and that V1 keeps the DEFAULT partition.
 
   Every item passes; no marker remains.
+- Validation run 5 (2026-10-22, open question 2 answered). Open question 2 was never a marker, but
+  was raised with the design owner and is now answered: option C and D combined, closing AS-15.
+  - FR-003-022 stands unchanged (the gauge set after a run's own delete). Two new requirements are
+    added, not reusing the withdrawn FR-003-029: FR-003-031 (the DEFAULT row count read and the
+    gauge set independently of the lock and of whether the job has ever run, on the normal
+    metrics-collection cycle) and FR-003-032 (a new age gauge for time since the job's last
+    successful completion, paging at about two days).
+  - SC-003-014 is added, exercising both new requirements with the job prevented from completing a
+    run.
+  - User Story 4 gains two acceptance scenarios (6 and 7) for the new signals; the two Edge Cases
+    that previously said a job which never runs is "unnoticed by the service, as designed" are
+    corrected to say the age gauge now pages at about two days regardless.
+  - AS-15 is rewritten as resolved rather than carried; the Dependencies section (slice 006) and the
+    Design traceability table (a new row for this session; the §10.3 row extended) follow it.
+
+  Every item passes; no marker remains, and no question is left open for the design owner.
 - This spec was written directly in `specs/003-body-retention/`. `.specify/feature.json` does not
   point at it; a developer starting the feature branches `003-body-retention` from `main` (or sets
   `feature.json`) before running `/speckit-plan`.
@@ -178,9 +199,9 @@ Two points could not be answered from the design, and both went to the design ow
 blocked FR-003-011; the design owner answered it on 2026-10-21 with option A, recorded in the
 design as H35, and FR-003-011 now states it. Option C, which would have removed the DEFAULT
 partition and changed V1 in slice 002 (002's FR-002-054), was not chosen: V1 is unchanged.
-Question 2 is not a marker: the design's default stands, and it is carried as assumption AS-15. The
-slice can be planned while it is open, and the outcomes FR-003-022 and FR-003-023 state hold under
-every option of question 2.
+Question 2 was not a marker — the slice could be planned while it was open, and the outcomes
+FR-003-022 and FR-003-023 held under every option — but it is now answered too: option C and D
+combined (slice 003 clarification, 2026-10-22), closing AS-15. FR-003-031 and FR-003-032 state it.
 
 ### Question 1: How is an expired month removed? (FR-003-011; answered, H35)
 
@@ -216,7 +237,7 @@ once, under the 5 s lock timeout; the single-runner advisory lock stays on its o
 the whole run (AS-13 (b) for removals); a timed-out `DROP` is retried on the next run; the DEFAULT
 partition, its alert and its recovery stay; V1 unchanged. Applied in FR-003-011.
 
-### Question 2: How is a job that does not run, or a stale reading, noticed? (AS-15; not a marker)
+### Question 2: How is a job that does not run, or a stale reading, noticed? (AS-15; answered, 2026-10-22)
 
 **Context**: every signal of the job comes from a run — "each run … gauges the DEFAULT partition's
 row count, and counts failures by step" (A3-64; §10.1). Two consequences follow, and the design
@@ -230,8 +251,8 @@ addresses neither:
   reading, so a spill already recovered can stay alerted, or a new one be masked, depending on how
   the alert rule (slice 006) combines the pods.
 
-The design's default (option A) stands until the design owner answers, so nothing in this slice is
-blocked (AS-15).
+The design's default (option A) was not blocking — the slice could be planned while this was open —
+but it is not what was chosen: the design owner chose option C and D combined (see below).
 
 **What we need to know**: whether the DEFAULT reading should be kept current independently of the
 lock, and whether a run that is overdue should be signalled.
@@ -246,4 +267,8 @@ lock, and whether a run that is overdue should be signalled.
 | D | B or C, plus a new signal of when the last run completed, alerted when it is more than about two days old | Closes the gap. A new metric and a new alert: a change to design §10.1 and §10.3 |
 | Custom | Another mechanism | Stated by the design owner |
 
-**Your choice**: _for the design owner_
+**Your choice**: C and D combined (slice 003 clarification, 2026-10-22) — the DEFAULT row count is
+read independently of the lock and of whether the job has ever run, on the normal metrics-collection
+cycle; and a new gauge of the time since the job's last successful completion pages at about two
+days, so a stopped job is caught well before the create-ahead buffer would otherwise hide it for up
+to two months. Applied in FR-003-022, FR-003-031, FR-003-032; SC-003-014.

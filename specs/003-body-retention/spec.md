@@ -44,9 +44,9 @@ An ambiguity scan of the slice against design rev 3.6 and the digest found the p
 answered from the design; where an answer is an inference rather than a statement of the design, it
 says so and names the rows it rests on. Two points could not be answered from the design. One
 blocked a requirement (FR-003-011, open question 1) until the design owner answered it the same day
-with option A, recorded in the design as H35 (the last point below); the other has the design's
-own default, which stands, and is carried as assumption AS-15 (open question 2). Both are set out,
-with their options, in `checklists/requirements.md`.
+with option A, recorded in the design as H35 (the last point below); the other, open question 2, was
+answered the next day (2026-10-22 session below), closing AS-15. Both are set out, with their
+options, in `checklists/requirements.md`.
 
 - Q: Which clock decides "now", the current month and the cut-off? → A: The database clock, read in
   UTC. The scheduler's zone (UTC) decides only when a run starts. (§4.6 and DIGEST §8: "the database
@@ -144,6 +144,19 @@ with their options, in `checklists/requirements.md`.
   that times out is retried on the next run. The DEFAULT partition, its alert and its recovery
   stay, and V1 is unchanged. Applied in FR-003-002, FR-003-011, FR-003-012, FR-003-016, FR-003-017,
   SC-003-013 and AS-13.
+
+### Session 2026-10-22
+
+- Q: How is a job that does not run, or a stale DEFAULT reading, noticed? → A: Option C and D
+  combined. The DEFAULT partition's row count is read and the gauge set independently of a run — on
+  the normal metrics-collection cycle, not only after a run that holds the lock — so every pod's
+  reading stays current whether or not the job itself is running. In addition, the service publishes
+  a new age gauge, the time since the job's last successful completion, alerted when it exceeds about
+  two days, closing the gap a fresh DEFAULT reading alone leaves: a stopped job is caught within about
+  two days, not only once the two-month create-ahead buffer is exhausted and a body has already
+  spilled into DEFAULT. This resolves open question 2 (AS-15); the design's own default (option A) no
+  longer stands (slice 003 clarification, 2026-10-22). Applied in FR-003-022, FR-003-031, FR-003-032,
+  SC-003-014.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -316,6 +329,13 @@ body.
    any `create` or `drop` failure, and never by a skipped run.
 5. **Given** any run, successful or not, **Then** no log line, metric label or exception message it
    produces contains any part of a stored body.
+6. **Given** the job has not completed a successful run for longer than about two days — no pod up at
+   the scheduled time, a valid schedule that never fires, or every recent run failing before its last
+   statement — **Then** the last-successful-run age gauge exceeds the paging threshold and the alert
+   fires, whether or not any body has yet spilled into DEFAULT (FR-003-032).
+7. **Given** no run is in progress anywhere, **Then** `probation_body_default_partition_rows` is still
+   read on the normal metrics-collection cycle and reflects the database's current DEFAULT row count,
+   not a reading frozen from the last run that held the lock (FR-003-031).
 
 ---
 
@@ -420,11 +440,11 @@ matching its attempt's `body_digest`.
 - **No pod running at the scheduled time** — an environment scaled down at that hour, for example.
   There is no run that day. The months created ahead absorb at least two months of missed runs
   before a body lands in DEFAULT, and the schedule is a property, so such an environment can choose
-  an hour at which the service runs. As designed, nothing in the service notices a job that never
-  runs (AS-15; open question 2).
+  an hour at which the service runs. The last-successful-run age gauge rises and pages at about two
+  days regardless, well before a body would spill into DEFAULT (FR-003-032; AS-15, resolved).
 - **A valid schedule that never fires** (30 February, for example). It passes the startup check,
-  which checks only validity (§8.1), and the job never runs, unnoticed by the service as designed
-  (AS-15; open question 2).
+  which checks only validity (§8.1), and the job never runs; the age gauge pages at about two days
+  the same as any other stopped job (FR-003-032; AS-15, resolved).
 - **Two triggers at the same instant; two triggers a little apart.** One runs and one skips; or both
   run, one after the other, and the second finds nothing to do.
 - **A long transaction on `outbound_body`** (an investigation query, for example). A statement that
@@ -571,6 +591,19 @@ matching its attempt's `body_digest`.
   non-empty DEFAULT partition, or on any `create` or `drop` failure, and a skipped run MUST NOT be
   able to trigger it. Whether a `lock` failure pages is the alert rule's (assumption AS-8); the rule
   and its routing are slice 006's. *(§10.3; H34; A3-115)*
+- **FR-003-031**: `probation_body_default_partition_rows` MUST also be read and set independently of
+  a run: on the service's normal metrics-collection cycle, whether or not a run is in progress, holds
+  the lock, or has ever run. This read MUST only count rows; it MUST NOT delete, move or otherwise
+  change any row, and MUST NOT take the single-runner lock. Every pod's reading of the gauge MUST
+  therefore agree, and a reading MUST NOT go stale because the job itself has stopped running.
+  *(Resolves open question 2, AS-15; slice 003 clarification, 2026-10-22)*
+- **FR-003-032**: The service MUST publish a gauge of the time elapsed since the job's last
+  successfully completed run (a run that held the lock and finished its last statement without
+  itself failing to complete, whatever statements inside it failed and were counted). The §10.3 alert
+  set MUST page when this age exceeds a threshold of approximately two days, independently of
+  FR-003-023's conditions, so that a job which has stopped running is noticed before the create-ahead
+  buffer is exhausted and a body spills into DEFAULT, not only after. *(Resolves open question 2,
+  AS-15; slice 003 clarification, 2026-10-22)*
 - **FR-003-024**: The job MUST NOT put any part of a stored body in a log line, at any level, in a
   metric label or in an exception message. Its log lines carry partition names, months, counts,
   steps and the causes of FR-003-017 only. *(H18; A3-60; DV-09; §10.2; constitution Principle VII)*
@@ -666,6 +699,12 @@ matching its attempt's `body_digest`.
   takes, because each removal is committed on its own (H35); one written while a creation holds or
   waits for them is stored by the end of that run at the latest, whichever arrangement the plan
   chooses for creations (AS-13).
+- **SC-003-014**: With the job prevented from completing a single run for a simulated period beyond
+  the paging threshold, the last-successful-run age gauge is shown to keep rising and the alert
+  condition is shown to be met, without any row needing to have reached the DEFAULT partition; and
+  the DEFAULT row count, read on the normal metrics cycle while no run is in progress, is shown to
+  match the database's own count at that moment, in at least one check with the job not running at
+  all.
 
 ## Assumptions
 
@@ -735,16 +774,16 @@ matching its attempt's `body_digest`.
   database's own error text stays out of every line at INFO or above because PostgreSQL's error
   detail can quote a failing row, a body included; FR-003-024 keeps any part of a body out of every
   line at every level.
-- **AS-15 — A job that does not run is not noticed by the service, as designed.** Every signal the
-  design defines for the job comes from a run (A3-64; §10.1). So a job that never runs — no pod up
-  at the scheduled time, a valid schedule that never fires, a fault in the scheduler — counts no
-  failure and changes no gauge; and with two replicas, only the pod that takes the lock sets the
-  DEFAULT gauge (FR-003-022), while the pod that skips keeps its last reading. This slice builds
-  what the design specifies and adds no signal: the design's default stands, so nothing is blocked.
-  Whether the reading should be kept current independently of the lock, and whether an overdue run
-  should be signalled, is raised with the design owner as open question 2, with its options, in
-  `checklists/requirements.md`. Until it is answered, slice 006's alert 9 reads the gauge as
-  designed.
+- **AS-15 — Resolved, 2026-10-22 (was: a job that does not run is not noticed by the service, as
+  designed).** The design's signals all come from a run (A3-64; §10.1), so without a change a job
+  that never runs — no pod up at the scheduled time, a valid schedule that never fires, a fault in
+  the scheduler — would count no failure and change no gauge, and only the pod holding the lock would
+  ever set the DEFAULT gauge. Open question 2 asked the design owner whether to leave this as
+  designed or close it; it is now closed (option C and D combined, slice 003 clarification,
+  2026-10-22; see Clarifications): the DEFAULT gauge is read independently of the lock and of whether
+  the job has ever run (FR-003-031), and a new last-successful-run age gauge pages before the
+  create-ahead buffer would otherwise hide the problem for up to two months (FR-003-032). Slice 006's
+  alert set is built against both signals.
 
 ## Dependencies
 
@@ -760,9 +799,9 @@ matching its attempt's `body_digest`.
   2026-10-21), a plain `DROP` of each expired month, so V1 is unchanged and keeps
   `outbound_body_default` (A3-63; 002's FR-002-054 and Assumptions).
 - **Slice 006-production-readiness.** The §10.3 alert rule "Body partition maintenance", its routing
-  and owner, and the dashboard; the alert links this slice's recovery procedure. How the rule combines
-  the pods' readings depends on open question 2 (AS-15); until it is answered, the rule reads the
-  gauge as designed. Its SIT → STE replay reads `outbound_body` well within the retention (H21).
+  and owner, and the dashboard; the alert links this slice's recovery procedure, and pages on the new
+  last-successful-run age gauge as well as the DEFAULT row count (FR-003-031, FR-003-032; open
+  question 2 resolved). Its SIT → STE replay reads `outbound_body` well within the retention (H21).
 - **Slices 004-recovery and 005-operations-api.** No build dependency. Investigations of what was
   sent read `outbound_body` within the window this slice enforces (§4.8, the dead-letter runbook).
   The documented recovery of FR-003-028 uses pause-intake and resume-intake (§4.8 action 4; AS-9),
@@ -772,8 +811,8 @@ matching its attempt's `body_digest`.
 - **Slice 001-parity-kernel.** None.
 - **External.** Platform ask 5: the service's own database, owned by its role, on PostgreSQL ≥ 13 for
   V1's trigger (15 confirmed, row A3-105). The data owner and the DPIA, informed that bodies are held
-  about six months and then removed (row A3-65; a note, not a gate). The design owner, for open
-  question 2 (AS-15); open question 1 is answered (H35; FR-003-011).
+  about six months and then removed (row A3-65; a note, not a gate). Open questions 1 and 2 are both
+  answered (H35; FR-003-011. Slice 003 clarification, 2026-10-22; FR-003-031, FR-003-032).
 
 ## Out of Scope
 
@@ -803,6 +842,7 @@ matching its attempt's `body_digest`.
 | H28 | The sizing floor: at least ~24 KB a body on average, ~100 MB a day, ~20 GB held; the real figure from partition sizes after go-live | SC-003-012; AS-11 |
 | H34 | Body-retention failures page; known issues are counted | FR-003-023 |
 | H35 | An expired month removed by a plain `DROP`, each in its own short transaction under the 5 s lock timeout; the advisory lock on its own transaction for the whole run; a timed-out `DROP` retried on the next run; the DEFAULT partition, its alert and its recovery kept; V1 unchanged (answers open question 1; amends A3-64 (b)) | FR-003-002, FR-003-011, FR-003-012, FR-003-016, FR-003-017; SC-003-013; AS-13 |
+| Slice 003 clarification, 2026-10-22 | Option C and D combined for open question 2: the DEFAULT gauge is read independently of the lock and of whether the job has ever run; a new age gauge for time since the job's last successful completion pages at ~2 days, catching a stopped job before the create-ahead buffer would otherwise hide it for up to two months (answers open question 2; resolves AS-15) | FR-003-022, FR-003-031, FR-003-032; SC-003-014; AS-15 |
 | A3-60 | Bodies never logged and never in a metric | FR-003-024; SC-003-009 |
 | A3-63 | Monthly partitions on UTC bounds, the DEFAULT partition, V1's three months; an in-place re-run replaces the body; "digest ⇒ body" is not a constraint | FR-003-006, FR-003-010, FR-003-013; Edge cases |
 | A3-64 | The job: schedule, single runner, creation ahead "if absent", removal, counts, the DEFAULT alert and the recovery step; every signal comes from a run | FR-003-001, FR-003-002, FR-003-003, FR-003-006, FR-003-007, FR-003-009, FR-003-014, FR-003-015, FR-003-018, FR-003-020, FR-003-021, FR-003-022, FR-003-025, FR-003-026, FR-003-028; AS-13, AS-15 |
@@ -821,9 +861,11 @@ matching its attempt's `body_digest`.
 | §8.4 ask 5 | The database owned by the service's role | FR-003-008; AS-4 |
 | §10.1 | The four `probation_body_*` metrics; a skipped run is not a failure | FR-003-002, FR-003-003, FR-003-017, FR-003-020, FR-003-021, FR-003-022; AS-15 |
 | §10.2 | Every failure path emits a sanitised ERROR line and a metric; the stored body is never logged | FR-003-017, FR-003-024; SC-003-008, SC-003-009; AS-14 |
-| §10.3 | The "Body partition maintenance" alert condition | FR-003-023; AS-15 |
+| §10.3 | The "Body partition maintenance" alert condition, extended by the slice 003 clarification of 2026-10-22 to page on the last-successful-run age as well as the DEFAULT row count | FR-003-023, FR-003-031, FR-003-032; AS-15 |
 | Appendix A | Environment variable names proposed, not bound | FR-003-027; AS-2 |
 | DV-09 | No payload or defendant data in logs | FR-003-024 |
 | DIGEST §6, §13 | Readiness is the store only | FR-003-019 |
 | DIGEST §12 | No `distribution.*` property outside the catalogue | FR-003-016, FR-003-027 |
 | DIGEST §16 | The job's package and the properties' environment binding not established | AS-1, AS-2 |
+
+<!-- token-budget: compacted (level=medium) on 2026-10-22T18:33:26Z; original at spec.full.md -->
