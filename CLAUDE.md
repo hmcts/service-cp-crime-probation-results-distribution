@@ -152,23 +152,36 @@ Postgres, Redis, WireMock).
 ## Setup
 
 <!-- SPECKIT START -->
-All six features are specified (design rev 3.6 + H35, constitution v2.0.1). `001-parity-kernel` is
-implemented (branch `001-parity-kernel`; `specs/001-parity-kernel/tasks.md`, 52/52 tasks): the
-ported HMPPS rules, the legacy-case twins, the reused comparator, the custody-checked corpus
-machinery and the deviation register are built and green. It is **not** yet a satisfied go-live
-evidence gate (H21, FR-001-017): the committed corpus is synthetic-only, holding only the `CACHE`
-form, pending the owning team's SIT capture (`doc/DEVIATIONS.md` "Corpus status"; an external
-dependency, not a code gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are
-resolved (spec.md Clarifications). The rest of the six features are specified but not planned yet.
-Implement in dependency order:
-`001-parity-kernel` → `002-hmpps-distribution` (owns the shared core: Flyway V1, enums, state
-machine, ports, metric registry) → `003-body-retention` and `004-recovery` → `005-operations-api` →
-`006-production-readiness`.
+All six features are specified (design rev 3.6 + H35, constitution v2.0.1). `001-parity-kernel` and
+`002-hmpps-distribution` are implemented (combined on branch `002-hmpps-distribution`, PR #8 — Flyway
+V1, enums, state machine, ports, metric registry, the redaction pipeline and the ported rules).
+`001-parity-kernel`'s own corpus is **not** yet a satisfied go-live evidence gate (H21, FR-001-017):
+the committed corpus is synthetic-only, holding only the `CACHE` form, pending the owning team's SIT
+capture (`doc/DEVIATIONS.md` "Corpus status"; an external dependency, not a code gap). Both
+`[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are resolved (spec.md Clarifications).
+`003-body-retention` is specified, clarified (including the 2026-10-22 session resolving the
+job-stopped-running visibility gap with Option C+D) and now planned: **the current plan is
+`specs/003-body-retention/plan.md`**, with `research.md`, `data-model.md`, `quickstart.md` and
+`tasks.md` alongside it. `004-recovery`, `005-operations-api` and `006-production-readiness` are
+specified but not yet planned.
 
 To start a feature: branch from `main` with the spec's folder name (e.g. `git switch -c
-002-hmpps-distribution`) — the Spec Kit scripts resolve `specs/<NNN>-*` from the branch prefix —
-then run `/speckit-clarify` for any remaining `[NEEDS CLARIFICATION]` (answers come from the design
-owner), `/speckit-plan`, `/speckit-tasks`, `/speckit-analyze`, `/speckit-implement`. The plan
+003-body-retention`) — the Spec Kit scripts resolve `specs/<NNN>-*` from the branch prefix — then run
+`/speckit-clarify` for any remaining `[NEEDS CLARIFICATION]` (answers come from the design owner),
+`/speckit-plan`, `/speckit-tasks`, `/speckit-analyze`, `/speckit-implement`. The plan
 (`specs/<NNN-slug>/plan.md`, with `spec.md` and `tasks.md` alongside it) then becomes the current
 context here. Specs are written against `doc/design/DIGEST.md` and the design it cites.
 <!-- SPECKIT END -->
+
+<!-- BEGIN token-budget compact-backups -->
+
+## Token Budget — backup guard
+
+Files ending in `.full.md` inside `specs/` and `.specify/memory/`
+(e.g. `spec.full.md`, `plan.full.md`) are pre-compaction backups created
+by `/speckit.token-budget.compact`. **Do not read them.** They contain the
+full uncompacted content; loading them cancels the token savings compaction
+achieved. To revert an artifact to its original state, run
+`/speckit.token-budget.restore` instead.
+
+<!-- END token-budget compact-backups -->
