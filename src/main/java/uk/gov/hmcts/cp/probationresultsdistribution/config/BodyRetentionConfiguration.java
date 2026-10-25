@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import javax.sql.DataSource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,6 +25,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.SingleRunnerLock
 @Configuration
 @EnableScheduling
 @EnableConfigurationProperties(BodyRetentionProperties.class)
+@ConditionalOnBean(JdbcClient.class)
 public class BodyRetentionConfiguration {
 
     /* default */ @Bean

@@ -32,7 +32,7 @@ class ServiceBusConsumerConfigIT {
     private static final DistributionProperties TEST_PROPERTIES = testProperties();
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-            .withUserConfiguration(ServiceBusConsumerConfig.class)
+            .withUserConfiguration(ServiceBusConsumerConfig.class, MetricRegistryConfiguration.class)
             .withBean(DataSource.class, EndToEndTestSupport::sharedDataSource)
             .withBean(JdbcClient.class,
                     () -> JdbcClient.create(EndToEndTestSupport.sharedDataSource()))

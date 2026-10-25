@@ -60,11 +60,6 @@ public class ServiceBusConsumerConfig {
     private static final Logger LOG = LoggerFactory.getLogger(ServiceBusConsumerConfig.class);
 
     /* default */ @Bean
-    MetricRegistry metricRegistry(final MeterRegistry meterRegistry) {
-        return new MetricRegistry(meterRegistry);
-    }
-
-    /* default */ @Bean
     ServiceBusHealthIndicator probationServiceBusHealthIndicator(final MeterRegistry meterRegistry,
             @Value("${distribution.servicebus.health-staleness:60s}") final String staleness) {
         return new ServiceBusHealthIndicator(DurationStyle.detectAndParse(staleness), meterRegistry);

@@ -164,6 +164,43 @@ it landed) rather than invented here.
   `6 tests completed, 4 failed` (the two cases that expect no wrapping — outside `/operations/**`,
   an unmapped method on an operations path — correctly still pass), every failure an assertion, no
   compile error. Real filter restored → `BUILD SUCCESSFUL`, all 6 green.
+- **T019/T020/T021/T022** (`ReplayControllerTest`, `OperationsResponseMapperTest` /
+  `OperationsResponseMapper`, `ReplayController`): the replay half of the response mapper and the
+  controller itself are entangled, at compile time, with the composition root
+  (`Application`'s `ReplayController` scan exclusion, `OperationsConfiguration`'s conditional bean,
+  `build.gradle`'s `spring-jms`/`spring-boot-restclient` additions) landed in the same working
+  session, so they are committed together with that root rather than split further.
+  - `OperationsResponseMapperTest`/`OperationsResponseMapper`: RED reconstructed by swapping in a
+    stub mapper that always renders `no-op` — `./gradlew test --tests
+    "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsResponseMapperTest"` →
+    `7 tests completed, 6 failed` (the one genuine `NoOp` case still passes), no compile error. Real
+    mapper restored → `BUILD SUCCESSFUL`, all 7 green.
+  - `ReplayControllerTest`/`ReplayController`: RED reconstructed by swapping in a stub controller
+    that never validates the body, never calls `ReplayAction`, never audits, and always answers
+    `no-op` — `./gradlew test --tests
+    "uk.gov.hmcts.cp.probationresultsdistribution.api.ReplayControllerTest"` →
+    `10 tests completed, 9 failed` (the one genuine `NoOp` case still passes), every failure an
+    assertion on the expected status/body, no compile error. Real controller restored →
+    `BUILD SUCCESSFUL`, all 10 green.
+- **T014** (`OperationsAuthorisationIT`): needs the full composition root (`OperationsConfiguration`,
+  the testfixture controllers, the real `cp-auth-rules-filter`/users-groups wiring) to run as a
+  `@SpringBootTest`, so it lands in the same commit as that root. RED reconstructed by temporarily
+  disabling `OperationsActionResolutionFilter`'s `FilterRegistrationBean`
+  (`registration.setEnabled(false)`) — `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuthorisationIT"` →
+  `7 tests completed, 2 failed`: `admitted_caller_reaches_replay` and
+  `admitted_caller_reaches_resend_leg` each failed `expected: 200/202 but was: 403 FORBIDDEN` — a
+  genuine assertion failure proving the filter is load-bearing (without it, `cp-auth-rules-filter`'s
+  own path/method fallback action name matches no Drools rule and denies by default), no compile
+  error. Registration restored → `BUILD SUCCESSFUL`, all 7 green. This also serves as the "one
+  assertion" research.md Decision 2 flagged as not yet re-verified against the real filter chain
+  (`action_header_cannot_redirect_authorisation`, which already passed throughout since its caller
+  is outside `Second Line Support` regardless of the header).
+- **T017**: verified, not re-authored — `application.yaml`'s existing `authz.http`/`audit.http`/
+  `cp.audit` block already matches T014-T016's expectations (`authz.http.enabled` and
+  `audit.http.enabled` default `true`, `deny-when-no-rules: true`, `cp.audit.enabled` default
+  `false` so the scaffold's own default is exactly the "filter on, transport off" case T016/T018
+  exercise). No change made under this task.
 
 ---
 
@@ -200,7 +237,7 @@ new component this finding requires.
 - [X] T013 [US4] Implement `config/OperationsActionResolutionFilter.java` (`OncePerRequestFilter`)
       and register it via a `FilterRegistrationBean` ordered before `cp-auth-rules-filter`'s own
       filter, scoped to `/operations/*` — satisfies T012
-- [ ] T014 [P] [US4] `OperationsAuthorisationIT` (real `cp-auth-rules-filter` wired, users-groups
+- [X] T014 [P] [US4] `OperationsAuthorisationIT` (real `cp-auth-rules-filter` wired, users-groups
       stubbed via WireMock): no/blank `CJSCPPUID` → `401`; caller outside `Second Line Support` →
       `403`; users-groups unreachable → `403` (fail closed); a caller admitted to `replay` who sends
       an action header naming `resend-leg` is still authorised by path+method, never the header
@@ -220,7 +257,7 @@ new component this finding requires.
 
 ### Implementation for User Story 4
 
-- [ ] T017 [US4] Confirm (or add, if missing) the `authz.http`/`audit.http`/`cp.audit` wiring in
+- [X] T017 [US4] Confirm (or add, if missing) the `authz.http`/`audit.http`/`cp.audit` wiring in
       `application.yaml` matches T014–T016's expectations — the scaffold already has this block;
       this task is a verification pass, not new authoring, per plan.md
 - [ ] T018 [US4] Add the startup WARN for "audit filter on, transport off" if not already present
@@ -244,7 +281,7 @@ fresh `messageId` with `origin = REPLAY`.
 
 ### Tests for User Story 1 (write first, confirm red, then implement) ⚠️
 
-- [ ] T019 [P] [US1] `ReplayControllerTest` (`@WebMvcTest`, `ReplayAction` mocked): `Enqueued` →
+- [X] T019 [P] [US1] `ReplayControllerTest` (`@WebMvcTest`, `ReplayAction` mocked): `Enqueued` →
       `200 {requestId, outcome: enqueued, messageId}`; `NoOp` → `200 {outcome: no-op}`;
       `Refused(RESEND_IN_PROGRESS)` → `409 resend-in-progress`; `Refused(UNKNOWN_REQUEST)` →
       `404 unknown-request`; `Refused(NOT_ELIGIBLE)` → `409 not-eligible`; `StoreUnavailable` →
@@ -253,16 +290,16 @@ fresh `messageId` with `origin = REPLAY`.
       now (`public ReplayOutcome replay(UUID requestId)`, `application.ReplayOutcome`'s five
       `sealed` cases), so this test can be written and run against the real class, mocked at the
       boundary — `src/test/java/.../api/ReplayControllerTest.java`
-- [ ] T020 [P] [US1] `OperationsResponseMapperTest` (replay half): `ReplayAction`'s result →
+- [X] T020 [P] [US1] `OperationsResponseMapperTest` (replay half): `ReplayAction`'s result →
       `ReplayResponse` per T019's cases, with the `requestId` always the service's own canonical
       parse (FR-005-031) — `src/test/java/.../api/OperationsResponseMapperTest.java`
 
 ### Implementation for User Story 1
 
-- [ ] T021 [US1] Implement `api/OperationsResponseMapper.java` (replay half): maps
+- [X] T021 [US1] Implement `api/OperationsResponseMapper.java` (replay half): maps
       `application.ReplayOutcome`'s five cases (`Enqueued`, `NoOp`, `Refused` with its
       `ResendRefusal`, `StoreUnavailable`, `BrokerUnavailable`) to `ReplayResponse` — satisfies T020
-- [ ] T022 [US1] Implement `api/ReplayController.java`: `POST
+- [X] T022 [US1] Implement `api/ReplayController.java`: `POST
       /operations/requests/{requestId}/replay`, no body or `{}` only (FR-005-009, FR-005-033), calls
       `ReplayAction.replay(UUID)` via `OperationsRequestMapper`/`OperationsResponseMapper`, wrapped
       by `OperationsAuditPublisher` (request event before the call, response event after) —

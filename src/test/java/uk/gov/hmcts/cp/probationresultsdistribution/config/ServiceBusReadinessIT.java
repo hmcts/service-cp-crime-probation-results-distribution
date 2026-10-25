@@ -2,21 +2,16 @@ package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.health.contributor.Health;
-import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.BodyMaintenanceStateRepository;
@@ -25,6 +20,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.DatabaseClock;
 import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.MaintenanceMetrics;
 import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionCatalogue;
 import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionMaintenanceRepository;
+import uk.gov.hmcts.testfixtures.ServiceBusReadinessHealthContributors;
 
 /** Exercises the deployed readiness group with a live Actuator endpoint and a failed broker. */
 // This fixture has no store; maintenance is exercised against PostgreSQL by its own ITs.
@@ -35,6 +31,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionMainten
         properties = "management.endpoint.health.group.readiness.include=db")
 @ActiveProfiles("test")
 @DisplayName("the deployed readiness endpoint")
+@Import(ServiceBusReadinessHealthContributors.class)
 class ServiceBusReadinessIT {
 
     private final int port;
@@ -61,17 +58,4 @@ class ServiceBusReadinessIT {
         assertThat(broker.health().getStatus().getCode()).isEqualTo("DOWN");
     }
 
-    @TestConfiguration(proxyBeanMethods = false)
-    static class HealthContributors {
-
-        @Bean("dbHealthIndicator")
-        HealthIndicator database() {
-            return () -> Health.up().build();
-        }
-
-        @Bean("probationServiceBusHealthIndicator")
-        ServiceBusHealthIndicator broker() {
-            return new ServiceBusHealthIndicator(Duration.ofSeconds(60), new SimpleMeterRegistry());
-        }
-    }
 }
