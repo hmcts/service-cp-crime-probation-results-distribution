@@ -16,6 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jms.JmsException;
@@ -62,6 +63,17 @@ class OperationsAuditPublisherTest {
         }
 
         @Test
+        @DisplayName("names the action, per FR-005-026, alongside the caller-supplied fields")
+        void names_the_action() {
+            final ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+
+            publisherWithTransport().publishRequestEvent(OperationsAction.REPLAY, Map.of("requestId", "abc"));
+
+            verify(jmsTemplate).convertAndSend(eq("jms.topic.auditing.event"), body.capture());
+            assertThat(body.getValue()).contains("\"action\":\"replay\"").contains("\"requestId\":\"abc\"");
+        }
+
+        @Test
         @DisplayName("a publish failure refuses the call before anything downstream runs")
         void a_publish_failure_refuses_the_call() {
             doThrow(mock(JmsException.class)).when(jmsTemplate)
@@ -93,6 +105,19 @@ class OperationsAuditPublisherTest {
             publisherWithTransport().publishResponseEvent(OperationsAction.RESEND_LEG, Map.of("x", "y"));
 
             verify(jmsTemplate).convertAndSend(eq("jms.topic.auditing.event"), any(String.class));
+        }
+
+        @Test
+        @DisplayName("names the action, per FR-005-026, alongside the caller-supplied fields")
+        void names_the_action() {
+            final ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+
+            publisherWithTransport().publishResponseEvent(OperationsAction.RESEND_LEG,
+                    Map.of("outcome", "enqueued"));
+
+            verify(jmsTemplate).convertAndSend(eq("jms.topic.auditing.event"), body.capture());
+            assertThat(body.getValue()).contains("\"action\":\"resend-leg\"")
+                    .contains("\"outcome\":\"enqueued\"");
         }
 
         @Test

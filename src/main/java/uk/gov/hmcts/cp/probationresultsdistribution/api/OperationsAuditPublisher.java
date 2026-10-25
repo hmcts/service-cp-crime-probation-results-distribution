@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.api;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -34,6 +35,7 @@ public final class OperationsAuditPublisher {
 
     private static final Logger LOG = LoggerFactory.getLogger(OperationsAuditPublisher.class);
     private static final String AUDIT_TOPIC = "jms.topic.auditing.event";
+    private static final String ACTION_FIELD = "action";
 
     private final Optional<JmsTemplate> jmsTemplate;
     private final ObjectMapper objectMapper;
@@ -68,7 +70,7 @@ public final class OperationsAuditPublisher {
             return;
         }
         try {
-            jmsTemplate.get().convertAndSend(AUDIT_TOPIC, toJson(fields));
+            jmsTemplate.get().convertAndSend(AUDIT_TOPIC, toJson(action, fields));
         } catch (final JmsException publishFailed) {
             throw OperationsRefusalException.forReason(OperationsRefusalReason.AUDIT_UNAVAILABLE);
         }
@@ -86,7 +88,7 @@ public final class OperationsAuditPublisher {
             return;
         }
         try {
-            jmsTemplate.get().convertAndSend(AUDIT_TOPIC, toJson(fields));
+            jmsTemplate.get().convertAndSend(AUDIT_TOPIC, toJson(action, fields));
         } catch (final JmsException publishFailed) {
             LOG.error("operations response audit event not published action={}", action.wireValue(),
                     publishFailed);
@@ -94,9 +96,18 @@ public final class OperationsAuditPublisher {
         }
     }
 
-    private String toJson(final Map<String, Object> fields) {
+    /**
+     * Serialises one event's bounded fields with the action named alongside them (FR-005-026): the
+     * action; the outcome or refusal reason; for replay the requestId; whether either override was
+     * requested — never a request/response body, the operator or reason text, a hearing payload or a
+     * stored body.
+     */
+    private String toJson(final OperationsAction action, final Map<String, Object> fields) {
+        final Map<String, Object> event = new LinkedHashMap<>();
+        event.put(ACTION_FIELD, action.wireValue());
+        event.putAll(fields);
         try {
-            return objectMapper.writeValueAsString(fields);
+            return objectMapper.writeValueAsString(event);
         } catch (final JsonProcessingException notSerialisable) {
             throw new IllegalStateException("operations audit event fields not serialisable",
                     notSerialisable);
