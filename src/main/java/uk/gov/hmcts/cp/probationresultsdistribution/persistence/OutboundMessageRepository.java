@@ -118,6 +118,82 @@ public final class OutboundMessageRepository {
         return rows;
     }
 
+    /**
+     * Re-runs the attempt-1 row in place for a replayed run, allowing a {@code FAILED} row as well as
+     * {@code PENDING}/{@code PARKED} (slice 004, FR-004-008). The note is always rewritten to
+     * {@code prev=<STATUS>/<reason>;rerun-by=<messageId>} — a replay re-run always follows an earlier
+     * write, so there is no "first write" case to preserve, unlike {@link #writeOutcome}. A
+     * {@code FAILED} row already naming this exact {@code messageId} in its {@code note} is excluded
+     * from the match, so it is re-run at most once per replay message (FR-004-010); a {@code PARKED}
+     * row carries no such exclusion.
+     *
+     * @param outcome          the derived leg outcome
+     * @param claim            the request claim fencing the write
+     * @param rerunByMessageId the replay message's {@code messageId}
+     * @return the number of rows updated: 1 when written, 0 when fenced out or already re-run by this
+     *     message
+     */
+    public int writeReplayOutcome(final LegOutcome outcome, final RunClaim claim,
+                                  final String rerunByMessageId) {
+        return transactionTemplate.execute(status ->
+                applyReplayOutcome(outcome, claim, rerunByMessageId));
+    }
+
+    private int applyReplayOutcome(final LegOutcome outcome, final RunClaim claim,
+                                   final String rerunByMessageId) {
+        final String bodyDigest = outcome.bodyDigest().orElse(null);
+        final String versionToWrite = bodyDigest == null ? null : serviceVersion;
+        final boolean sent = outcome.status() == LegStatus.SENT;
+        final Optional<UUID> updatedId = jdbc.sql(
+                        "UPDATE outbound_message SET status = :status, reason = :reason, "
+                        + "youth_switch = :youthSwitch, http_status = :httpStatus, "
+                        + "payload_source = :payloadSource, payload_shared_time = :sharedTime, "
+                        + "body_digest = :bodyDigest, service_version = :serviceVersion, "
+                        + "sent_at = CASE WHEN :sent THEN now() ELSE NULL END, "
+                        + "note = 'prev=' || status || '/' || coalesce(reason, '-') "
+                        + "|| ';rerun-by=' || :messageId, "
+                        + "attempts = attempts + 1, updated_at = now() "
+                        + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
+                        + "AND attempt = 1 AND status IN ('PENDING', 'PARKED', 'FAILED') "
+                        + "AND (status <> 'FAILED' OR note IS NULL "
+                        + "OR position(('rerun-by=' || :messageId) in note) = 0) "
+                        + "AND EXISTS (SELECT 1 FROM processed_request pr "
+                        + "WHERE pr.source = outbound_message.source "
+                        + "AND pr.request_id = outbound_message.request_id "
+                        + "AND pr.claim_owner = :owner AND pr.claim_token = :token) "
+                        + "RETURNING id")
+                .param("status", outcome.status().wireValue())
+                .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
+                .param("youthSwitch",
+                        outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
+                .param("httpStatus",
+                        outcome.httpStatus().isPresent() ? outcome.httpStatus().getAsInt() : null)
+                .param("payloadSource",
+                        outcome.payloadSource().map(PayloadSource::wireValue).orElse(null))
+                .param("sharedTime", outcome.payloadSharedTime()
+                        .map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC))
+                        .orElse(null))
+                .param("bodyDigest", bodyDigest)
+                .param("serviceVersion", versionToWrite)
+                .param("sent", sent)
+                .param("messageId", rerunByMessageId)
+                .param("source", outcome.command().source())
+                .param("requestId", outcome.command().requestId())
+                .param("owner", claim.owner().toString())
+                .param("token", claim.token())
+                .query(UUID.class)
+                .optional();
+
+        final int rows;
+        if (updatedId.isEmpty()) {
+            rows = 0;
+        } else {
+            replaceBody(updatedId.get(), outcome.body().orElse(null));
+            rows = 1;
+        }
+        return rows;
+    }
+
     private void replaceBody(final UUID outboundMessageId, final String body) {
         jdbc.sql("DELETE FROM outbound_body WHERE outbound_message_id = :id")
                 .param("id", outboundMessageId)

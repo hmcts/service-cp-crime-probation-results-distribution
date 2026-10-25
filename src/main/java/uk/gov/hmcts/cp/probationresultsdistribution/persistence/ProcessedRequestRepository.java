@@ -7,6 +7,7 @@ import java.util.UUID;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
@@ -93,6 +94,54 @@ public interface ProcessedRequestRepository {
                        String exhaustedMessageId);
 
     /**
+     * Admits a {@code FAILED} request as a replay, in one statement (design A2-62, FR-004-004):
+     * moves it {@code FAILED} to {@code RECEIVED}, clears {@code failure_reason} and
+     * {@code exhausted_message_id}, sets {@code replayed_at}, appends the
+     * {@code REPLAYED_AFTER_FAILURE} line and the route line to {@code audit_note}, and takes a
+     * fresh request claim. Matches only a {@code FAILED} row — the caller has already excluded a
+     * live {@code PENDING} resend row on the leg (FR-004-003).
+     *
+     * @param source    the command source
+     * @param requestId the request id
+     * @param claim     the fresh claim to take
+     * @param route     the replay route, appended to {@code audit_note} as an audit label only
+     * @return {@code true} when the replay statement matched a {@code FAILED} row; {@code false}
+     *     when the request was no longer {@code FAILED} (a race with another admission)
+     */
+    boolean admitReplay(String source, UUID requestId, RunClaim claim, ReplayRoute route);
+
+    /**
+     * Reads a request's state for the replay action (FR-004-014), without the attempt-1 columns the
+     * guard's hot-path {@link #find} carries — a dedicated, lighter read for an operator-triggered
+     * action rather than every delivery.
+     *
+     * @param source    the command source
+     * @param requestId the request id
+     * @return the replay candidate, or empty when no row exists
+     */
+    Optional<ReplayCandidate> findForReplay(String source, UUID requestId);
+
+    /**
+     * A request's state as the replay action needs it (FR-004-014–FR-004-017).
+     *
+     * @param status                 the request status
+     * @param hearingId              the resulted hearing, for the replay message's correlation id
+     * @param command                the admitted body exactly as received, re-sent byte for byte
+     * @param pendingResendRowLatest whether the leg's latest row is a {@code PENDING} resend row,
+     *                               live or expired (FR-004-003)
+     */
+    record ReplayCandidate(String status, UUID hearingId, String command,
+                           boolean pendingResendRowLatest) {
+
+        /** Rejects null components. */
+        public ReplayCandidate {
+            Objects.requireNonNull(status, "status");
+            Objects.requireNonNull(hearingId, "hearingId");
+            Objects.requireNonNull(command, "command");
+        }
+    }
+
+    /**
      * A request's current state as the guard needs it.
      *
      * @param status      the request status
@@ -101,14 +150,27 @@ public interface ProcessedRequestRepository {
      * @param attemptOneStatus the recorded HMPPS attempt-1 status, if present
      * @param attemptOneReason the bounded HMPPS attempt-1 reason, if present
      * @param attemptOneHttpStatus the HMPPS attempt-1 HTTP status, if present
+     * @param exhaustedMessageId the stored {@code exhausted_message_id}, if any (FR-004-001)
+     * @param pendingResendRowLatest whether the leg's latest row is a {@code PENDING} resend row,
+     *                               live or expired (FR-004-003)
      */
     record RequestRecord(String status, String fingerprint, boolean claimLive,
                          Optional<String> attemptOneStatus, Optional<String> attemptOneReason,
-                         OptionalInt attemptOneHttpStatus) {
+                         OptionalInt attemptOneHttpStatus, Optional<String> exhaustedMessageId,
+                         boolean pendingResendRowLatest) {
 
         public RequestRecord(final String status, final String fingerprint,
                              final boolean claimLive) {
-            this(status, fingerprint, claimLive, Optional.empty(), Optional.empty(), OptionalInt.empty());
+            this(status, fingerprint, claimLive, Optional.empty(), Optional.empty(),
+                    OptionalInt.empty(), Optional.empty(), false);
+        }
+
+        public RequestRecord(final String status, final String fingerprint, final boolean claimLive,
+                             final Optional<String> attemptOneStatus,
+                             final Optional<String> attemptOneReason,
+                             final OptionalInt attemptOneHttpStatus) {
+            this(status, fingerprint, claimLive, attemptOneStatus, attemptOneReason,
+                    attemptOneHttpStatus, Optional.empty(), false);
         }
 
         /** Rejects null components. */
@@ -117,6 +179,7 @@ public interface ProcessedRequestRepository {
             Objects.requireNonNull(fingerprint, "fingerprint");
             Objects.requireNonNull(attemptOneStatus, "attemptOneStatus");
             Objects.requireNonNull(attemptOneReason, "attemptOneReason");
+            Objects.requireNonNull(exhaustedMessageId, "exhaustedMessageId");
         }
     }
 }

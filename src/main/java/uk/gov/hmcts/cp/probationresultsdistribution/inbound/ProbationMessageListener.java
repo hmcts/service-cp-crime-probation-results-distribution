@@ -22,6 +22,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.GatewayRecovery;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
@@ -44,6 +45,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
 public final class ProbationMessageListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(ProbationMessageListener.class);
+    private static final String ORIGIN_PROPERTY = "origin";
+    private static final String DEFAULT_MESSAGE_ID = "unit-test";
 
     private final DistributionCommandParser parser;
     private final IdempotencyGuard guard;
@@ -108,7 +111,8 @@ public final class ProbationMessageListener {
             // processMessage unsettled (FR-002-007).
             storeAvailable = storeGate.storeAvailable();
             settlement = storeAvailable
-                    ? decide(message.getBody().toString(), deliveryCount, message.getSequenceNumber())
+                    ? decide(message.getBody().toString(), deliveryCount, message.getSequenceNumber(),
+                            message.getMessageId(), routeOf(message))
                     : storeUnavailable(deliveryCount);
         } catch (final RuntimeException unexpected) {
             // Not swallowed: an unexpected failure is logged by type, counted and the delivery handed
@@ -177,8 +181,16 @@ public final class ProbationMessageListener {
         return decide(body, deliveryCount, 0L);
     }
 
-    private Settlement decide(final String body, final long deliveryCount,
+    /* default */ Settlement decide(final String body, final long deliveryCount,
                               final long sequenceNumber) {
+        // This overload's messageId/route stand in for the real broker values the tests that call it
+        // do not exercise: the guard is mocked in every such test, so neither value drives behaviour.
+        return decide(body, deliveryCount, sequenceNumber, DEFAULT_MESSAGE_ID, ReplayRoute.COPY);
+    }
+
+    private Settlement decide(final String body, final long deliveryCount,
+                              final long sequenceNumber, final String messageId,
+                              final ReplayRoute route) {
         final DistributionCommand command;
         try {
             command = parser.parse(body);
@@ -189,10 +201,16 @@ public final class ProbationMessageListener {
             return new DeadLetter(DeadLetterReason.VALIDATION);
         }
         setMdc(command, deliveryCount, sequenceNumber);
-        final GuardDecision decision = guard.admit(command, body);
+        final GuardDecision decision = guard.admit(command, body, messageId, deliveryCount, route);
         return switch (decision) {
             case GuardDecision.DuplicateComplete ignored -> new Complete();
             case GuardDecision.Abandon ignored -> handBack(deliveryCount);
+            case GuardDecision.ReplayDeferred ignored -> {
+                metrics.replayDeferred();
+                LOG.warn("replay deferred: a PENDING resend row is in progress on the leg; "
+                        + "abandoning requestId={}", command.requestId());
+                yield handBack(deliveryCount);
+            }
             case GuardDecision.DeadLetter deadLetter -> {
                 metrics.deadLettered(deadLetter.reason());
                 yield new DeadLetter(deadLetter.reason());
@@ -201,7 +219,13 @@ public final class ProbationMessageListener {
                 if (admitted.crashRerun()) {
                     metrics.crashRerun(Leg.HMPPS);
                 }
-                yield runAndSettle(command, admitted.claim(), deliveryCount, admitted.gatewayParked());
+                admitted.replayMessageId().ifPresent(replayId -> {
+                    metrics.replays(route);
+                    LOG.info("replay admitted requestId={} route={} messageId={}",
+                            command.requestId(), route.wireValue(), replayId);
+                });
+                yield runAndSettle(command, admitted.claim(), deliveryCount, admitted.gatewayParked(),
+                        admitted.replayMessageId());
             }
         };
     }
@@ -241,9 +265,12 @@ public final class ProbationMessageListener {
     }
 
     private Settlement runAndSettle(final DistributionCommand command, final RunClaim claim,
-                                    final long deliveryCount, final boolean gatewayParked) {
+                                    final long deliveryCount, final boolean gatewayParked,
+                                    final Optional<String> replayMessageId) {
         final boolean finalDelivery = isFinalPermittedDelivery(deliveryCount);
-        final RunResult result = runner.run(command, AttemptOrigin.QUEUE, claim, finalDelivery);
+        final RunResult result = replayMessageId.isPresent()
+                ? runner.run(command, AttemptOrigin.REPLAY, claim, finalDelivery, replayMessageId.get())
+                : runner.run(command, AttemptOrigin.QUEUE, claim, finalDelivery);
         if (!result.recorded()) {
             return staleRunnerRejection(deliveryCount);
         }
@@ -328,6 +355,25 @@ public final class ProbationMessageListener {
         metrics.staleRunnerRejection();
         LOG.warn("stale-runner rejection: guarded write matched no row; handing the delivery back");
         return handBack(deliveryCount);
+    }
+
+    /**
+     * Derives the replay route from the delivery's {@code origin} application property (design row
+     * A3-34, FR-004-005): an audit label only, never read by any eligibility, settlement or sending
+     * rule. Any value other than {@code REPLAY} or {@code SUPPORT} — absent included — is
+     * {@code COPY}; the value itself is never recorded or logged (spec Assumption 17).
+     *
+     * @param message the delivery
+     * @return the replay route this delivery would be admitted under, if admitted as a replay
+     */
+    private static ReplayRoute routeOf(final ServiceBusReceivedMessage message) {
+        final Object origin = message.getApplicationProperties().get(ORIGIN_PROPERTY);
+        final String originValue = origin instanceof String value ? value : null;
+        return switch (originValue) {
+            case "REPLAY" -> ReplayRoute.SERVICE;
+            case "SUPPORT" -> ReplayRoute.SUPPORT;
+            case null, default -> ReplayRoute.COPY;
+        };
     }
 
     private static void setDeliveryMdc(final long sequenceNumber, final long deliveryCount) {

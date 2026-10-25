@@ -95,6 +95,31 @@ public final class DistributionRunner {
      */
     public RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,
                          final RunClaim claim, final boolean finalPermittedDelivery) {
+        return run(command, runOrigin, claim, finalPermittedDelivery, Optional.empty());
+    }
+
+    /**
+     * Runs the HMPPS pipeline for one replayed delivery, re-running the attempt-1 row in place
+     * (slice 004, FR-004-007, FR-004-008) instead of writing it only when it is {@code PENDING} or
+     * {@code PARKED}.
+     *
+     * @param command                the admitted command
+     * @param runOrigin              the run origin captured at admission ({@link AttemptOrigin#REPLAY})
+     * @param claim                  the request claim the run's writes are fenced by
+     * @param finalPermittedDelivery whether this is the final delivery the broker will permit
+     * @param replayMessageId        the replay message's {@code messageId}, recorded in {@code note}
+     * @return the run result for the listener to settle on
+     */
+    public RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,
+                         final RunClaim claim, final boolean finalPermittedDelivery,
+                         final String replayMessageId) {
+        return run(command, runOrigin, claim, finalPermittedDelivery,
+                Optional.of(Objects.requireNonNull(replayMessageId, "replayMessageId")));
+    }
+
+    private RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,
+                          final RunClaim claim, final boolean finalPermittedDelivery,
+                          final Optional<String> replayMessageId) {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(runOrigin, "runOrigin");
         Objects.requireNonNull(claim, "claim");
@@ -102,35 +127,38 @@ public final class DistributionRunner {
         final RunResult result;
         if (fetched.isEmpty()) {
             result = finalPermittedDelivery
-                    ? failPayloadUnavailable(command, runOrigin, claim)
-                    : park(command, runOrigin, claim);
+                    ? failPayloadUnavailable(command, runOrigin, claim, replayMessageId)
+                    : park(command, runOrigin, claim, replayMessageId);
         } else {
-            result = runLeg(command, runOrigin, claim, fetched.get(), finalPermittedDelivery);
+            result = runLeg(command, runOrigin, claim, fetched.get(), finalPermittedDelivery,
+                    replayMessageId);
         }
         return result;
     }
 
     private RunResult park(final DistributionCommand command, final AttemptOrigin runOrigin,
-                           final RunClaim claim) {
+                           final RunClaim claim, final Optional<String> replayMessageId) {
         final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.PARKED,
                 Optional.of(LegReason.PAYLOAD_UNAVAILABLE), Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty(), OptionalInt.empty(), Optional.empty());
         return record(command, runOrigin, claim, outcome, Optional.empty(), BodyShape.CASE,
-                Optional.empty());
+                Optional.empty(), replayMessageId);
     }
 
     private RunResult failPayloadUnavailable(final DistributionCommand command,
-                                             final AttemptOrigin runOrigin, final RunClaim claim) {
+                                             final AttemptOrigin runOrigin, final RunClaim claim,
+                                             final Optional<String> replayMessageId) {
         final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.FAILED,
                 Optional.of(LegReason.PAYLOAD_UNAVAILABLE), Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty(), OptionalInt.empty(), Optional.empty());
         return record(command, runOrigin, claim, outcome, Optional.empty(), BodyShape.CASE,
-                Optional.empty());
+                Optional.empty(), replayMessageId);
     }
 
     private RunResult runLeg(final DistributionCommand command, final AttemptOrigin runOrigin,
                              final RunClaim claim, final FetchedPayload fetched,
-                             final boolean finalPermittedDelivery) {
+                             final boolean finalPermittedDelivery,
+                             final Optional<String> replayMessageId) {
         final YouthSwitchDecision decision = youthFilterSource.read(command);
         final YouthSwitchRecordedValue recordedSwitch = applyDefault(decision);
         final Optional<YouthSwitchUnreadableCause> switchCause = decision
@@ -142,15 +170,16 @@ public final class DistributionRunner {
         return switch (redacted) {
             case RedactionResult.Body body -> send(
                     command, runOrigin, claim, recordedSwitch, fetched, body.payload(),
-                    finalPermittedDelivery, switchCause);
+                    finalPermittedDelivery, switchCause, replayMessageId);
             case RedactionResult.EmptiedByR1 ignored -> notApplicable(
                     command, runOrigin, claim, recordedSwitch, fetched,
-                    LegReason.SJP_OR_BOX_HEARING, switchCause);
+                    LegReason.SJP_OR_BOX_HEARING, switchCause, replayMessageId);
             case RedactionResult.EmptiedByR11 ignored -> notApplicable(
                     command, runOrigin, claim, recordedSwitch, fetched,
-                    LegReason.NOTHING_LEFT_AFTER_REDACTION, switchCause);
+                    LegReason.NOTHING_LEFT_AFTER_REDACTION, switchCause, replayMessageId);
             case RedactionResult.RulesFailure failure -> rulesFailure(
-                    command, runOrigin, claim, recordedSwitch, fetched, failure.ruleId(), switchCause);
+                    command, runOrigin, claim, recordedSwitch, fetched, failure.ruleId(), switchCause,
+                    replayMessageId);
         };
     }
 
@@ -158,7 +187,8 @@ public final class DistributionRunner {
                            final RunClaim claim, final YouthSwitchRecordedValue recordedSwitch,
                            final FetchedPayload fetched, final JsonNode redactedBody,
                            final boolean finalPermittedDelivery,
-                           final Optional<YouthSwitchUnreadableCause> switchCause) {
+                           final Optional<YouthSwitchUnreadableCause> switchCause,
+                           final Optional<String> replayMessageId) {
         final SentBody sent = hmppsSender.send(redactedBody);
         final String digest = sha256Hex(sent.body());
         final MappedOutcome mapped = mapOutcome(sent.outcome(), finalPermittedDelivery);
@@ -169,26 +199,29 @@ public final class DistributionRunner {
                 Optional.of(sent.body()));
         final Optional<GatewayRecovery> recovery = sent.outcome() instanceof PublishOutcome.Sent succeeded
                 ? succeeded.recovery() : Optional.empty();
-        return record(command, runOrigin, claim, outcome, switchCause, shape, recovery);
+        return record(command, runOrigin, claim, outcome, switchCause, shape, recovery,
+                replayMessageId);
     }
 
     private RunResult notApplicable(final DistributionCommand command, final AttemptOrigin runOrigin,
                                     final RunClaim claim,
                                     final YouthSwitchRecordedValue recordedSwitch,
                                     final FetchedPayload fetched, final LegReason reason,
-                                    final Optional<YouthSwitchUnreadableCause> switchCause) {
+                                    final Optional<YouthSwitchUnreadableCause> switchCause,
+                                    final Optional<String> replayMessageId) {
         final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.NOT_APPLICABLE,
                 Optional.of(reason), Optional.of(recordedSwitch), Optional.of(fetched.source()),
                 fetched.sharedTime(), Optional.empty(), OptionalInt.empty(), Optional.empty());
         return record(command, runOrigin, claim, outcome, switchCause, BodyShape.CASE,
-                Optional.empty());
+                Optional.empty(), replayMessageId);
     }
 
     private RunResult rulesFailure(final DistributionCommand command, final AttemptOrigin runOrigin,
                                    final RunClaim claim,
                                    final YouthSwitchRecordedValue recordedSwitch,
                                    final FetchedPayload fetched, final String ruleId,
-                                   final Optional<YouthSwitchUnreadableCause> switchCause) {
+                                   final Optional<YouthSwitchUnreadableCause> switchCause,
+                                   final Optional<String> replayMessageId) {
         final LegOutcome outcome = new LegOutcome(command, runOrigin, LegStatus.FAILED,
                 Optional.of(LegReason.RULES_EXCEPTION), Optional.of(recordedSwitch),
                 Optional.of(fetched.source()), fetched.sharedTime(), Optional.empty(),
@@ -196,7 +229,7 @@ public final class DistributionRunner {
         LOG.error("HMPPS redaction rules failed requestId={} origin={} rule={}",
                 command.requestId(), runOrigin, ruleId);
         return record(command, runOrigin, claim, outcome, switchCause, BodyShape.CASE,
-                Optional.empty());
+                Optional.empty(), replayMessageId);
     }
 
     // A rejected fenced write exits before any outcome telemetry can claim that it was recorded.
@@ -204,8 +237,11 @@ public final class DistributionRunner {
     private RunResult record(final DistributionCommand command, final AttemptOrigin runOrigin,
                              final RunClaim claim, final LegOutcome outcome,
                              final Optional<YouthSwitchUnreadableCause> switchCause,
-                             final BodyShape shape, final Optional<GatewayRecovery> recovery) {
-        final boolean recorded = outboundLog.record(outcome, claim);
+                             final BodyShape shape, final Optional<GatewayRecovery> recovery,
+                             final Optional<String> replayMessageId) {
+        final boolean recorded = replayMessageId.isPresent()
+                ? outboundLog.recordReplay(outcome, claim, replayMessageId.get())
+                : outboundLog.record(outcome, claim);
         if (!recorded) {
             return new RunResult(runOrigin, outcome.status(), outcome.reason(), false);
         }

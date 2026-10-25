@@ -42,4 +42,18 @@ public final class OutboundLogAdapter implements OutboundLog {
     public boolean record(final LegOutcome outcome, final RunClaim claim) {
         return repository.writeOutcome(outcome, claim) == 1;
     }
+
+    /**
+     * Re-runs the attempt-1 row in place for a replayed run (slice 004, FR-004-008, FR-004-010).
+     *
+     * @param outcome          the derived leg outcome
+     * @param claim            the request claim fencing the write
+     * @param rerunByMessageId the replay message's {@code messageId}
+     * @return {@code true} when the guarded write took effect; {@code false} when it matched no row
+     */
+    @Override
+    public boolean recordReplay(final LegOutcome outcome, final RunClaim claim,
+                                final String rerunByMessageId) {
+        return repository.writeReplayOutcome(outcome, claim, rerunByMessageId) == 1;
+    }
 }

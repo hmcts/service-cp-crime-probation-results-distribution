@@ -12,6 +12,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
@@ -51,13 +52,18 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
 
     @Override
     public Optional<RequestRecord> find(final String source, final UUID requestId) {
-        return jdbc.sql("SELECT pr.status, pr.request_fingerprint, "
+        return jdbc.sql("SELECT pr.status, pr.request_fingerprint, pr.exhausted_message_id, "
                         + "(pr.claim_expires_at IS NOT NULL AND pr.claim_expires_at > now()) AS claim_live, "
                         + "om.status AS attempt_one_status, om.reason AS attempt_one_reason, "
-                        + "om.http_status AS attempt_one_http_status "
+                        + "om.http_status AS attempt_one_http_status, "
+                        + "(oml.attempt_origin = 'resend' AND oml.status = 'PENDING') "
+                        + "AS pending_resend_row_latest "
                         + "FROM processed_request pr LEFT JOIN outbound_message om "
                         + "ON om.source = pr.source AND om.request_id = pr.request_id "
                         + "AND om.leg = 'HMPPS' AND om.attempt = 1 "
+                        + "LEFT JOIN outbound_message_latest oml "
+                        + "ON oml.source = pr.source AND oml.request_id = pr.request_id "
+                        + "AND oml.leg = 'HMPPS' "
                         + "WHERE pr.source = :source AND pr.request_id = :requestId")
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
@@ -68,8 +74,50 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                     return new RequestRecord(rs.getString("status"),
                             rs.getString("request_fingerprint"), rs.getBoolean("claim_live"),
                             Optional.ofNullable(rs.getString("attempt_one_status")),
-                            Optional.ofNullable(rs.getString("attempt_one_reason")), optionalHttpStatus);
+                            Optional.ofNullable(rs.getString("attempt_one_reason")), optionalHttpStatus,
+                            Optional.ofNullable(rs.getString("exhausted_message_id")),
+                            rs.getBoolean("pending_resend_row_latest"));
                 })
+                .optional();
+    }
+
+    @Override
+    public boolean admitReplay(final String source, final UUID requestId, final RunClaim claim,
+                               final ReplayRoute route) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'RECEIVED', "
+                        + "exhausted_message_id = NULL, replayed_at = now(), "
+                        + "claim_owner = :owner, claim_token = :token, "
+                        + "claim_expires_at = now() + make_interval(secs => :lease), "
+                        + "attempts = attempts + 1, updated_at = now(), "
+                        + "audit_note = coalesce(audit_note || E'\\n', '') || now()::text "
+                        + "|| ' REPLAYED_AFTER_FAILURE prior=' || failure_reason "
+                        + "|| E'\\n' || now()::text || ' route=' || :route, "
+                        + "failure_reason = NULL "
+                        + REQUEST_WHERE + "AND status = 'FAILED'")
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .param("lease", (double) leaseSeconds)
+                .param("route", route.wireValue())
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+        return rows > 0;
+    }
+
+    @Override
+    public Optional<ReplayCandidate> findForReplay(final String source, final UUID requestId) {
+        return jdbc.sql("SELECT pr.status, pr.hearing_id, pr.command, "
+                        + "(oml.attempt_origin = 'resend' AND oml.status = 'PENDING') "
+                        + "AS pending_resend_row_latest "
+                        + "FROM processed_request pr LEFT JOIN outbound_message_latest oml "
+                        + "ON oml.source = pr.source AND oml.request_id = pr.request_id "
+                        + "AND oml.leg = 'HMPPS' "
+                        + "WHERE pr.source = :source AND pr.request_id = :requestId")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query((rs, rowNum) -> new ReplayCandidate(rs.getString("status"),
+                        (UUID) rs.getObject("hearing_id"), rs.getString("command"),
+                        rs.getBoolean("pending_resend_row_latest")))
                 .optional();
     }
 
@@ -138,8 +186,15 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     @Override
     public boolean markCompleted(final String source, final UUID requestId, final RunClaim claim,
                                  final CompletionReason reason) {
+        // completion_reason is "recovered" whenever audit_note holds the replay marker anywhere
+        // (FR-004-012), even when the caller's own reason is both-legs-terminal: a replayed run's
+        // first delivery may park and a later redelivery settle it, so the marker — not which run
+        // settled it — decides. replayed_at is cleared here regardless, since completion is terminal.
         final int rows = jdbc.sql("UPDATE processed_request SET status = 'COMPLETED', "
-                        + "completion_reason = :reason, failure_reason = NULL, claim_owner = NULL, "
+                        + "completion_reason = CASE "
+                        + "WHEN audit_note LIKE '%REPLAYED_AFTER_FAILURE%' THEN 'recovered' "
+                        + "ELSE :reason END, "
+                        + "failure_reason = NULL, replayed_at = NULL, claim_owner = NULL, "
                         + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
                         + REQUEST_WHERE + ACTIVE_REQUEST
                         + "AND claim_owner = :owner AND claim_token = :token")
@@ -172,8 +227,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                               final FailureReason reason, final String exhaustedMessageId) {
         final int rows = jdbc.sql("UPDATE processed_request SET status = 'FAILED', "
                         + "failure_reason = :reason, exhausted_message_id = :exhaustedMessageId, "
-                        + "completion_reason = NULL, claim_owner = NULL, claim_token = NULL, "
-                        + "claim_expires_at = NULL, updated_at = now() "
+                        + "completion_reason = NULL, replayed_at = NULL, claim_owner = NULL, "
+                        + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
                         + REQUEST_WHERE + ACTIVE_REQUEST
                         + "AND claim_owner = :owner AND claim_token = :token")
                 .param("reason", reason.wireValue())

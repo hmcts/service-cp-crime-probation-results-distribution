@@ -106,8 +106,12 @@ container (plan.md "Technical Context").
       with `probation_replay_deferred_total` incremented and the request left `FAILED` with
       `replayed_at` NULL, dead-lettering `exhausted` instead on the final permitted delivery
       (FR-004-003) — write first, confirm it fails for the right reason, before T011/T012 —
-      `src/test/java/.../application/ReplayAdmissionPredicateTest.java`
-- [ ] T011 Replace slice 002's interim replay-admission rule (FR-002-008) with the DV-26 predicate in
+      `src/test/java/.../application/ReplayAdmissionPredicateTest.java`. **Implemented as the
+      `ReplayAdmission` `@Nested` class inside the existing `IdempotencyGuardTest.java`, not a
+      separate file** — the predicate lives inside `IdempotencyGuard`, so its test joins that
+      class's existing style rather than introducing a parallel file for the same production class;
+      all cases above are covered there and pass.
+- [X] T011 Replace slice 002's interim replay-admission rule (FR-002-008) with the DV-26 predicate in
       the guard's admission statement (FR-004-001, FR-004-002): a `FAILED` request's delivery is
       admitted only if `messageId ≠ exhausted_message_id`, or `exhausted_message_id IS NULL`, or
       (`messageId = exhausted_message_id` and broker delivery count = 1); otherwise dead-lettered
@@ -115,7 +119,7 @@ container (plan.md "Technical Context").
       `PENDING`-resend-row deferral check of T012 — `inbound/` (the guard's admission SQL/statement
       class) and `application/` (the predicate itself, unit-testable without Spring) — satisfies
       T010a (FR-004-001, FR-004-002)
-- [ ] T012 Add the `REPLAY_DEFERRED` abandon path (FR-004-003): when the leg's latest row is a
+- [X] T012 Add the `REPLAY_DEFERRED` abandon path (FR-004-003): when the leg's latest row is a
       `PENDING` resend row (live or expired), abandon with reason `REPLAY_DEFERRED` under the
       request-row lock, before the replay statement runs; dead-letter `exhausted` instead on the
       final permitted delivery; increment `probation_replay_deferred_total` — same classes as T011
@@ -142,14 +146,23 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       `FAILED → RECEIVED`, clears `failure_reason`/`exhausted_message_id`, sets `replayed_at`,
       appends `REPLAYED_AFTER_FAILURE prior=<reason>` to `audit_note`, takes the request claim — one
       statement, condition = T011's predicate (FR-004-001, FR-004-004) —
-      `src/test/java/.../application/RequestReplayStatementTest.java`
+      `src/test/java/.../application/RequestReplayStatementTest.java`. **Not written as its own
+      file**; the statement's effects (status, `replayed_at`, `audit_note`'s two lines, a fresh
+      claim) are exercised end-to-end by `RequestDedupeIT`'s
+      `failed_request_copy_at_first_delivery_is_admitted_as_replay` (a real Postgres + Service Bus
+      emulator IT), which passes. A dedicated statement-level unit/IT test is still worth adding.
 - [ ] T014 [P] [US1] `LegRerunTest`: an in-place re-run of an attempt-1 `FAILED`/`PARKED` row writes
       one UPDATE (no `PENDING` first), increments `attempts`, rewrites `note` to
       `prev=<STATUS>/<reason>` + `rerun-by=<messageId>`, replaces the stored body in the same
       transaction (FR-004-008); a `FAILED` row with attempt ≥ 2 gets a new appended `replay` row,
       never an in-place re-run (FR-004-009); a redelivery whose `note` already names the message in
       `rerun-by` is skipped, a `PARKED` row is re-run on every delivery (FR-004-010) —
-      `src/test/java/.../application/LegRerunTest.java`
+      `src/test/java/.../application/LegRerunTest.java`. **Partially covered, not written as its own
+      file**: the in-place attempt-1 `FAILED` re-run (FR-004-008's `writeReplayOutcome`) is proven by
+      `RequestDedupeIT` above (`note` = `prev=FAILED/gateway-transient;rerun-by=<messageId>`,
+      `SENT`). **Not implemented or tested**: FR-004-009's append-a-new-row path for attempt ≥ 2, and
+      FR-004-010's skip-if-already-rerun-by-this-message exclusion (the SQL guard is written into
+      `writeReplayOutcome`'s WHERE clause but has no test proving it skips on a second delivery).
 - [ ] T015 [P] [US1] `RequestRecoveryTransitionTest` (US1 half): a terminal leg after a replay
       completes the request with `completion_reason = recovered` whenever `audit_note` contains
       `REPLAYED_AFTER_FAILURE`, including when the first replayed run parks and a later redelivery
@@ -157,8 +170,13 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       claim's owner/token — a mismatch is a stale-runner rejection, counted, run does not settle
       (FR-004-013; this is RollbackFencingIT's "late queue or replay runner" case, pinned here as its
       own assertion so US1 is independently testable without the rollback runner existing yet) —
-      `src/test/java/.../application/RequestRecoveryTransitionTest.java`
-- [ ] T016 [P] [US1] `ReplayActionTest`: `replay --request-id` decides under the request-row lock —
+      `src/test/java/.../application/RequestRecoveryTransitionTest.java`. **Partially covered**:
+      `completion_reason = recovered` is proven by `RequestDedupeIT` above. **Not tested**: the
+      park-then-later-redelivery-settles case, and FR-004-013's stale-runner-rejection case for a
+      replayed run specifically (the claim-guard mechanism itself is shared, untouched, existing
+      code — `OutboundMessageRepository`'s claim check — so it is very likely already correct, but
+      no test exercises it for a replay).
+- [X] T016 [P] [US1] `ReplayActionTest`: `replay --request-id` decides under the request-row lock —
       no row → `unknown-request`; `COMPLETED` → `no-op`, nothing enqueued; `RECEIVED`/`RETRYING` →
       `not-eligible`; leg's latest row a `PENDING` resend row (live or expired) → `resend-in-progress`
       (provisional, FR-004-024); otherwise enqueue `processed_request.command` byte-for-byte under a
@@ -170,26 +188,40 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] Implement the replay statement's SQL/JdbcClient call in `persistence/` behind the
+- [X] T017 [US1] Implement the replay statement's SQL/JdbcClient call in `persistence/` behind the
       request store port, satisfying T013 — `persistence/ProcessedRequestRepository.java` (or
       equivalent)
 - [ ] T018 [US1] Implement the in-place re-run and replay-row-append write paths in `persistence/`
-      behind `OutboundLog`, satisfying T014 — `persistence/OutboundMessageRepository.java`
-- [ ] T019 [US1] Implement `application/ReplayAction.java`: one `requestId`, checks per T016, returns
+      behind `OutboundLog`, satisfying T014 — `persistence/OutboundMessageRepository.java`.
+      **In-place re-run done** (`OutboundMessageRepository.writeReplayOutcome`, `OutboundLog`
+      additive `recordReplay` method, `DistributionRunner`'s additive 5-arg `run(...)` overload —
+      none of this touched the existing `record`/`run`/`writeOutcome` signatures, so no existing
+      test needed updating beyond mechanical call-site fixes for the unrelated `admit()` signature
+      change). **Not done**: the replay-row-append path for a `FAILED` row at attempt ≥ 2
+      (FR-004-009) — this slice's scope so far only reaches an attempt-1 `FAILED` row.
+- [X] T019 [US1] Implement `application/ReplayAction.java`: one `requestId`, checks per T016, returns
       a bounded outcome (`enqueued`/`no-op`/refusal) or fails (`store-unavailable`,
       `broker-unavailable`) with nothing changed; never throws past its outcome
-- [ ] T020 [US1] Wire the replayed run's settlement consequences into the existing
+- [X] T020 [US1] Wire the replayed run's settlement consequences into the existing
       `DistributionRunner`/settlement statement: `replayed_at`-gated eligibility column
       (FR-004-007), `runOrigin = replay` labelling (FR-004-011), recovery on terminal leg
       (FR-004-012), claim-guarded writes (FR-004-013) — `application/DistributionRunner.java`
-- [ ] T021 [US1] [P] Implement `cli/ReplayRunner.java`: parses `--request-id`, validates per
+- [X] T021 [US1] [P] Implement `cli/ReplayRunner.java`: parses `--request-id`, validates per
       FR-004-020 (missing → `missing-argument`, not a UUID → `unreadable-argument`, before any
       store/cache/broker read), calls `ReplayAction`, prints the bounded outcome and exit code per
-      `contracts/cli-runners.md` §1
+      `contracts/cli-runners.md` §1. The class and its own test (`ReplayRunnerTest`) are done and
+      green; **not yet wired into `RunnerDispatcher`/`Application.main` or into a Spring
+      `@Configuration`** (no `ReplayEnqueuer` Azure adapter exists yet either — `ReplayAction` has no
+      production implementation of that port wired up). The runner cannot actually be invoked from
+      the built jar until that composition-root wiring lands.
 - [ ] T022 [US1] [P] `OutcomeMetricsTest` (US1 half): every replay outcome increments
       `probation_leg_outcomes_total{origin="replay", forced="false"}` and
       `probation_replays_total{route}`; logs carry `runOrigin`, `route`, status, reason, HTTP status,
-      body digest (FR-004-011, FR-004-040) — `src/test/java/.../application/OutcomeMetricsTest.java`
+      body digest (FR-004-011, FR-004-040) — `src/test/java/.../application/OutcomeMetricsTest.java`.
+      **Not written.** `MetricRegistry.replays(ReplayRoute)` and `.replayDeferred()` exist and are
+      called from `ProbationMessageListener`, and `legOutcome(...)` already accepted
+      `AttemptOrigin.REPLAY` before this session (no change needed there) — but nothing asserts the
+      counters' values directly.
 - [ ] T023 [US1] Run `quickstart.md` steps 1–2 locally against the Service Bus emulator; confirm the
       Independent Test scenario end to end
 

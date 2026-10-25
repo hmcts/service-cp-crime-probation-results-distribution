@@ -22,4 +22,20 @@ public interface OutboundLog {
      *     row, which is a stale-runner rejection the caller must not settle as success
      */
     boolean record(LegOutcome outcome, RunClaim claim);
+
+    /**
+     * Re-runs the attempt-1 row in place for a replayed run, allowing a {@code FAILED} row as well as
+     * {@code PENDING}/{@code PARKED} (design A2-39, A2-45; slice 004 FR-004-008), and rewriting
+     * {@code note} to {@code prev=<STATUS>/<reason>;rerun-by=<messageId>}. A redelivery of the same
+     * replay message that meets a {@code FAILED} row already naming that message in {@code rerun-by}
+     * is skipped — matched by no row — so a {@code FAILED} row is re-run at most once per replay
+     * message (FR-004-010); a {@code PARKED} row has no such guard and is re-run on every delivery.
+     *
+     * @param outcome          the derived leg outcome
+     * @param claim            the request claim fencing the write
+     * @param rerunByMessageId the replay message's {@code messageId}
+     * @return {@code true} when the row was written; {@code false} when the guarded write matched no
+     *     row (a stale runner, or a {@code FAILED} row already re-run by this message)
+     */
+    boolean recordReplay(LegOutcome outcome, RunClaim claim, String rerunByMessageId);
 }

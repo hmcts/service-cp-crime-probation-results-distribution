@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -94,7 +96,7 @@ class ProbationMessageListenerTest {
 
         assertThat(settlement).isInstanceOf(DeadLetter.class);
         assertThat(((DeadLetter) settlement).reason()).isEqualTo(DeadLetterReason.VALIDATION);
-        verify(guard, never()).admit(any(), any());
+        verify(guard, never()).admit(any(), any(), any(), anyLong(), any());
         assertThat(count("probation_deadlettered_total", "reason", "validation")).isEqualTo(1.0d);
     }
 
@@ -102,7 +104,7 @@ class ProbationMessageListenerTest {
     @DisplayName("completes a duplicate of a COMPLETED request with no run")
     void completes_a_duplicate() {
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.DuplicateComplete());
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.DuplicateComplete());
 
         final Settlement settlement = listener.decide(BODY, 1L);
 
@@ -114,7 +116,7 @@ class ProbationMessageListenerTest {
     @DisplayName("abandons a live-claim delivery")
     void abandons_a_live_claim() {
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Abandon());
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Abandon());
 
         assertThat(listener.decide(BODY, 1L)).isInstanceOf(Abandon.class);
         verify(runner, never()).run(any(), any(), any(), anyBoolean());
@@ -124,7 +126,7 @@ class ProbationMessageListenerTest {
     @DisplayName("dead-letters a collision and counts it")
     void dead_letters_a_collision() {
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY))
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any()))
                 .thenReturn(new GuardDecision.DeadLetter(DeadLetterReason.COLLISION));
 
         final Settlement settlement = listener.decide(BODY, 1L);
@@ -138,7 +140,7 @@ class ProbationMessageListenerTest {
     void completes_on_a_terminal_leg() {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
         when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
@@ -157,7 +159,7 @@ class ProbationMessageListenerTest {
     void retries_on_a_parked_leg() {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(new RunResult(
                 AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
         when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
@@ -175,7 +177,7 @@ class ProbationMessageListenerTest {
     void abandons_on_a_stale_runner() {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(
                 new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), false));
 
@@ -191,7 +193,7 @@ class ProbationMessageListenerTest {
     void abandons_when_the_request_transition_is_stale() {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
         when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
@@ -209,7 +211,7 @@ class ProbationMessageListenerTest {
     void abandons_when_the_retry_transition_is_stale() {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(new RunResult(
                 AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
         when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
@@ -225,7 +227,7 @@ class ProbationMessageListenerTest {
     @DisplayName("abandons a hand-back one delivery below the final permitted delivery")
     void abandons_below_the_final_permitted_delivery() {
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Abandon());
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Abandon());
 
         // maxDeliveryCount is 5 and Azure counts deliveries from zero (FR-002-048): delivery count 3 is
         // the fourth delivery, which still has a fifth to come, so it is handed back, not dead-lettered.
@@ -237,7 +239,7 @@ class ProbationMessageListenerTest {
     @DisplayName("dead-letters exhausted on the final permitted delivery")
     void dead_letters_exhausted_on_the_final_permitted_delivery() {
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Abandon());
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Abandon());
 
         // Delivery count 4 is the fifth (and final permitted) delivery when maxDeliveryCount is 5 and
         // Azure counts from zero: the service records its own exhausted reason rather than leaving the
@@ -254,7 +256,7 @@ class ProbationMessageListenerTest {
     void process_message_completes_once() {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
         when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
@@ -287,7 +289,7 @@ class ProbationMessageListenerTest {
     void process_message_swallows_settlement_application_failure() {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenReturn(new GuardDecision.Admitted(claim));
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
         when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
         when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
@@ -308,7 +310,7 @@ class ProbationMessageListenerTest {
     @DisplayName("processMessage abandons and counts when processing throws unexpectedly")
     void process_message_abandons_on_unexpected() {
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(command, BODY)).thenThrow(new IllegalStateException("boom"));
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenThrow(new IllegalStateException("boom"));
         final ServiceBusReceivedMessageContext context = contextFor(BODY);
 
         listener.processMessage(context);

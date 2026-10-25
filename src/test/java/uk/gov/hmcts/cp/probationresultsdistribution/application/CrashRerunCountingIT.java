@@ -14,6 +14,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import uk.gov.hmcts.cp.probationresultsdistribution.EndToEndTestSupport;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /** US5 Acceptance Scenarios 10 and 13: count only an expired-claim PENDING-row rerun. */
 @DisplayName("crash reruns are counted only for a pending attempt")
@@ -66,9 +68,18 @@ class CrashRerunCountingIT extends EndToEndTestSupport {
         stubYouthSwitchActive();
         stubGateway(200);
         final CountDownLatch outcomeWriteAttempted = new CountDownLatch(1);
-        final OutboundLog crashBeforeRecord = (outcome, claim) -> {
-            outcomeWriteAttempted.countDown();
-            throw new IllegalStateException("simulated process crash after successful POST");
+        final OutboundLog crashBeforeRecord = new OutboundLog() {
+            @Override
+            public boolean record(final LegOutcome outcome, final RunClaim claim) {
+                outcomeWriteAttempted.countDown();
+                throw new IllegalStateException("simulated process crash after successful POST");
+            }
+
+            @Override
+            public boolean recordReplay(final LegOutcome outcome, final RunClaim claim,
+                                        final String rerunByMessageId) {
+                throw new UnsupportedOperationException("not exercised by this test");
+            }
         };
         startProcessorWith(listenerOverWithOutboundLog(sharedDataSource(), alwaysAvailableStore(),
                 10, crashBeforeRecord), 1);

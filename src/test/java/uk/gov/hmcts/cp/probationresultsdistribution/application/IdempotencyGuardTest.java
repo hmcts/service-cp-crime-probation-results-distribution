@@ -15,12 +15,14 @@ import java.util.OptionalInt;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository.RequestRecord;
 
@@ -29,6 +31,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
 class IdempotencyGuardTest {
 
     private static final String BODY = "{\"source\":\"RESULTS\"}";
+    private static final String MESSAGE_ID = "RESULTS:6f1e9b2c-1a3d-4c58-9a0e-2b7f0a5c1d34";
 
     @Mock
     private ProcessedRequestRepository repository;
@@ -52,13 +55,21 @@ class IdempotencyGuardTest {
         fp = fingerprint.compute(command);
     }
 
+    private GuardDecision admit() {
+        return guard.admit(command, BODY, MESSAGE_ID, 0L, ReplayRoute.COPY);
+    }
+
+    private GuardDecision admit(final long deliveryCount, final String messageId) {
+        return guard.admit(command, BODY, messageId, deliveryCount, ReplayRoute.COPY);
+    }
+
     @Test
     @DisplayName("admits a first-seen key by inserting its claim")
     void admits_a_first_seen_key() {
         when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.empty());
         when(repository.insertClaim(eq(command), eq(BODY), eq(fp), any())).thenReturn(true);
 
-        assertThat(guard.admit(command, BODY)).isInstanceOf(GuardDecision.Admitted.class);
+        assertThat(admit()).isInstanceOf(GuardDecision.Admitted.class);
     }
 
     @Test
@@ -67,7 +78,7 @@ class IdempotencyGuardTest {
         when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.empty());
         when(repository.insertClaim(eq(command), eq(BODY), eq(fp), any())).thenReturn(false);
 
-        assertThat(guard.admit(command, BODY)).isInstanceOf(GuardDecision.Abandon.class);
+        assertThat(admit()).isInstanceOf(GuardDecision.Abandon.class);
     }
 
     @Test
@@ -76,7 +87,7 @@ class IdempotencyGuardTest {
         when(repository.find("RESULTS", command.requestId()))
                 .thenReturn(Optional.of(new RequestRecord("COMPLETED", fp, false)));
 
-        assertThat(guard.admit(command, BODY)).isInstanceOf(GuardDecision.DuplicateComplete.class);
+        assertThat(admit()).isInstanceOf(GuardDecision.DuplicateComplete.class);
         verify(repository, never()).reclaim(any(), any(), any());
     }
 
@@ -87,7 +98,7 @@ class IdempotencyGuardTest {
                 .thenReturn(Optional.of(new RequestRecord("RECEIVED", "a-different-fingerprint",
                         true)));
 
-        final GuardDecision decision = guard.admit(command, BODY);
+        final GuardDecision decision = admit();
 
         assertThat(decision).isInstanceOf(GuardDecision.DeadLetter.class);
         assertThat(((GuardDecision.DeadLetter) decision).reason())
@@ -100,7 +111,7 @@ class IdempotencyGuardTest {
         when(repository.find("RESULTS", command.requestId()))
                 .thenReturn(Optional.of(new RequestRecord("RETRYING", fp, true)));
 
-        assertThat(guard.admit(command, BODY)).isInstanceOf(GuardDecision.Abandon.class);
+        assertThat(admit()).isInstanceOf(GuardDecision.Abandon.class);
         verify(repository, never()).reclaim(any(), any(), any());
     }
 
@@ -111,7 +122,7 @@ class IdempotencyGuardTest {
                 .thenReturn(Optional.of(new RequestRecord("RECEIVED", fp, false)));
         when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
 
-        assertThat(guard.admit(command, BODY)).isInstanceOf(GuardDecision.Admitted.class);
+        assertThat(admit()).isInstanceOf(GuardDecision.Admitted.class);
     }
 
     @Test
@@ -122,7 +133,7 @@ class IdempotencyGuardTest {
                         Optional.empty(), OptionalInt.empty())));
         when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
 
-        final GuardDecision.Admitted decision = (GuardDecision.Admitted) guard.admit(command, BODY);
+        final GuardDecision.Admitted decision = (GuardDecision.Admitted) admit();
 
         assertThat(decision.crashRerun()).isTrue();
         assertThat(decision.gatewayParked()).isFalse();
@@ -136,7 +147,7 @@ class IdempotencyGuardTest {
                         Optional.of("gateway-transient"), OptionalInt.of(503))));
         when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
 
-        final GuardDecision.Admitted decision = (GuardDecision.Admitted) guard.admit(command, BODY);
+        final GuardDecision.Admitted decision = (GuardDecision.Admitted) admit();
 
         assertThat(decision.crashRerun()).isFalse();
         assertThat(decision.gatewayParked()).isTrue();
@@ -149,20 +160,7 @@ class IdempotencyGuardTest {
                 .thenReturn(Optional.of(new RequestRecord("RETRYING", fp, false)));
         when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(false);
 
-        assertThat(guard.admit(command, BODY)).isInstanceOf(GuardDecision.Abandon.class);
-    }
-
-    @Test
-    @DisplayName("dead-letters a FAILED request as exhausted (interim FR-002-008)")
-    void dead_letters_a_failed_request() {
-        when(repository.find("RESULTS", command.requestId()))
-                .thenReturn(Optional.of(new RequestRecord("FAILED", fp, false)));
-
-        final GuardDecision decision = guard.admit(command, BODY);
-
-        assertThat(decision).isInstanceOf(GuardDecision.DeadLetter.class);
-        assertThat(((GuardDecision.DeadLetter) decision).reason())
-                .isEqualTo(DeadLetterReason.EXHAUSTED);
+        assertThat(admit()).isInstanceOf(GuardDecision.Abandon.class);
     }
 
     @Test
@@ -171,8 +169,7 @@ class IdempotencyGuardTest {
         when(repository.find("RESULTS", command.requestId()))
                 .thenReturn(Optional.of(new RequestRecord("GONE", fp, false)));
 
-        assertThatThrownBy(() -> guard.admit(command, BODY))
-                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(this::admit).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -188,5 +185,121 @@ class IdempotencyGuardTest {
 
         assertThat(fingerprint.compute(withUser)).isEqualTo(fp);
         assertThat(fingerprint.compute(reshared)).isNotEqualTo(fp);
+    }
+
+    /**
+     * The DV-26 predicate for a {@code FAILED} request's delivery (design A2-62, A3-30; slice 004
+     * FR-004-001–FR-004-003, replacing the interim FR-002-008).
+     */
+    @Nested
+    @DisplayName("admitting a FAILED request's delivery (DV-26)")
+    class ReplayAdmission {
+
+        @Test
+        @DisplayName("admits as a replay when exhausted_message_id is NULL")
+        void admits_as_replay_when_exhausted_id_is_null() {
+            when(repository.find("RESULTS", command.requestId()))
+                    .thenReturn(Optional.of(new RequestRecord("FAILED", fp, false)));
+            when(repository.admitReplay(eq("RESULTS"), eq(command.requestId()), any(),
+                    eq(ReplayRoute.COPY))).thenReturn(true);
+
+            final GuardDecision decision = admit();
+
+            assertThat(decision).isInstanceOf(GuardDecision.Admitted.class);
+            assertThat(((GuardDecision.Admitted) decision).replayMessageId())
+                    .contains(MESSAGE_ID);
+        }
+
+        @Test
+        @DisplayName("admits as a replay when messageId differs from exhausted_message_id")
+        void admits_as_replay_when_message_id_differs() {
+            final RequestRecord row = new RequestRecord("FAILED", fp, false, Optional.empty(),
+                    Optional.empty(), OptionalInt.empty(), Optional.of("RESULTS:old-id"), false);
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(row));
+            when(repository.admitReplay(eq("RESULTS"), eq(command.requestId()), any(), any()))
+                    .thenReturn(true);
+
+            assertThat(admit(0L, "a-fresh-replay-message-id"))
+                    .isInstanceOf(GuardDecision.Admitted.class);
+        }
+
+        @Test
+        @DisplayName("admits as a replay under the exhausted messageId at delivery count 1 "
+                + "(this listener's zero-based first delivery)")
+        void admits_same_exhausted_id_at_first_delivery() {
+            final RequestRecord row = new RequestRecord("FAILED", fp, false, Optional.empty(),
+                    Optional.empty(), OptionalInt.empty(), Optional.of(MESSAGE_ID), false);
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(row));
+            when(repository.admitReplay(eq("RESULTS"), eq(command.requestId()), any(), any()))
+                    .thenReturn(true);
+
+            assertThat(admit(0L, MESSAGE_ID)).isInstanceOf(GuardDecision.Admitted.class);
+        }
+
+        @Test
+        @DisplayName("dead-letters exhausted when the same exhausted messageId repeats above "
+                + "delivery count 0, leaving the request unchanged")
+        void dead_letters_exhausted_on_repeat_of_the_exhausted_id() {
+            final RequestRecord row = new RequestRecord("FAILED", fp, false, Optional.empty(),
+                    Optional.empty(), OptionalInt.empty(), Optional.of(MESSAGE_ID), false);
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(row));
+
+            final GuardDecision decision = admit(1L, MESSAGE_ID);
+
+            assertThat(decision).isInstanceOf(GuardDecision.DeadLetter.class);
+            assertThat(((GuardDecision.DeadLetter) decision).reason())
+                    .isEqualTo(DeadLetterReason.EXHAUSTED);
+            verify(repository, never()).admitReplay(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("defers over a PENDING resend row, live or expired, before admitting as a replay")
+        void defers_over_a_pending_resend_row() {
+            final RequestRecord row = new RequestRecord("FAILED", fp, false, Optional.empty(),
+                    Optional.empty(), OptionalInt.empty(), Optional.empty(), true);
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(row));
+
+            final GuardDecision decision = admit();
+
+            assertThat(decision).isInstanceOf(GuardDecision.ReplayDeferred.class);
+            verify(repository, never()).admitReplay(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("runs the exhausted-identity test before the deferral check")
+        void exhausted_identity_test_runs_before_deferral() {
+            final RequestRecord row = new RequestRecord("FAILED", fp, false, Optional.empty(),
+                    Optional.empty(), OptionalInt.empty(), Optional.of(MESSAGE_ID), true);
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(row));
+
+            final GuardDecision decision = admit(1L, MESSAGE_ID);
+
+            assertThat(decision).isInstanceOf(GuardDecision.DeadLetter.class);
+        }
+
+        @Test
+        @DisplayName("abandons when the replay statement loses a race to another admission")
+        void abandons_when_replay_statement_matches_no_row() {
+            when(repository.find("RESULTS", command.requestId()))
+                    .thenReturn(Optional.of(new RequestRecord("FAILED", fp, false)));
+            when(repository.admitReplay(eq("RESULTS"), eq(command.requestId()), any(), any()))
+                    .thenReturn(false);
+
+            assertThat(admit()).isInstanceOf(GuardDecision.Abandon.class);
+        }
+
+        @Test
+        @DisplayName("records the route the delivery would be admitted under")
+        void records_the_admission_route() {
+            when(repository.find("RESULTS", command.requestId()))
+                    .thenReturn(Optional.of(new RequestRecord("FAILED", fp, false)));
+            when(repository.admitReplay(eq("RESULTS"), eq(command.requestId()), any(),
+                    eq(ReplayRoute.SERVICE))).thenReturn(true);
+
+            final GuardDecision decision = guard.admit(command, BODY, MESSAGE_ID, 0L,
+                    ReplayRoute.SERVICE);
+
+            assertThat(decision).isInstanceOf(GuardDecision.Admitted.class);
+        }
     }
 }

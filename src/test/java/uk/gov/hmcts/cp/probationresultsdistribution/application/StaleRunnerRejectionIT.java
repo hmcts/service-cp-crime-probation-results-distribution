@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -81,7 +82,8 @@ class StaleRunnerRejectionIT extends EndToEndTestSupport {
                 Instant.parse("2026-08-19T16:42:07.512Z"), "Hearing_Resulted", Optional.empty());
         when(parser.parse(any())).thenReturn(command);
         final IdempotencyGuard guard = mock(IdempotencyGuard.class);
-        when(guard.admit(any(), any())).thenReturn(new GuardDecision.Admitted(RunClaim.fresh()));
+        when(guard.admit(any(), any(), any(), anyLong(), any()))
+                .thenReturn(new GuardDecision.Admitted(RunClaim.fresh()));
         return new ProbationMessageListener(parser, guard, runner, repo, new MetricRegistry(meter),
                 alwaysAvailableStore(), 1);
     }

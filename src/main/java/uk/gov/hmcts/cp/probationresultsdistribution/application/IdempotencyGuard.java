@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.application;
 import java.util.Optional;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository.RequestRecord;
@@ -10,9 +11,15 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
 /**
  * The processed-log guard, the only duplicate protection (design §4.5, H14, FR-002-007). Every copy
  * of a message reaches it. It decides, for one delivery, what the listener must do: admit and run,
- * complete a duplicate, abandon a live claim or lost race, or dead-letter a collision or a failed
- * request. In this slice a {@code FAILED} request is dead-lettered {@code exhausted} at once
- * (interim FR-002-008; slice 004 replaces this with replay admission).
+ * complete a duplicate, abandon a live claim or lost race, admit as a replay, defer over an
+ * in-progress resend, or dead-letter a collision or an exhausted replay identity.
+ *
+ * <p>A {@code FAILED} request's delivery is judged by the DV-26 predicate (design A2-62, A3-30;
+ * slice 004 FR-004-001, replacing the interim FR-002-008): admitted as a replay unless its
+ * {@code messageId} repeats the request's {@code exhausted_message_id} on other than the first
+ * delivery of that id, in which case it is dead-lettered {@code exhausted}; and, before that replay
+ * statement runs, deferred instead whenever the leg's latest row is a {@code PENDING} resend row,
+ * live or expired (FR-004-003).
  */
 public final class IdempotencyGuard {
 
@@ -39,11 +46,20 @@ public final class IdempotencyGuard {
     /**
      * Decides the outcome for one delivery of a valid command.
      *
-     * @param command     the parsed command
-     * @param commandBody the admitted body exactly as received
+     * @param command       the parsed command
+     * @param commandBody   the admitted body exactly as received
+     * @param messageId     the delivery's {@code messageId}, judged against
+     *                      {@code exhausted_message_id} for a {@code FAILED} request (FR-004-001)
+     * @param deliveryCount the broker delivery count (0 on a first delivery, matching this
+     *                      listener's convention)
+     * @param route         the replay route this delivery would be admitted under, derived from its
+     *                      {@code origin} application property; read only when the delivery is
+     *                      admitted as a replay (FR-004-005)
      * @return the guard's decision
      */
-    public GuardDecision admit(final DistributionCommand command, final String commandBody) {
+    public GuardDecision admit(final DistributionCommand command, final String commandBody,
+                               final String messageId, final long deliveryCount,
+                               final ReplayRoute route) {
         final String fp = fingerprint.compute(command);
         final Optional<RequestRecord> existing =
                 repository.find(command.source(), command.requestId());
@@ -53,7 +69,7 @@ public final class IdempotencyGuard {
         } else {
             final RequestRecord row = existing.get();
             if (row.fingerprint().equals(fp)) {
-                decision = decideForKnownKey(command, row);
+                decision = decideForKnownKey(command, row, messageId, deliveryCount, route);
             } else {
                 decision = new GuardDecision.DeadLetter(DeadLetterReason.COLLISION);
             }
@@ -62,14 +78,50 @@ public final class IdempotencyGuard {
     }
 
     private GuardDecision decideForKnownKey(final DistributionCommand command,
-                                            final RequestRecord row) {
+                                            final RequestRecord row, final String messageId,
+                                            final long deliveryCount, final ReplayRoute route) {
         return switch (row.status()) {
             case COMPLETED -> new GuardDecision.DuplicateComplete();
-            case FAILED -> new GuardDecision.DeadLetter(DeadLetterReason.EXHAUSTED);
+            case FAILED -> decideReplayAdmission(command, row, messageId, deliveryCount, route);
             case RECEIVED, RETRYING -> reclaimOrAbandon(command, row);
             default -> throw new IllegalStateException(
                     "unknown request status: " + row.status());
         };
+    }
+
+    /**
+     * The DV-26 predicate (FR-004-001, FR-004-002, FR-004-003): the exhausted-identity test runs
+     * first, so a copy under the exhausted {@code messageId} has exactly one admission chance; only
+     * then is the leg checked for a {@code PENDING} resend row, live or expired, which defers the
+     * delivery rather than admitting or dead-lettering it.
+     *
+     * @param command       the parsed command
+     * @param row           the request's current state
+     * @param messageId     the delivery's {@code messageId}
+     * @param deliveryCount the broker delivery count
+     * @param route         the replay route to record if admitted
+     * @return the guard's decision: dead-letter, defer, admit as a replay, or abandon a lost race
+     */
+    private GuardDecision decideReplayAdmission(final DistributionCommand command,
+                                                final RequestRecord row, final String messageId,
+                                                final long deliveryCount, final ReplayRoute route) {
+        final boolean sameExhaustedId = row.exhaustedMessageId().filter(messageId::equals).isPresent();
+        // This listener's convention is a zero-based delivery count (the first delivery carries 0),
+        // so the design's "delivery count 1" (a one-based count) is this count's 0.
+        final boolean firstDelivery = deliveryCount == 0;
+        final GuardDecision decision;
+        if (sameExhaustedId && !firstDelivery) {
+            decision = new GuardDecision.DeadLetter(DeadLetterReason.EXHAUSTED);
+        } else if (row.pendingResendRowLatest()) {
+            decision = new GuardDecision.ReplayDeferred();
+        } else {
+            final RunClaim claim = RunClaim.fresh();
+            final boolean admitted = repository.admitReplay(command.source(), command.requestId(),
+                    claim, route);
+            decision = admitted ? new GuardDecision.Admitted(claim, false, false,
+                    Optional.of(messageId)) : new GuardDecision.Abandon();
+        }
+        return decision;
     }
 
     private GuardDecision admitFresh(final DistributionCommand command, final String commandBody,

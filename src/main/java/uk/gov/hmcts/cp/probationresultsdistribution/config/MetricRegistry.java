@@ -25,6 +25,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.Non200SuccessStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsFailure;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadableCause;
 
@@ -84,6 +85,7 @@ public final class MetricRegistry implements OutcomeMetrics {
     private static final String TAG_DEFAULTED = "defaulted";
     private static final String TAG_AFTER = "after";
     private static final String TAG_ACTION = "action";
+    private static final String TAG_ROUTE = "route";
 
     private static final Set<String> FINAL_REQUEST_STATUSES = Set.of("COMPLETED", "FAILED");
 
@@ -307,6 +309,22 @@ public final class MetricRegistry implements OutcomeMetrics {
     public void operationsFailure(final OperationsAction action, final OperationsFailure reason) {
         registry.counter(OPERATIONS_FAILURES_M, Tags.of(Tag.of(TAG_ACTION, action.wireValue()),
                 Tag.of(TAG_REASON, reason.wireValue()))).increment();
+    }
+
+    /**
+     * Counts one admitted replay, by its route (slice 004, FR-004-005).
+     *
+     * @param route how the replay arrived: {@code service}, {@code support} or {@code copy}
+     */
+    public void replays(final ReplayRoute route) {
+        registry.counter(REPLAYS_M, Tags.of(Tag.of(TAG_ROUTE, route.wireValue()))).increment();
+    }
+
+    /**
+     * Counts one delivery deferred over a `PENDING` resend row on the leg (slice 004, FR-004-003).
+     */
+    public void replayDeferred() {
+        registry.counter(REPLAY_DEFERRED_M).increment();
     }
 
     /**
