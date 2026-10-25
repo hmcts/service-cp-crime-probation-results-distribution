@@ -32,6 +32,29 @@ public class StartupValidationConfig {
             validator.validateNoForbiddenProperties(environment);
             LOG.info("distribution.youth-switch.default-when-unreadable resolved to {}",
                     properties.youthSwitch().defaultWhenUnreadable());
+            warnIfAuditFilterOnWithTransportOff(environment);
         };
+    }
+
+    /**
+     * Warns once, at startup, when the operations API's HTTP audit filter is switched on but its
+     * JMS transport is off (FR-005-028): every call the filter admits is then served unaudited.
+     * This is not a refusal — start-up MUST NOT refuse any combination of these two switches — and
+     * it is not FR-005-027's refusal either, which is for a publish attempted and failed, not a
+     * transport deliberately absent.
+     *
+     * @param environment the application environment
+     */
+    private static void warnIfAuditFilterOnWithTransportOff(final Environment environment) {
+        final boolean auditFilterOn = environment.getProperty("audit.http.enabled", Boolean.class,
+                Boolean.FALSE);
+        final boolean auditTransportOn = environment.getProperty("cp.audit.enabled", Boolean.class,
+                Boolean.FALSE);
+        if (auditFilterOn && !auditTransportOn) {
+            LOG.warn("the operations API's HTTP audit filter is on (audit.http.enabled={}) but its "
+                            + "JMS transport is off (cp.audit.enabled={}): admitted calls will be "
+                            + "served unaudited until an environment switches the transport on too",
+                    auditFilterOn, auditTransportOn);
+        }
     }
 }

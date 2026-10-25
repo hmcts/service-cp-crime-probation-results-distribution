@@ -201,6 +201,20 @@ it landed) rather than invented here.
   `audit.http.enabled` default `true`, `deny-when-no-rules: true`, `cp.audit.enabled` default
   `false` so the scaffold's own default is exactly the "filter on, transport off" case T016/T018
   exercise). No change made under this task.
+- **T016/T018** (`OperationsConfigDefaultsTest` / the startup WARN in
+  `config/StartupValidationConfig.java`): written genuinely test-first in this pass (not
+  reconstructed). RED — `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.config.OperationsConfigDefaultsTest"` →
+  `4 tests completed, 1 failed`: `warns_once_and_starts` failed
+  `Expected size: 1 but was: 0 in: []` (no WARN logged yet), a genuine assertion failure, no compile
+  error; the two `application.yaml` default assertions and the "no warning when the transport is
+  also on" case passed immediately since they need no new production code. GREEN, after adding
+  `StartupValidationConfig.warnIfAuditFilterOnWithTransportOff(Environment)` (called from the
+  existing `distributionConfigValidator` `ApplicationRunner`, extending it rather than adding a
+  parallel validator) → `4 tests completed, 0 failed`, confirmed alongside the full
+  `YouthSwitchDefaultConfigTest`/`StartupValidationTest` suites (`BUILD SUCCESSFUL`, no regression).
+  `checkstyleTest`/`pmdTest` both pass (one `LiteralsFirstInComparisons` finding fixed in the test
+  itself before landing).
 
 ---
 
@@ -250,7 +264,7 @@ new component this finding requires.
       naming the caller/action/outcome, with no request/response body (FR-005-025, FR-005-026); a
       request-event publish failure refuses the call `503 audit-unavailable` with nothing read or
       changed (FR-005-027) — `src/test/java/.../api/OperationsAuditIT.java`
-- [ ] T016 [P] [US4] `OperationsConfigDefaultsTest`: the authorisation and audit switches default
+- [X] T016 [P] [US4] `OperationsConfigDefaultsTest`: the authorisation and audit switches default
       on; `deny-when-no-rules: true` holds; a pod with the audit filter on and its transport off
       logs one WARN naming both settings at startup and does not refuse to start (FR-005-028) —
       `src/test/java/.../config/OperationsConfigDefaultsTest.java`
@@ -260,7 +274,7 @@ new component this finding requires.
 - [X] T017 [US4] Confirm (or add, if missing) the `authz.http`/`audit.http`/`cp.audit` wiring in
       `application.yaml` matches T014–T016's expectations — the scaffold already has this block;
       this task is a verification pass, not new authoring, per plan.md
-- [ ] T018 [US4] Add the startup WARN for "audit filter on, transport off" if not already present
+- [X] T018 [US4] Add the startup WARN for "audit filter on, transport off" if not already present
       (FR-005-028) — `config/StartupValidationConfig.java` or `config/StartupValidator.java`
       (extend, do not duplicate)
 
