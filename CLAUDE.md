@@ -162,11 +162,16 @@ gate (H21, FR-001-017): the committed corpus is synthetic-only, holding only the
 the owning team's SIT capture (`doc/DEVIATIONS.md` "Corpus status"; an external dependency, not a code
 gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are resolved (spec.md
 Clarifications). `003-body-retention` is implemented here too (the body-maintenance job, Flyway V2).
-`004-recovery` is planned here: **the current plan is `specs/004-recovery/plan.md`**, with
-`research.md`, `data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it, and its
-first foundational pieces (the `cli` runner-dispatch package, the `WholeRunRefusal`/`RunnerOutcome`
-vocabulary) are implemented; the rest of its 77 tasks await the remaining guard/runner/port work.
-`005-operations-api` and `006-production-readiness` are specified but not yet planned.
+`004-recovery` is planned here (`specs/004-recovery/plan.md`, with `research.md`, `data-model.md`,
+`quickstart.md`, `contracts/` and `tasks.md` alongside it), with its first foundational pieces (the
+`cli` runner-dispatch package, the `WholeRunRefusal`/`RunnerOutcome` vocabulary) implemented; the
+rest of its 77 tasks await the remaining guard/runner/port work. `005-operations-api` is now planned
+too, fully clarified (both `[NEEDS CLARIFICATION]` markers resolved 2026-10-25: resend-leg answers
+`202` accepted-run; the caller group defaults to `Second Line Support` pending H31): **the current
+plan is `specs/005-operations-api/plan.md`**, with `research.md`, `data-model.md`, `quickstart.md`
+and `contracts/` alongside it; nothing of it is implemented yet, and it depends on 004's
+`ReplayAction`/`LegResender` landing for real. `006-production-readiness` is specified but not yet
+planned.
 
 **The Spec Kit scripts resolve the active feature from the current branch name by default**
 (`specs/<NNN>-*` matching the branch's numeric prefix), which only resolves correctly for

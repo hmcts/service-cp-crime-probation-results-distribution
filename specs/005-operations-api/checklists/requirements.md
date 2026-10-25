@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain (resolved 2026-10-25: see "Open questions" below)
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -53,11 +53,12 @@ what was checked.
 - **All mandatory sections** — complete: User Scenarios & Testing, Requirements with Key Entities,
   Success Criteria, Assumptions. Added: Context, Clarifications (22 resolved), Dependencies, Out of
   Scope, Design traceability.
-- **No clarification markers remain** — does not pass, deliberately. Two markers remain (the limit
-  is three), each a gap the design does not decide; see the questions below.
-- **Testable and unambiguous** — passes, except FR-005-015 and FR-005-020, which become testable
-  once answered. The scenarios that depend on them (story 2's report, story 4's admitted group)
-  are written so that either answer fits.
+- **No clarification markers remain** — now passes. Both markers are resolved (2026-10-25,
+  Option B for FR-005-015, Option A for FR-005-020); see "Open questions" below, kept for the
+  record and for H31's confirmation of FR-005-020's default.
+- **Testable and unambiguous** — passes. FR-005-015 and FR-005-020 are now testable against their
+  resolved answers; the scenarios written so that either option fit (story 2's report, story 4's
+  admitted group) are unaffected by which was chosen.
 - **Success criteria measurable** — passes: each is a count, a percentage, a zero, or a
   same-answer comparison between the API and the runner.
 - **Success criteria technology-agnostic** — passes: they speak of calls, answers, audit events,
@@ -89,7 +90,11 @@ what was checked.
 
 ### Open questions for the owning team (H31)
 
-#### Question 1: How does a resend-leg call answer? (FR-005-015)
+**Resolved 2026-10-25** (spec.md Clarifications): Question 1 → Option B (accepted-run, `202`);
+Question 2 → Option A (`Second Line Support`, as a default pending H31's confirmation or override).
+The option tables are kept below for the record and for H31's review of Question 2 in particular.
+
+#### Question 1: How does a resend-leg call answer? (FR-005-015) — resolved, Option B
 
 **Context**: the design fixes the report's content (§4.4 Output row; row A3-56) but not whether one
 HTTP call waits for up to `distribution.resend.max-ids-per-run` IDs, each bounded only by the
@@ -105,7 +110,7 @@ run and leave the outcomes to the run report line and the attempt rows?
 | C | Synchronous checks, background sends: the call runs the whole-call and per-ID checks and claims, answers the refusals and the claimed IDs at once, and the sends carry on | Refusals come back at once, and a repeat is fenced while the sends are in flight. One run's result is read in two places |
 | Custom | Provide your own answer | — |
 
-#### Question 2: Who may call? (FR-005-020)
+#### Question 2: Who may call? (FR-005-020) — resolved (as a default), Option A, pending H31
 
 **Context**: the design copies the API from the sibling YOT service (§4.8), whose allow rules admit
 one estate group, but names no group for this service. A forced resend re-sends defendants'
