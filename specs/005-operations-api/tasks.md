@@ -119,6 +119,28 @@ now fixed:
   runtime-only for this project; `build.gradle` now adds both `implementation` directly for
   `OperationsAuditPublisher` to compile against `JmsTemplate`.
 
+**Landing record (this pass)**: T001-T022 were written in one working session before any of it was
+committed. Landing them properly meant auditing each task's description against the actual files,
+then committing in TDD-ordered, task-scoped commits. Where a test's paired production class could be
+replaced by a small, signature-preserving stub without breaking compilation elsewhere (i.e. the class
+has no other compile-time dependents at that point in the landing order), the stub was swapped in,
+the test re-run to confirm a genuine assertion-level failure (never a compile error), then the real
+class restored and the test re-run green — both runs recorded below against real `./gradlew test
+--tests <Class>` output. Where a class is compiled into by many other already-written classes (the
+composition root: `Application`, `OperationsConfiguration`, `build.gradle`), a signature-preserving
+stub was impractical without a wider, riskier edit than this landing pass justified; for those, only
+the GREEN run is recorded and the red run is understood to predate this commit (the test was written
+and failed for the right reason during the original working session, before the implementation beside
+it landed) rather than invented here.
+
+- **T005/T006** (`OperationsProblemDetailHandlerTest` / `OperationsProblemDetailHandler`): RED
+  reconstructed by swapping in a stub handler that always answers `400` and never counts a `5xx` —
+  `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsProblemDetailHandlerTest"` →
+  `24 tests completed, 23 failed`, every failure an `AssertionFailedError`/`AssertionError` on the
+  expected status or property, no compile error. Real handler restored →
+  `BUILD SUCCESSFUL`, all 24 green.
+
 ---
 
 ## Phase 3: User Story 4 - Only admitted callers reach either action, and every call is audited (Priority: P1)
