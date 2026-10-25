@@ -146,6 +146,17 @@ it landed) rather than invented here.
   "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRequestMapperTest"` →
   `15 tests completed, 13 failed`, every failure an assertion on the expected refusal/parse, no
   compile error. Real mapper restored → `BUILD SUCCESSFUL`, all 15 green.
+- **T009/T010/T011** (`OperationsAuditPublisherTest` / `OperationsAuditPublisher`, plus the metric
+  call sites T011 adds here and in `OperationsProblemDetailHandler` above): RED reconstructed by
+  swapping in a stub publisher whose two methods are silent no-ops —
+  `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditPublisherTest"` →
+  `6 tests completed, 4 failed` (the two "transport deliberately off" cases still pass, correctly,
+  since a no-op is what they expect), every failure an assertion, no compile error. Real publisher
+  restored → `BUILD SUCCESSFUL`, all 6 green. T011's own two call sites
+  (`OperationsProblemDetailHandler`'s `metrics.operationsFailure(...)` on every 5xx,
+  `OperationsAuditPublisher`'s on an unpublished response event) are pinned by the metric assertions
+  already recorded in both tests above; no separate commit is needed for T011.
 
 ---
 
