@@ -34,6 +34,10 @@ class LogStatementSweepTest {
     private static final String SYS_ERR = "System" + ".err";
     private static final String PRINT_STACK = "printStack" + "Trace";
 
+    private static final String OPERATOR_TOKEN = "oper" + "ator";
+    private static final String REASON_TOKEN = "rea" + "son";
+    private static final String CJSCPPUID_TOKEN = "CJSCPP" + "UID";
+
     @Test
     @DisplayName("no log statement carries a payload, an outbound body or a userId")
     void no_log_statement_carries_sensitive_data() {
@@ -65,6 +69,25 @@ class LogStatementSweepTest {
             }
         }
         assertThat(offenders).as("sources using console output or a stack-trace print").isEmpty();
+    }
+
+    @Test
+    @DisplayName("no operations-API log line carries the operator, the reason, or CJSCPPUID (FR-005-023, FR-005-031)")
+    void no_operations_log_line_carries_operator_reason_or_identity() {
+        final List<String> offenders = new ArrayList<>();
+        for (final Path file : javaSources("src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/api")) {
+            final String content = read(file);
+            final Matcher matcher = LOG_CALL.matcher(content);
+            while (matcher.find()) {
+                final String call = matcher.group(1);
+                if (call.contains(OPERATOR_TOKEN) || call.contains(REASON_TOKEN)
+                        || call.contains(CJSCPPUID_TOKEN)) {
+                    offenders.add(file + ": " + call.strip());
+                }
+            }
+        }
+        assertThat(offenders).as("operations-API log statements reaching for operator, reason or CJSCPPUID")
+                .isEmpty();
     }
 
     private static List<Path> javaSources(final String... roots) {

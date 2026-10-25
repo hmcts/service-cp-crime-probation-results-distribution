@@ -475,21 +475,42 @@ log.
 
 ### Tests for User Story 5
 
-- [ ] T032 [P] [US5] `OperationsRefusalSweepTest` (extends `OperationsProblemDetailHandlerTest`,
+- [X] T032 [P] [US5] `OperationsRefusalSweepTest` (extends `OperationsProblemDetailHandlerTest`,
       T005, with both real endpoints once built — `[BLOCKED-ON-004]` for the endpoint-level cases,
       but the problem-detail shape itself is already covered by T005): every refusal is RFC 9457
       with a closed `reason`, no exception message, no stack trace; a successful call's `requestId`
       is always the canonical parse, never the raw characters sent (FR-005-029, FR-005-031) —
       `src/test/java/.../api/OperationsRefusalSweepTest.java`
-- [ ] T033 [P] [US5] `TelemetryPrivacyTest`/`LogStatementSweepTest` extension: sweep every new log
+- [X] T033 [P] [US5] `TelemetryPrivacyTest`/`LogStatementSweepTest` extension: sweep every new log
       line and audit event this slice adds for the forbidden content set (operator, reason, an
       unreadable identifier, `CJSCPPUID`) — `src/test/java/.../support/LogStatementSweepTest.java`
       (extend, do not duplicate)
 
 ### Implementation for User Story 5
 
-- [ ] T034 [US5] Close any gap T032/T033 find — expected to be none, since T006/T008 already
+- [X] T034 [US5] Close any gap T032/T033 find — expected to be none, since T006/T008 already
       implement the bounded-refusal and no-echo rules; this phase is a verification pass
+
+**T032-T034 landing note — scoped strictly to what exists today**: `OperationsRefusalSweepTest`
+drives the one real endpoint, `ReplayController`, through a live `MockMvc` round trip (`@WebMvcTest`,
+`ReplayAction` mocked): a successful call's `requestId` is always the service's own canonical parse
+(an uppercase UUID in the path renders lowercase in the body, never the characters sent); four
+distinct unreadable identifiers — a plain non-UUID string, a SQL-injection attempt, a script tag, a
+path-traversal attempt — are each refused `400 unreadable-argument` naming `requestId`, with none of
+the four ever echoed back; every refusal answers `application/problem+json`; an unexpected exception
+never leaks its own message or a stack trace. `./gradlew test --tests
+"uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRefusalSweepTest"` → `7 tests completed,
+0 failed` on first run, against the already-landed handler/mapper/controller — consistent with T034's
+own prediction of "expected to be none": these are new scenarios (the four exotic strings, the
+uppercase-UUID canonicalisation, the explicit content-type check) exercised for the first time
+against already-correct code, not a reconstruction of an existing pass. `LogStatementSweepTest`
+(T033) gained one new method scoped to `src/main/java/.../api/` — the only package this slice adds
+log lines to — sweeping every `LOG.*` call there for the operator, the reason, or `CJSCPPUID`; proven
+to catch a real offender by temporarily inserting `operator={}` into
+`OperationsProblemDetailHandler`'s one `LOG.error` call (fails), then reverting (passes). The
+resend-leg half of this story is **`[BLOCKED-ON-004]`**: there is no `ResendLegController` to sweep,
+and the operator/reason fields it will take do not exist in any log line yet — this slice's own sweep
+method will need extending once that controller lands.
 
 **Checkpoint**: the no-echo, bounded-refusal guarantee is proven across both endpoints together.
 
