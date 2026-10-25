@@ -576,21 +576,39 @@ an identically seeded store, and compare the reports ID for ID.
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T040 [P] `OperationsConfigPropertiesTest`: this slice adds 0 properties to the closed
+- [X] T040 [P] `OperationsConfigPropertiesTest`: this slice adds 0 properties to the closed
       `distribution.*` catalogue and makes 0 App Configuration or Results-switch reads
       (SC-005-011) — `src/test/java/.../config/OperationsConfigPropertiesTest.java`
-- [ ] T041 [P] Run the full `TelemetryPrivacyTest`/`LogStatementSweepTest` suite across every new
+- [X] T041 [P] Run the full `TelemetryPrivacyTest`/`LogStatementSweepTest` suite across every new
       class this slice adds — zero findings (FR-005-023, FR-005-031, FR-005-032; SC-005-004)
 - [ ] T042 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
       are unchanged (SC-005-010)
 - [ ] T043 Run every `quickstart.md` step end to end. The replay steps need only the
       `ReplayEnqueuer` adapter (004); the resend-leg steps need `LegResender` fully implemented
-- [ ] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
+- [X] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
       filter chain in T014, including the one case research.md Decision 2 flags as not yet
       re-verified by a running test: a caller sending a conflicting `CPP-ACTION` header has no effect
 - [ ] T045 Update `CLAUDE.md`'s Setup section once this slice is fully implemented (not just
       planned), and hand the Dependencies → "006-production-readiness" section to whoever starts
-      that slice next
+      that slice next — **not done in this pass**: US2/US3/US7 remain `[BLOCKED-ON-004]`, so the
+      slice is not fully implemented yet
+
+**T040/T041/T044 landing note**: `OperationsConfigPropertiesTest` reads the live `distribution.*`
+property names out of `application.yaml` with `YamlPropertySourceLoader` (not retyped by hand, so a
+transcription slip cannot mask a real addition) and asserts the set against a closed, frozen list of
+the 46 properties that existed before this slice's own work; confirmed to catch a real addition by
+temporarily inserting a dummy `distribution.operations-test-probe.enabled` property (fails), then
+reverting (passes). It also sweeps `api/` and the two new `config/` classes for App
+Configuration/Results-switch tokens — zero findings, as expected since this slice reads neither
+(H26). T041 is a verification pass, not new code: `LogStatementSweepTest`/`TelemetryPrivacyTest`
+already walk every `.java` file under `src/main/java` and `src/test/java` by glob, so every class
+this slice has added (Setup through US5/US6) is swept by construction, with T033's extension adding
+the operator/reason/`CJSCPPUID` check specific to this slice's own log lines — a dedicated run of
+both suites during this pass found zero findings. T044: the one case research.md Decision 2 flagged
+as not yet re-verified against the real filter chain — a caller sending a conflicting `CPP-ACTION`
+header has no effect — is exactly `OperationsAuthorisationIT`'s
+`action_header_cannot_redirect_authorisation` case (landed with T014), which passes; no new test or
+code was needed, confirming the ordering already holds.
 
 ---
 
