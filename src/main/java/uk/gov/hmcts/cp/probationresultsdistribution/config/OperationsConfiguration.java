@@ -8,6 +8,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.jms.core.JmsTemplate;
+import uk.gov.hmcts.cp.filter.audit.AuditFilter;
+import uk.gov.hmcts.cp.filter.audit.service.AuditPayloadGenerationService;
+import uk.gov.hmcts.cp.filter.audit.service.AuditService;
+import uk.gov.hmcts.cp.filter.audit.service.PathParameterService;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditPublisher;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRequestMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsResponseMapper;
@@ -90,5 +94,52 @@ public class OperationsConfiguration {
                                       final OperationsResponseMapper responseMapper,
                                       final OperationsAuditPublisher auditPublisher) {
         return new ReplayController(replayAction, requestMapper, responseMapper, auditPublisher);
+    }
+
+    /**
+     * Supplies the one bean {@code cp-audit-filter-springboot}'s own {@code auditFilter} {@code @Bean}
+     * method is {@code @ConditionalOnMissingBean(AuditFilter.class)} against (confirmed by reading
+     * the library's bytecode), so the library never builds its own copy. Needed because that filter
+     * audits every request unconditionally — its own {@code shouldNotFilter} excludes only
+     * {@code /health} and {@code /actuator}, and it never consults the OpenAPI document before
+     * publishing, only to look up path-parameter names — by calling
+     * {@code AuditService.postMessageToArtemis} on the SAME topic {@link OperationsAuditPublisher}
+     * publishes to by name (see that class's own Javadoc). Left running alongside
+     * {@link OperationsAuditPublisher}, every operations-API call would produce four audit events,
+     * not the two FR-005-025 requires. This bean only satisfies that condition; it is never
+     * registered as an active servlet filter (see
+     * {@link #estateAuditFilterRegistration(AuditFilter)}).
+     *
+     * @param auditService                  the library's own publish mechanism (unused directly;
+     *                                       present only to construct the instance this bean must be)
+     * @param auditPayloadGenerationService the library's own payload builder
+     * @param pathParameterService          the library's own path-parameter lookup
+     * @return an {@link AuditFilter} instance that this configuration never wires into the chain
+     */
+    /* default */
+    @Bean
+    @ConditionalOnBean({AuditService.class, AuditPayloadGenerationService.class, PathParameterService.class})
+    AuditFilter estateAuditFilter(final AuditService auditService,
+                                  final AuditPayloadGenerationService auditPayloadGenerationService,
+                                  final PathParameterService pathParameterService) {
+        return new AuditFilter(auditService, auditPayloadGenerationService, pathParameterService);
+    }
+
+    /**
+     * Wraps {@link #estateAuditFilter(AuditService, AuditPayloadGenerationService,
+     * PathParameterService)} in a disabled registration, so Spring Boot's own auto-registration of
+     * every raw {@code Filter} bean leaves it out of the chain entirely — the bean must still exist
+     * (above) to pre-empt the library's own competing one, but neither copy ever runs.
+     *
+     * @param estateAuditFilter the bean that must exist but never run
+     * @return its disabled registration
+     */
+    /* default */
+    @Bean
+    @ConditionalOnBean(AuditFilter.class)
+    FilterRegistrationBean<AuditFilter> estateAuditFilterRegistration(final AuditFilter estateAuditFilter) {
+        final FilterRegistrationBean<AuditFilter> registration = new FilterRegistrationBean<>(estateAuditFilter);
+        registration.setEnabled(false);
+        return registration;
     }
 }

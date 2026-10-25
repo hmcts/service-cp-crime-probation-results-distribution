@@ -196,6 +196,44 @@ it landed) rather than invented here.
   assertion" research.md Decision 2 flagged as not yet re-verified against the real filter chain
   (`action_header_cannot_redirect_authorisation`, which already passed throughout since its caller
   is outside `Second Line Support` regardless of the header).
+- **T015** (`OperationsAuditIT`): a genuinely new test and a genuine production fix, not a
+  reconstruction, written against the real `cp-audit-filter-springboot` (`cp.audit.enabled=true`,
+  every one of its beans constructed for real) with only the `auditJmsTemplate` bean overridden by
+  name to a recorder that never touches a broker — no new test dependency, no embedded Artemis
+  needed, since `ActiveMQConnectionFactory`'s own construction never opens a connection and nothing
+  else in the library's wiring needs one once its `auditJmsTemplate` bean is pre-empted.
+  **One genuine defect found and fixed while building this test, decompiling the library's bytecode
+  the way research.md Decision 2 did for `cp-auth-rules-filter`**: `AuditFilter.doFilterInternal`
+  audits every request unconditionally (`shouldNotFilter` excludes only `/health` and `/actuator`;
+  the OpenAPI document is read only for path-parameter names, never to decide whether to publish),
+  calling `AuditService.postMessageToArtemis` on the exact JMS topic (`jms.topic.auditing.event`)
+  `OperationsAuditPublisher` also sends to directly (confirmed by that class's own Javadoc). Left
+  alone, any environment with `cp.audit.enabled=true` and `audit.http.enabled=true` together — the
+  combination FR-005-028 requires every deployed environment serving this API to reach (gate 5) —
+  would publish **four** audit events per call, not the two FR-005-025 requires: two from the
+  library's own automatic filter, two from `ReplayController`'s explicit calls. Fixed in
+  `OperationsConfiguration` by supplying the one bean the library's own `auditFilter` `@Bean` method
+  is `@ConditionalOnMissingBean(AuditFilter.class)` against, wrapped in a `FilterRegistrationBean`
+  with `setEnabled(false)` (a bean of the exact type pre-empts the library's competing one; the
+  disabled registration stops Spring Boot's own raw-`Filter` auto-registration from running either
+  copy) — a standard Spring Boot technique for substituting a library's auto-registered filter, not
+  a hack. A second, smaller gap surfaced in the same pass and is fixed in the same area:
+  `OperationsAuditPublisher.publishRequestEvent`/`publishResponseEvent` took the `OperationsAction`
+  as a parameter but never actually included it in the serialised event body (only used for the
+  metric label and the failure log line) — a miss against FR-005-026's "the audit events MUST carry
+  bounded fields only: the action; the outcome...". Fixed by merging the action's wire value into the
+  event ahead of the caller-supplied fields in `toJson`; `OperationsAuditPublisherTest` gained two
+  new cases pinning it (RED: 2/8 failed, the action absent from the body; GREEN: 8/8 after the fix),
+  landed in its own commit ahead of T015's. With both fixes in place: `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditIT"` → `2 tests completed, 0
+  failed` — an admitted call produces exactly two events naming the action and outcome with no body,
+  and a request-event publish failure refuses `503 audit-unavailable` with `ReplayAction` never
+  reached. No isolated RED run is recorded for `OperationsAuditIT` itself beyond the failing document
+  load before T036 landed (see the T035/T036/T037 note above) and the 4-events-not-2 defect this test
+  was written to catch and did catch on its first real run against the unfixed configuration; by the
+  time both fixes were in, the test's own first genuine run was already green, consistent with this
+  pass's convention of being honest about a red run that predates the final, fixed version rather
+  than fabricating one against the already-corrected code.
 - **T017**: verified, not re-authored — `application.yaml`'s existing `authz.http`/`audit.http`/
   `cp.audit` block already matches T014-T016's expectations (`authz.http.enabled` and
   `audit.http.enabled` default `true`, `deny-when-no-rules: true`, `cp.audit.enabled` default
@@ -281,7 +319,7 @@ new component this finding requires.
       `OperationsActionResolutionFilter` is what makes this true against the real library, whose own
       precedence otherwise lets the caller's header/media type win (research.md Decision 2) —
       `src/test/java/.../api/OperationsAuthorisationIT.java`
-- [ ] T015 [P] [US4] `OperationsAuditIT` (real `cp-audit-filter-springboot` wired, Artemis
+- [X] T015 [P] [US4] `OperationsAuditIT` (real `cp-audit-filter-springboot` wired, Artemis
       stubbed/embedded): an admitted call produces exactly two audit events, before and after,
       naming the caller/action/outcome, with no request/response body (FR-005-025, FR-005-026); a
       request-event publish failure refuses the call `503 audit-unavailable` with nothing read or
