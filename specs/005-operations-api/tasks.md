@@ -220,6 +220,28 @@ it landed) rather than invented here.
 
 ## Phase 3: User Story 4 - Only admitted callers reach either action, and every call is audited (Priority: P1)
 
+**T035/T036/T037 landing note (out of phase order, see below)**: `OperationsContractTest` covers the
+document-content half of story 6 in full — every closed value set the document carries
+(`ProblemDetail.reason`, `Leg`, `LegStatus`, `LegReason`, `ResendRefusalCode`, replay's `outcome`)
+compared against the service's own enums, value for value, both ways, plus the two operations'
+`operationId`s and the version raised above `0.0.0`. RED — `./gradlew test --tests
+"uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsContractTest"` against the
+still-placeholder `paths: {}` document → `10 tests completed, 10 failed`, every failure a genuine
+assertion (a missing path or key), no compile error. GREEN after filling in the document (T036) and
+`doc/API_CONTRACTS.md` §3 (T037, same commit) → `10 tests completed, 0 failed`. The served-operations
+half of story 6 ("everything the document describes is served") stays **`[BLOCKED-ON-004]` for
+resend-leg** (no `ResendLegController` to compare against), exactly as T035 already notes; for
+replay it is covered indirectly rather than by a new live round-trip: `ReplayControllerTest` already
+pins the exact mapping (`POST /operations/requests/{requestId}/replay`, no body or `{}` only)
+FR-005-006/009 name, and this test pins that the document names the identical path and
+`operationId` — a live-context check was judged unnecessary duplication given both already agree
+structurally. Filling in the document surfaced one genuine, unrelated finding while wiring
+`OperationsAuditIT` (T015, logged below): `cp-audit-filter-springboot`'s `OpenApiSpecificationParser`
+refuses to construct against a zero-endpoint document ("Supplied specification has no endpoints
+defined"), so `cp.audit.enabled=true` could not start at all until this document had at least one
+path — T036 was landed before T015 for exactly this reason, reversing tasks.md's own phase order
+(Phase 8 before finishing Phase 3's T015).
+
 **Goal**: every `/operations/**` request is authorised against `Second Line Support` before any
 application service is reached, and every admitted call produces a before/after audit event pair.
 
@@ -445,7 +467,7 @@ with the document, both ways.
 
 ### Tests for User Story 6
 
-- [ ] T035 [P] [US6] `OperationsContractTest`: every operation and every `reason` the code can
+- [X] T035 [P] [US6] `OperationsContractTest`: every operation and every `reason` the code can
       answer is in the document; everything the document describes is served; each closed value set
       in the document (`leg`, per-ID status/reason/refusal code, replay outcome) equals the
       service's own vocabulary value for value (FR-005-035) — `[BLOCKED-ON-004]` for the
@@ -454,11 +476,11 @@ with the document, both ways.
 
 ### Implementation for User Story 6
 
-- [ ] T036 [US6] Fill in `src/main/resources/probation-results-distribution-openapi.yaml`: the two
+- [X] T036 [US6] Fill in `src/main/resources/probation-results-distribution-openapi.yaml`: the two
       operations, each request/success shape/status/bounded `reason`, `operationId` set to the
       action strings of FR-005-019 (research.md Decision 2), every closed value set mirrored from
       the service's vocabularies, version raised above `0.0.0` (FR-005-035)
-- [ ] T037 [US6] Update `doc/API_CONTRACTS.md` §3 with the two endpoints, their refusals, the five
+- [X] T037 [US6] Update `doc/API_CONTRACTS.md` §3 with the two endpoints, their refusals, the five
       gates and the runner fallback (FR-005-036) — in the same commit as T036
 
 **Checkpoint**: the OpenAPI document and the served API are provably in agreement.

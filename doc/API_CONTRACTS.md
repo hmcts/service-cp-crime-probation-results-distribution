@@ -267,24 +267,38 @@ structure is kept only as an extension point.
 
 ## 3. Operations API — `/operations/**`
 
-**Status: decided for replay and resend-leg (H9); not built yet.** Its OpenAPI document is filled
-in, and summarised here, by the first feature that builds it. An empty-paths placeholder of that
-document already ships, at `src/main/resources/probation-results-distribution-openapi.yaml`, so
-that the audit filter starts. The API sits behind the
-estate's five deployment gates: an internal ingress or APIM route, the gateway stripping and
-injecting `CJSCPPUID`, an Istio AuthorizationPolicy and NetworkPolicy, users-groups reachable for
-the authorisation filter, and an audit connection. The command-line runners in the image remain the
+**Status: decided for replay and resend-leg (H9). Replay is built and served; resend-leg is
+described below and in the OpenAPI document ahead of its own controller, which waits on slice 004's
+`application.LegResender`.** The document is filled in at
+`src/main/resources/probation-results-distribution-openapi.yaml` (version above the `0.0.0`
+placeholder), read by `cp-audit-filter-springboot` to resolve the paths it audits and asserted
+against the served API, both ways, by `OperationsContractTest`. The API sits behind the estate's
+five deployment gates: an internal ingress or APIM route, the gateway stripping and injecting
+`CJSCPPUID`, an Istio AuthorizationPolicy and NetworkPolicy, users-groups reachable for the
+authorisation filter, and an audit connection. The command-line runners in the image remain the
 fallback for every action.
 
 | Action | Decided behaviour |
 |---|---|
-| Replay a `FAILED` request | Re-sends the stored command under a fresh `messageId` with `origin = REPLAY`. Refused with `resend-in-progress` while any leg's latest row is a `PENDING` resend row. A replay of a `COMPLETED` request is a no-op |
-| Resend one leg | Takes an explicit list of `requestId`s, at most `distribution.resend.max-ids-per-run` (default 100), an operator and a reason (H16). Each ID is checked on its own and either gets a new `resend` attempt row or is refused with one code: `unknown-request`, `not-eligible`, `resend-in-progress` or `request-claimed`. The report lists every ID's outcome. The whole run is refused while intake is paused |
-| Forced resend | Resend-leg with the override `allowTerminalSuccess` (name proposed), an operator and a reason: a leg whose latest row is `SENT` or `NOT_APPLICABLE` is sent again on a new `resend` attempt row, recorded `override=force-resend`. The request stays `COMPLETED`. It is a genuine duplicate at HMPPS |
+| Replay a `FAILED` request | `POST /operations/requests/{requestId}/replay`. Re-sends the stored command under a fresh `messageId` with `origin = REPLAY`. Refused with `resend-in-progress` while any leg's latest row is a `PENDING` resend row. A replay of a `COMPLETED` request is a no-op. Takes no body (or `{}`); no `operator`/`reason` — the caller is named in the audit event only. Available at any time, intake paused included |
+| Resend one leg | `POST /operations/resend-leg`. Takes an explicit list of `requestId`s, at most `distribution.resend.max-ids-per-run` (default 100), the leg (`HMPPS`), an operator and a reason (H16). Answers `202` with a `resendRunId` immediately, before any ID has necessarily finished; the per-ID report lives in slice 004's run-report log line and the attempt rows, not in this response. Each ID is checked on its own and either gets a new `resend` attempt row or is refused with one code: `unknown-request`, `not-eligible`, `resend-in-progress`, `request-claimed`, or slice 004's `not-run` for an ID a pause left unreached. The whole call is refused while intake is paused |
+| Forced resend | Resend-leg with the override `allowTerminalSuccess`, an operator and a reason: a leg whose latest row is `SENT` or `NOT_APPLICABLE` is sent again on a new `resend` attempt row, recorded `override=force-resend`. The request stays `COMPLETED`. It is a genuine duplicate at HMPPS |
 
 On a resend the service re-reads the hearing and compares its `sharedTime` with the request's, as
 instants. The same share proceeds; a different, missing or unparseable `sharedTime` is
 `FAILED(payload-changed)` unless the operator allows a changed payload (H17).
+
+**Refusals** are RFC 9457 problem details with a closed `reason` (never the caller's own value):
+`400` for an argument missing, unreadable, too long, an unknown body field or a list over the cap;
+`401`/`403` for the authorisation; `404 unknown-request` (replay only); `409` for a state refusal
+that changed nothing (`resend-in-progress`, `not-eligible`, `intake-paused`); `415` for a non-JSON
+content type; `503` when the store, the broker (replay's enqueue) or the audit context cannot be
+reached; `500 unexpected` for anything else. Every `/operations/**` call is authorised by
+`cp-auth-rules-filter` (exactly one allow rule per action, `Second Line Support`, default deny) and
+audited twice — before and after — by this service's own publisher, which calls
+`cp-audit-filter-springboot`'s JMS transport directly rather than its own (failure-swallowing)
+default, so a request-event publish failure refuses the call `503 audit-unavailable` before anything
+changes.
 
 The other operator actions — list requests, pause and resume intake, submit-hearing, purge-queue,
 the optional flag check and the recommended `dlq-completed` listing — run as command-line runners.
