@@ -1,0 +1,32 @@
+// The operations API's authorisation (design §4.8; FR-005-020; research.md Decisions 1 and 2).
+// Exactly one explicit allow rule per action, admitting Second Line Support and no other, pending
+// H31's confirmation or override. No catch-all: an action with no matching rule denies by default
+// (authz.http.deny-when-no-rules).
+//
+// The Action fact's name is this slice's own fixed string, set by
+// config.OperationsActionResolutionFilter before cp-auth-rules-filter runs — never the caller's
+// CPP-ACTION header or a vendor media type (FR-005-022; research.md Decision 2).
+package uk.gov.hmcts.cp.probationresultsdistribution.acl
+
+import uk.gov.moj.cpp.authz.drools.Action
+import uk.gov.moj.cpp.authz.drools.Outcome
+
+global uk.gov.moj.cpp.authz.http.providers.UserAndGroupProvider userAndGroupProvider
+
+rule "operations-replay-second-line-support"
+when
+    $action : Action(name == "probation-results-distribution-operations.replay")
+    $outcome : Outcome()
+    eval(userAndGroupProvider.isMemberOfAnyOfTheSuppliedGroups($action, "Second Line Support"))
+then
+    $outcome.setSuccess(true);
+end
+
+rule "operations-resend-leg-second-line-support"
+when
+    $action : Action(name == "probation-results-distribution-operations.resend-leg")
+    $outcome : Outcome()
+    eval(userAndGroupProvider.isMemberOfAnyOfTheSuppliedGroups($action, "Second Line Support"))
+then
+    $outcome.setSuccess(true);
+end

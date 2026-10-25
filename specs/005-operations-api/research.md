@@ -37,35 +37,75 @@ same for both.
 
 ---
 
-## Decision 2 — how the action is derived from the path and method (open; needs verification)
+## Decision 2 — how the action is derived from the path and method (CONFIRMED by decompiling the
+real library; supersedes the original provisional decision below)
 
 **The question**: `authz.http.action-header: "CPP-ACTION"` and `action-required: false` are
 already configured, but FR-005-022 requires the service — never the caller's header — to derive the
-action from the path and the method. `cp-auth-rules-filter`'s own mechanism for this (an
-OpenAPI-operationId lookup, a Spring `HandlerInterceptor` setting a request attribute the filter
-reads, or something else) is not established by anything in this repository, and this plan has no
-access to the library's own documentation or source beyond its Gradle coordinate
-(`uk.gov.hmcts.cp:cp-auth-rules-filter:1.0.7`).
+action from the path and the method.
 
-**Decision (provisional)**: assume the filter resolves the action from the OpenAPI document it is
-already configured to read (the same `probation-results-distribution-openapi.yaml` the audit filter
-uses, via each operation's `operationId`), consistent with `action-required: false` meaning "a
-header is optional because the filter can derive the action itself." Each operation's `operationId`
-in the filled-in OpenAPI document is set to the exact action string FR-005-019 proposes
-(`probation-results-distribution-operations.replay`,
-`probation-results-distribution-operations.resend-leg`), so that if the filter does read
-`operationId`, the two already agree.
+**What the real library (`cp-auth-rules-filter:1.0.7`, package `uk.gov.moj.cpp.authz.http`) actually
+does**, read directly from its bytecode (no source/docs available, and the earlier provisional
+decision's OpenAPI-`operationId` guess was wrong — the filter never reads the OpenAPI document at
+all; that file is only `audit.http.openapi-rest-spec`'s, a different library):
+`RequestActionResolver.resolve(request, actionHeaderName, path)` picks the action name in this
+**priority order**, each one entirely caller-controlled except the last:
+1. a `vnd.<token>` vendor suffix on the request's `Content-Type` header, lower-cased;
+2. failing that, the first `vnd.<token>` vendor suffix found in a comma-separated `Accept` header;
+3. failing that, the configured action header (`CPP-ACTION`) verbatim, if present and non-blank;
+4. **only if none of the above is present**, a synthesised default: literally
+   `"{HTTP method} {servlet path within the application}"` (e.g.
+   `"POST /operations/requests/3fa8.../replay"` — the real path, UUID interpolated, not a template).
 
-**Flagged for implementation-time verification**: the first task that wires
-`OperationsAuthorisationIT` (an integration test with the real `cp-auth-rules-filter` on the
-classpath) must confirm this against the library's actual behaviour before relying on it. If the
-library instead needs an explicit `HandlerInterceptor` or a per-path properties map, that is a
-small, isolated addition to `config/` — it does not change FR-005-022's requirement or this slice's
-controller/mapper split, only how the action string reaches the filter.
+`HttpAuthzFilter.doFilter` builds one `Action(name, attributes)` Drools fact from whichever of the
+four wins, inserts it alongside an `AuthzPrincipal` fact (`groups: Set<String>` among its fields),
+and calls `DroolsAuthzEngine.evaluate(principal, action)`; a rule firing sets `Outcome.success`,
+otherwise the filter answers `403`. Case 4's result could in principle still be matched in Drools
+with a regex (`Action(name matches "POST /operations/requests/[^/]+/replay")`), but cases 1–3 all
+let an unauthenticated caller choose the resolved action themselves by setting a header or a vendor
+media type — the exact bypass FR-005-022 exists to close ("a caller admitted to one action cannot
+reach the other by naming it").
 
-**Alternatives considered**: none meaningfully different — every option converges on "the filter
-needs the action string from somewhere other than the caller," and the OpenAPI `operationId` is the
-only candidate source already wired into this service's configuration.
+**Decision**: this slice adds one small `OncePerRequestFilter`
+(`OperationsActionResolutionFilter`, `config/` — not `api/`, since it only talks to the servlet
+layer and the Drools fact shape, nothing of this slice's own domain), registered with a
+`FilterRegistrationBean` ordered **before** `cp-auth-rules-filter`'s own filter and scoped to
+`/operations/*`. For a request matching `POST /operations/requests/{requestId}/replay` or
+`POST /operations/resend-leg` (matched by this filter's own path/method check, not by trusting
+anything in the request), it wraps the request so that, as seen by every filter after it:
+`getHeader("CPP-ACTION")` always returns this slice's own fixed action string
+(`probation-results-distribution-operations.replay` /
+`...resend-leg`, FR-005-019's proposed names, now confirmed reachable), and `getContentType()` /
+`getHeader("Accept")` are stripped of any `vnd.` vendor token (forced to plain `application/json`),
+so cases 1–2 above can never fire ahead of the header this filter itself set. The two Drools rules
+(research.md Decision 1) then match on `Action(name == "...")` by plain literal equality — no regex
+needed, and FR-005-019's human-readable proposed action names survive into the real rule file. A
+request outside `/operations/**` is untouched.
+
+**Why not just rely on case 4's fallback instead of building a filter**: it is per-instance unique
+(the real path, UUID included) and would force every Drools rule to a regex the resend-leg one
+doesn't even need; a caller could still hijack the SAME request onto a different, pre-existing
+action name via cases 1–3, since this slice does not control whether some other `.drl` file ever
+lands on this classpath (`drools-classpath-pattern: classpath:/acl/**/*.drl` loads all of them, not
+just this slice's) — closing the bypass at the filter is the only way that holds regardless.
+
+**Risk retired, one risk remains**: the Drools fact types and `DroolsAuthzEngine.evaluate` contract
+above are read directly from the library's bytecode, so the rule-matching design is now solid.
+What is *not* yet re-confirmed by a running test is `HttpAuthzFilter`'s exact precedence when more
+than one of cases 1–3 is present at once in a single request (this slice's own filter prevents that
+by construction, so it should not matter) — `OperationsAuthorisationIT` (US4) should still include
+one assertion sending a conflicting `CPP-ACTION` header from the caller and confirming it has no
+effect, to pin this filter's ordering against the real filter chain, not just against the decompiled
+logic read here.
+
+---
+
+### The original provisional decision (superseded, kept for the record)
+
+**Decision (provisional, now known wrong)**: assume the filter resolves the action from the OpenAPI
+document it is already configured to read, via each operation's `operationId`. This was wrong: the
+library never reads the OpenAPI document for action resolution; see above for the confirmed
+mechanism.
 
 ---
 

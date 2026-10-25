@@ -12,15 +12,21 @@ quickstart.md
 implementation task it guards; its commit records the failing assertion (not a compile error)
 before the paired implementation task's commit records the green run.
 
-**Hard dependency, stated plainly**: this slice's controllers call slice 004's `ReplayAction` and
-`LegResender` directly (plan.md, "no new port"). Neither class exists in code yet — 004 has only
-its `cli` package skeleton and two vocabulary enums implemented. **Tasks marked
-`[BLOCKED-ON-004]` cannot be completed for real until those two classes exist** on this branch.
+**Hard dependency, status as of this pass**: this slice's controllers call slice 004's
+`ReplayAction` and `LegResender` directly (plan.md, "no new port").
+**`application.ReplayAction` now exists** on this branch — `public ReplayOutcome
+replay(UUID requestId)`, exactly the shape `research.md` Decision 5 assumed — so **US1's tasks are
+no longer blocked on a nonexistent class** and are unmarked below. **`application.LegResender`
+still does not exist**; US2, US3 and US7's tasks remain `[BLOCKED-ON-004]`. One gap remains even
+for US1: `ReplayAction` has no production `ReplayEnqueuer` wired in Spring yet (004's own
+`cli/ReplayRunner` has the same gap), so a *manual, end-to-end* run (T023) still can't happen until
+that adapter lands — the `@WebMvcTest` controller tests (which mock `ReplayAction` at the boundary)
+are unaffected by that gap and can be written and run for real now.
 Per the lesson already learned once this session (004's own `ReplayRoute`/`ResendRefusalReason`
 duplicating classes that turned out to already exist on this branch): **do not stub, fake or
-pre-define `ReplayAction`/`LegResender` here.** Where a task needs them to compile, write the test
-against the method shape `research.md` Decision 5 commits to, mark it blocked, and move on; do not
-invent the real classes under this slice's ticket.
+pre-define `LegResender` here.** Where a task needs it to compile, write the test against the
+method shape `research.md` Decision 5 commits to, mark it blocked, and move on; do not invent the
+real class under this slice's ticket.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -36,14 +42,14 @@ invent the real classes under this slice's ticket.
 **Purpose**: the request/response shapes and the skeleton every story's controller needs — no
 business logic, no dependency on 004.
 
-- [ ] T001 [P] Create `api/dto/ReplayResponse.java` (record: `requestId`, `outcome`, `messageId`)
+- [X] T001 [P] Create `api/dto/ReplayResponse.java` (record: `requestId`, `outcome`, `messageId`)
       per data-model.md
-- [ ] T002 [P] Create `api/dto/ResendLegRequest.java` (record: `requestIds`, `leg`, `operator`,
+- [X] T002 [P] Create `api/dto/ResendLegRequest.java` (record: `requestIds`, `leg`, `operator`,
       `reason`, `allowTerminalSuccess`, `allowChangedPayload`, the last two defaulting `false`) per
       data-model.md
-- [ ] T003 [P] Create `api/dto/ResendLegAcceptedResponse.java` (record: `resendRunId` only — no
+- [X] T003 [P] Create `api/dto/ResendLegAcceptedResponse.java` (record: `resendRunId` only — no
       per-ID detail, research.md Decision 4)
-- [ ] T004 [P] Add `src/main/resources/acl/operations-api.drl`: two rules, one per action
+- [X] T004 [P] Add `src/main/resources/acl/operations-api.drl`: two rules, one per action
       (`probation-results-distribution-operations.replay`,
       `probation-results-distribution-operations.resend-leg`), each admitting `Second Line Support`
       and nothing else, no catch-all (research.md Decision 1; FR-005-020)
@@ -57,37 +63,61 @@ business logic, no dependency on 004.
 **Purpose**: the error-handling and audit-publishing infrastructure every endpoint depends on.
 **⚠️ CRITICAL**: no user-story phase starts before this one is complete.
 
-- [ ] T005 [P] `OperationsProblemDetailHandlerTest`: for each closed `reason` in FR-005-029, the
+- [X] T005 [P] `OperationsProblemDetailHandlerTest`: for each closed `reason` in FR-005-029, the
       status family it maps to (FR-005-030), that a `400` about one argument names the argument and
       never its value, that no exception message/stack trace/far-end text reaches the body
-      (FR-005-031), and that an unmapped path/method answers without a stack trace or a path echo
-      (FR-005-034) — `src/test/java/.../api/OperationsProblemDetailHandlerTest.java`
-- [ ] T006 Implement `api/OperationsProblemDetailHandler.java` (`@RestControllerAdvice`): maps every
+      (FR-005-031), that an unmapped path/method answers without a stack trace or a path echo
+      (FR-005-034), **and that every `5xx` answer increments
+      `MetricRegistry.operationsFailure(OperationsAction, OperationsFailure)` with the reason
+      matching the mapped `OperationsFailure` value (FR-005-043)** —
+      `src/test/java/.../api/OperationsProblemDetailHandlerTest.java`
+- [X] T006 Implement `api/OperationsProblemDetailHandler.java` (`@RestControllerAdvice`): maps every
       refusal/failure type to an RFC 9457 `ProblemDetail` with the closed `reason` set and status
       families of FR-005-029/030; satisfies T005
-- [ ] T007 [P] `OperationsRequestMapperTest`: a non-UUID `requestId` or `requestIds` entry →
+- [X] T007 [P] `OperationsRequestMapperTest`: a non-UUID `requestId` or `requestIds` entry →
       `unreadable-argument` naming the right field; `leg` absent → `missing-argument`, not `HMPPS` →
       `unreadable-argument`; `operator`/`reason` absent, blank, or > 200 chars →
       `missing-argument`/`argument-too-long` naming the argument, refused not truncated
       (FR-005-010, FR-005-011, FR-005-016; Assumption 4); an unknown JSON field → `400
       unknown-field`; replay's body — none or `{}` accepted, any field refused `unknown-field`
       (FR-005-033) — `src/test/java/.../api/OperationsRequestMapperTest.java`
-- [ ] T008 Implement `api/OperationsRequestMapper.java`: typed parsing per T007, refusing whole
+- [X] T008 Implement `api/OperationsRequestMapper.java`: typed parsing per T007, refusing whole
       before any downstream call (FR-005-003, FR-005-033)
-- [ ] T009 [P] `OperationsAuditPublisherTest`: a request-event publish failure is surfaced as a
+- [X] T009 [P] `OperationsAuditPublisherTest`: a request-event publish failure is surfaced as a
       checked outcome before any downstream call; a response-event publish failure is caught,
-      logged ERROR, and does not change the call's already-decided outcome (FR-005-027) —
-      `src/test/java/.../api/OperationsAuditPublisherTest.java`
-- [ ] T010 Implement `api/OperationsAuditPublisher.java`: wraps `cp-audit-filter-springboot`'s
+      logged ERROR, and does not change the call's already-decided outcome (FR-005-027), **and
+      increments `MetricRegistry.operationsFailure(action, OperationsFailure.
+      AUDIT_RESPONSE_UNPUBLISHED)` (FR-005-043)** — `src/test/java/.../api/OperationsAuditPublisherTest.java`
+- [X] T010 Implement `api/OperationsAuditPublisher.java`: wraps `cp-audit-filter-springboot`'s
       publish call directly rather than relying on its default (swallowing) publisher
-      (research.md Decision 3); satisfies T009
-- [ ] T011 [P] Wire `MetricRegistry.operationsFailure(OperationsAction, OperationsFailure)` calls
-      into `OperationsProblemDetailHandler` (every `5xx`) and `OperationsAuditPublisher` (an
-      unpublished response event) — FR-005-043; the series and both enums already exist, this task
-      only adds the call sites
+      (research.md Decision 3); satisfies T009's non-metric cases
+- [X] T011 Implement the `MetricRegistry.operationsFailure(OperationsAction, OperationsFailure)`
+      call sites in `OperationsProblemDetailHandler` (every `5xx`) and `OperationsAuditPublisher`
+      (an unpublished response event) — satisfies T005's and T009's metric assertions above
+      (FR-005-043); the series and both enums already exist, this task only adds the call sites.
+      Depends on T006 and T010 (edits their files) and on T005/T009 carrying the metric
+      assertions — no longer `[P]`
 
 **Checkpoint**: error mapping, request parsing, and the audit publisher are unit-tested in
 isolation. No controller yet.
+
+**T001–T011 are implemented and green** (`./gradlew test checkstyleMain checkstyleTest pmdMain
+pmdTest` all pass for them). Two findings surfaced while landing them, not named by any task above,
+now fixed:
+- `config.MetricRegistry`'s `@Bean` was defined inside `ServiceBusConsumerConfig`, gated on
+  `distribution.consumer.enabled=true`. `OperationsProblemDetailHandler`/`OperationsAuditPublisher`
+  need it unconditionally (a pod must serve replay/resend-leg with intake off), so it moved to a new,
+  always-on `config/MetricRegistryConfiguration.java`. `ServiceBusConsumerConfigIT`'s
+  `ApplicationContextRunner` calls that exercise the real composition root were updated to include
+  it alongside `ServiceBusConsumerConfig.class`.
+- Spring Boot 4's `JacksonAutoConfiguration` registers a Jackson 3 {@code JsonMapper}
+  (`tools.jackson.databind.json.JsonMapper`), not a Jackson 2 `com.fasterxml.jackson.databind.ObjectMapper`
+  bean, and nothing else in this service exposed one. `OperationsConfiguration`'s `@Bean` method
+  constructs its own `ObjectMapper` directly instead of asking Spring to autowire one.
+- `cp-auth-rules-filter` and `cp-audit-filter-springboot`'s own transitive dependencies
+  (`spring-jms`, `jakarta.jms-api`) are declared `implementation` by those libraries, so they are
+  runtime-only for this project; `build.gradle` now adds both `implementation` directly for
+  `OperationsAuditPublisher` to compile against `JmsTemplate`.
 
 ---
 
@@ -104,32 +134,50 @@ service call (or its absence), and the two audit events.
 authorisation/audit *filter chain* against a minimal mapped test route, and are re-run unchanged
 once the real controllers exist in US1/US2.
 
+**research.md Decision 2 is now CONFIRMED, not provisional**: `cp-auth-rules-filter` resolves its
+Drools `Action` fact's name from — in this priority order — a `vnd.` token on `Content-Type`, then
+on `Accept`, then the `CPP-ACTION` header verbatim, and only last a `"{method} {path}"` fallback
+(read directly from the library's bytecode; it never reads the OpenAPI document). The first three
+are caller-controlled, which is exactly the bypass FR-005-022 forbids. T012/T013 below build the one
+new component this finding requires.
+
 ### Tests for User Story 4 (write first, confirm red, then implement) ⚠️
 
-- [ ] T012 [P] [US4] `OperationsAuthorisationIT` (real `cp-auth-rules-filter` wired, users-groups
+- [ ] T012 [P] [US4] `OperationsActionResolutionFilterTest`: for `POST
+      /operations/requests/{requestId}/replay` and `POST /operations/resend-leg`, the wrapped
+      request's `getHeader("CPP-ACTION")` always returns this slice's fixed action string
+      (`probation-results-distribution-operations.replay` / `...resend-leg`) regardless of what the
+      caller sent for that header, and `getContentType()`/`getHeader("Accept")` never carry a `vnd.`
+      token through, even when the caller supplied one; a request outside `/operations/**` is
+      returned unwrapped (FR-005-022; research.md Decision 2) —
+      `src/test/java/.../config/OperationsActionResolutionFilterTest.java`
+- [ ] T013 [US4] Implement `config/OperationsActionResolutionFilter.java` (`OncePerRequestFilter`)
+      and register it via a `FilterRegistrationBean` ordered before `cp-auth-rules-filter`'s own
+      filter, scoped to `/operations/*` — satisfies T012
+- [ ] T014 [P] [US4] `OperationsAuthorisationIT` (real `cp-auth-rules-filter` wired, users-groups
       stubbed via WireMock): no/blank `CJSCPPUID` → `401`; caller outside `Second Line Support` →
       `403`; users-groups unreachable → `403` (fail closed); a caller admitted to `replay` who sends
       an action header naming `resend-leg` is still authorised by path+method, never the header
-      (FR-005-018, FR-005-019, FR-005-021, FR-005-022) — **confirms research.md Decision 2** (how
-      the filter derives the action from the OpenAPI document) against the real library; if it
-      needs different wiring than assumed, fix `config/` only, not this test's assertions —
+      (FR-005-018, FR-005-019, FR-005-021, FR-005-022) — **depends on T013**:
+      `OperationsActionResolutionFilter` is what makes this true against the real library, whose own
+      precedence otherwise lets the caller's header/media type win (research.md Decision 2) —
       `src/test/java/.../api/OperationsAuthorisationIT.java`
-- [ ] T013 [P] [US4] `OperationsAuditIT` (real `cp-audit-filter-springboot` wired, Artemis
+- [ ] T015 [P] [US4] `OperationsAuditIT` (real `cp-audit-filter-springboot` wired, Artemis
       stubbed/embedded): an admitted call produces exactly two audit events, before and after,
       naming the caller/action/outcome, with no request/response body (FR-005-025, FR-005-026); a
       request-event publish failure refuses the call `503 audit-unavailable` with nothing read or
       changed (FR-005-027) — `src/test/java/.../api/OperationsAuditIT.java`
-- [ ] T014 [P] [US4] `OperationsConfigDefaultsTest`: the authorisation and audit switches default
+- [ ] T016 [P] [US4] `OperationsConfigDefaultsTest`: the authorisation and audit switches default
       on; `deny-when-no-rules: true` holds; a pod with the audit filter on and its transport off
       logs one WARN naming both settings at startup and does not refuse to start (FR-005-028) —
       `src/test/java/.../config/OperationsConfigDefaultsTest.java`
 
 ### Implementation for User Story 4
 
-- [ ] T015 [US4] Confirm (or add, if missing) the `authz.http`/`audit.http`/`cp.audit` wiring in
-      `application.yaml` matches T012–T014's expectations — the scaffold already has this block;
+- [ ] T017 [US4] Confirm (or add, if missing) the `authz.http`/`audit.http`/`cp.audit` wiring in
+      `application.yaml` matches T014–T016's expectations — the scaffold already has this block;
       this task is a verification pass, not new authoring, per plan.md
-- [ ] T016 [US4] Add the startup WARN for "audit filter on, transport off" if not already present
+- [ ] T018 [US4] Add the startup WARN for "audit filter on, transport off" if not already present
       (FR-005-028) — `config/StartupValidationConfig.java` or `config/StartupValidator.java`
       (extend, do not duplicate)
 
@@ -148,34 +196,38 @@ per result it can give and assert the status/outcome/no-echo; then, against the 
 emulator, replay one `FAILED` request and assert one command enqueued, byte-identical, under a
 fresh `messageId` with `origin = REPLAY`.
 
-### Tests for User Story 1 (write first, confirm red, then implement) ⚠️ `[BLOCKED-ON-004]`
+### Tests for User Story 1 (write first, confirm red, then implement) ⚠️
 
-- [ ] T017 [P] [US1] `ReplayControllerTest` (`@WebMvcTest`, `ReplayAction` mocked): enqueued →
-      `200 {requestId, outcome: enqueued, messageId}`; `COMPLETED` → `200 {outcome: no-op}`;
-      `PENDING` resend row → `409 resend-in-progress`; no request → `404 unknown-request`;
-      `RECEIVED`/`RETRYING` → `409 not-eligible`; store down → `503 store-unavailable`; broker can't
-      take the enqueue → `503 broker-unavailable`; available while intake is paused, no refusal of
-      this endpoint's own (FR-005-006–008) — `[BLOCKED-ON-004]`, since it mocks `ReplayAction`'s
-      real shape — `src/test/java/.../api/ReplayControllerTest.java`
-- [ ] T018 [P] [US1] `OperationsResponseMapperTest` (replay half): `ReplayAction`'s result →
-      `ReplayResponse` per T017's cases, with the `requestId` always the service's own canonical
-      parse (FR-005-031) — `[BLOCKED-ON-004]` —
-      `src/test/java/.../api/OperationsResponseMapperTest.java`
+- [ ] T019 [P] [US1] `ReplayControllerTest` (`@WebMvcTest`, `ReplayAction` mocked): `Enqueued` →
+      `200 {requestId, outcome: enqueued, messageId}`; `NoOp` → `200 {outcome: no-op}`;
+      `Refused(RESEND_IN_PROGRESS)` → `409 resend-in-progress`; `Refused(UNKNOWN_REQUEST)` →
+      `404 unknown-request`; `Refused(NOT_ELIGIBLE)` → `409 not-eligible`; `StoreUnavailable` →
+      `503 store-unavailable`; `BrokerUnavailable` → `503 broker-unavailable`; available while
+      intake is paused, no refusal of this endpoint's own (FR-005-006–008) — `ReplayAction` exists
+      now (`public ReplayOutcome replay(UUID requestId)`, `application.ReplayOutcome`'s five
+      `sealed` cases), so this test can be written and run against the real class, mocked at the
+      boundary — `src/test/java/.../api/ReplayControllerTest.java`
+- [ ] T020 [P] [US1] `OperationsResponseMapperTest` (replay half): `ReplayAction`'s result →
+      `ReplayResponse` per T019's cases, with the `requestId` always the service's own canonical
+      parse (FR-005-031) — `src/test/java/.../api/OperationsResponseMapperTest.java`
 
-### Implementation for User Story 1 `[BLOCKED-ON-004]`
+### Implementation for User Story 1
 
-- [ ] T019 [US1] Implement `api/OperationsResponseMapper.java` (replay half): maps `ReplayAction`'s
-      result to `ReplayResponse` — satisfies T018 — **cannot compile until `application.ReplayAction`
-      exists**
-- [ ] T020 [US1] Implement `api/ReplayController.java`: `POST
+- [ ] T021 [US1] Implement `api/OperationsResponseMapper.java` (replay half): maps
+      `application.ReplayOutcome`'s five cases (`Enqueued`, `NoOp`, `Refused` with its
+      `ResendRefusal`, `StoreUnavailable`, `BrokerUnavailable`) to `ReplayResponse` — satisfies T020
+- [ ] T022 [US1] Implement `api/ReplayController.java`: `POST
       /operations/requests/{requestId}/replay`, no body or `{}` only (FR-005-009, FR-005-033), calls
-      `ReplayAction` via `OperationsRequestMapper`/`OperationsResponseMapper`, wrapped by
-      `OperationsAuditPublisher` (request event before the call, response event after) — satisfies
-      T017 — **cannot compile until `application.ReplayAction` exists**
-- [ ] T021 Run `quickstart.md`'s replay steps once `application.ReplayAction` lands on this branch
+      `ReplayAction.replay(UUID)` via `OperationsRequestMapper`/`OperationsResponseMapper`, wrapped
+      by `OperationsAuditPublisher` (request event before the call, response event after) —
+      satisfies T019
+- [ ] T023 Run `quickstart.md`'s replay steps manually. **Still blocked**: `ReplayAction` has no
+      production `ReplayEnqueuer` wired in Spring (004's own gap too — its `cli/ReplayRunner` is in
+      the same position); a manual end-to-end run needs that adapter first. T019–T022 do not need it
+      (they mock `ReplayAction` at the boundary) and can be completed now.
 
-**Checkpoint**: replay over HTTP is implementable the moment 004's `ReplayAction` exists; everything
-up to that point (DTOs, error handling, auth/audit, the test shapes) is already in place.
+**Checkpoint**: replay over HTTP is implementable today — `ReplayAction` exists with the assumed
+shape. Only the manual end-to-end smoke test (T023) waits on the `ReplayEnqueuer` Azure adapter.
 
 ---
 
@@ -192,31 +244,31 @@ outcomes.
 
 ### Tests for User Story 2 (write first, confirm red, then implement) ⚠️ `[BLOCKED-ON-004]`
 
-- [ ] T022 [P] [US2] `ResendLegControllerTest` (`@WebMvcTest`, `LegResender` mocked): the list
+- [ ] T024 [P] [US2] `ResendLegControllerTest` (`@WebMvcTest`, `LegResender` mocked): the list
       passed to `LegResender` exactly as sent — no collapse, no cap, no reorder (FR-005-011,
       FR-005-013); `202 {resendRunId}` on acceptance, immediately, not waiting for any ID
       (FR-005-015); whole-call refusals render 004's own codes
       (`missing-argument`/`argument-too-long`/`too-many-request-ids`/`unreadable-argument`/
       `intake-paused`/`store-unavailable`) per contracts/operations-api.md §2 — `[BLOCKED-ON-004]` —
       `src/test/java/.../api/ResendLegControllerTest.java`
-- [ ] T023 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
+- [ ] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
       result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
       `[BLOCKED-ON-004]` — extends `src/test/java/.../api/OperationsResponseMapperTest.java`
-- [ ] T024 [P] [US2] `OperationsRequestMapperTest` (resend-leg list half): `allowChangedPayload`
+- [ ] T026 [P] [US2] `OperationsRequestMapperTest` (resend-leg list half): `allowChangedPayload`
       passed through unchanged, `false` when absent (FR-005-010) — `[BLOCKED-ON-004]` for the
       end-to-end case, but the parsing-only assertions can run against T008 today — extends
       `src/test/java/.../api/OperationsRequestMapperTest.java`
 
 ### Implementation for User Story 2 `[BLOCKED-ON-004]`
 
-- [ ] T025 [US2] Implement `api/OperationsResponseMapper.java` (resend-leg half): maps
-      `LegResender`'s accepted-run result to `ResendLegAcceptedResponse` — satisfies T023 —
+- [ ] T027 [US2] Implement `api/OperationsResponseMapper.java` (resend-leg half): maps
+      `LegResender`'s accepted-run result to `ResendLegAcceptedResponse` — satisfies T025 —
       **cannot compile until `application.LegResender` exists**
-- [ ] T026 [US2] Implement `api/ResendLegController.java`: `POST /operations/resend-leg`, parses via
+- [ ] T028 [US2] Implement `api/ResendLegController.java`: `POST /operations/resend-leg`, parses via
       `OperationsRequestMapper`, calls `LegResender`, answers `202` via
-      `OperationsResponseMapper`, wrapped by `OperationsAuditPublisher` — satisfies T022 — **cannot
+      `OperationsResponseMapper`, wrapped by `OperationsAuditPublisher` — satisfies T024 — **cannot
       compile until `application.LegResender` exists**
-- [ ] T027 Run `quickstart.md`'s resend-leg steps once `application.LegResender` lands
+- [ ] T029 Run `quickstart.md`'s resend-leg steps once `application.LegResender` lands
 
 **Checkpoint**: resend-leg over HTTP is implementable the moment 004's `LegResender` exists.
 
@@ -234,7 +286,7 @@ new attempt then `not-eligible`.
 
 ### Tests for User Story 3 (write first, confirm red, then implement) ⚠️ `[BLOCKED-ON-004]`
 
-- [ ] T028 [P] [US3] `ForcedResendControllerIT`: `allowTerminalSuccess: true` reaches `LegResender`
+- [ ] T030 [P] [US3] `ForcedResendControllerIT`: `allowTerminalSuccess: true` reaches `LegResender`
       unchanged with operator/reason; both audit events say the override was requested
       (FR-005-017); without the override the same ID renders `not-eligible` and the call still
       succeeds (`202`); a reason or operator over 200 characters is `400 argument-too-long`
@@ -245,9 +297,9 @@ new attempt then `not-eligible`.
 
 ### Implementation for User Story 3 `[BLOCKED-ON-004]`
 
-- [ ] T029 [US3] Confirm `ResendLegController`/`OperationsAuditPublisher` (T026, T010) already pass
+- [ ] T031 [US3] Confirm `ResendLegController`/`OperationsAuditPublisher` (T028, T010) already pass
       `allowTerminalSuccess` through unchanged and surface it on both audit events without a new
-      code path — satisfies T028; if a gap is found, fix `OperationsAuditPublisher`'s event-field
+      code path — satisfies T030; if a gap is found, fix `OperationsAuditPublisher`'s event-field
       mapping only
 
 **Checkpoint**: Stories 1–4 together give the whole P1 slice — replay, resend-leg, the forced
@@ -266,20 +318,20 @@ log.
 
 ### Tests for User Story 5
 
-- [ ] T030 [P] [US5] `OperationsRefusalSweepTest` (extends `OperationsProblemDetailHandlerTest`,
+- [ ] T032 [P] [US5] `OperationsRefusalSweepTest` (extends `OperationsProblemDetailHandlerTest`,
       T005, with both real endpoints once built — `[BLOCKED-ON-004]` for the endpoint-level cases,
       but the problem-detail shape itself is already covered by T005): every refusal is RFC 9457
       with a closed `reason`, no exception message, no stack trace; a successful call's `requestId`
       is always the canonical parse, never the raw characters sent (FR-005-029, FR-005-031) —
       `src/test/java/.../api/OperationsRefusalSweepTest.java`
-- [ ] T031 [P] [US5] `TelemetryPrivacyTest`/`LogStatementSweepTest` extension: sweep every new log
+- [ ] T033 [P] [US5] `TelemetryPrivacyTest`/`LogStatementSweepTest` extension: sweep every new log
       line and audit event this slice adds for the forbidden content set (operator, reason, an
       unreadable identifier, `CJSCPPUID`) — `src/test/java/.../support/LogStatementSweepTest.java`
       (extend, do not duplicate)
 
 ### Implementation for User Story 5
 
-- [ ] T032 [US5] Close any gap T030/T031 find — expected to be none, since T006/T008 already
+- [ ] T034 [US5] Close any gap T032/T033 find — expected to be none, since T006/T008 already
       implement the bounded-refusal and no-echo rules; this phase is a verification pass
 
 **Checkpoint**: the no-echo, bounded-refusal guarantee is proven across both endpoints together.
@@ -296,7 +348,7 @@ with the document, both ways.
 
 ### Tests for User Story 6
 
-- [ ] T033 [P] [US6] `OperationsContractTest`: every operation and every `reason` the code can
+- [ ] T035 [P] [US6] `OperationsContractTest`: every operation and every `reason` the code can
       answer is in the document; everything the document describes is served; each closed value set
       in the document (`leg`, per-ID status/reason/refusal code, replay outcome) equals the
       service's own vocabulary value for value (FR-005-035) — `[BLOCKED-ON-004]` for the
@@ -305,12 +357,12 @@ with the document, both ways.
 
 ### Implementation for User Story 6
 
-- [ ] T034 [US6] Fill in `src/main/resources/probation-results-distribution-openapi.yaml`: the two
+- [ ] T036 [US6] Fill in `src/main/resources/probation-results-distribution-openapi.yaml`: the two
       operations, each request/success shape/status/bounded `reason`, `operationId` set to the
       action strings of FR-005-019 (research.md Decision 2), every closed value set mirrored from
       the service's vocabularies, version raised above `0.0.0` (FR-005-035)
-- [ ] T035 [US6] Update `doc/API_CONTRACTS.md` §3 with the two endpoints, their refusals, the five
-      gates and the runner fallback (FR-005-036) — in the same commit as T034
+- [ ] T037 [US6] Update `doc/API_CONTRACTS.md` §3 with the two endpoints, their refusals, the five
+      gates and the runner fallback (FR-005-036) — in the same commit as T036
 
 **Checkpoint**: the OpenAPI document and the served API are provably in agreement.
 
@@ -326,7 +378,7 @@ an identically seeded store, and compare the reports ID for ID.
 
 ### Tests for User Story 7 `[BLOCKED-ON-004]`
 
-- [ ] T036 [P] [US7] `OperationsRunnerParityIT`: the design's mixed list through
+- [ ] T038 [P] [US7] `OperationsRunnerParityIT`: the design's mixed list through
       `cli/ResendLegRunner` (004) and through `POST /operations/resend-leg` (005), each against an
       identically seeded store, give the same whole-call refusal or the same outcome/refusal code
       per ID (FR-005-005); a replay refused through the API is refused with the same code through
@@ -336,7 +388,7 @@ an identically seeded store, and compare the reports ID for ID.
 
 ### Implementation for User Story 7
 
-- [ ] T037 [US7] Confirm the replay and resend-leg command-line runners remain present and
+- [ ] T039 [US7] Confirm the replay and resend-leg command-line runners remain present and
       documented as the fallback once this slice is built (FR-005-005) — a verification task, no
       new code
 
@@ -346,18 +398,19 @@ an identically seeded store, and compare the reports ID for ID.
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T038 [P] `OperationsConfigPropertiesTest`: this slice adds 0 properties to the closed
+- [ ] T040 [P] `OperationsConfigPropertiesTest`: this slice adds 0 properties to the closed
       `distribution.*` catalogue and makes 0 App Configuration or Results-switch reads
       (SC-005-011) — `src/test/java/.../config/OperationsConfigPropertiesTest.java`
-- [ ] T039 [P] Run the full `TelemetryPrivacyTest`/`LogStatementSweepTest` suite across every new
+- [ ] T041 [P] Run the full `TelemetryPrivacyTest`/`LogStatementSweepTest` suite across every new
       class this slice adds — zero findings (FR-005-023, FR-005-031, FR-005-032; SC-005-004)
-- [ ] T040 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
+- [ ] T042 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
       are unchanged (SC-005-010)
-- [ ] T041 Run every `quickstart.md` step end to end once 004 is fully implemented
-- [ ] T042 [P] Confirm research.md Decision 2 (action derivation via `cp-auth-rules-filter`) against
-      the real library in T012; if the assumption was wrong, apply the isolated `config/` fix the
-      decision names and re-run T012 only
-- [ ] T043 Update `CLAUDE.md`'s Setup section once this slice is fully implemented (not just
+- [ ] T043 Run every `quickstart.md` step end to end. The replay steps need only the
+      `ReplayEnqueuer` adapter (004); the resend-leg steps need `LegResender` fully implemented
+- [ ] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
+      filter chain in T014, including the one case research.md Decision 2 flags as not yet
+      re-verified by a running test: a caller sending a conflicting `CPP-ACTION` header has no effect
+- [ ] T045 Update `CLAUDE.md`'s Setup section once this slice is fully implemented (not just
       planned), and hand the Dependencies → "006-production-readiness" section to whoever starts
       that slice next
 
@@ -373,27 +426,28 @@ an identically seeded store, and compare the reports ID for ID.
 - **US4 (Phase 3)**: depends on Foundational; proves the authorisation/audit chain in isolation
   before any controller exists
 - **US1 (Phase 4)**: depends on Foundational and US4 (its controller sits behind the proven
-  authz/audit chain); **blocked on `application.ReplayAction` existing** (004)
+  authz/audit chain). `application.ReplayAction` now exists, so T019–T022 are unblocked; only T023
+  (the manual end-to-end run) waits on 004's `ReplayEnqueuer` adapter
 - **US2 (Phase 5)**: depends on Foundational and US4; **blocked on `application.LegResender`
   existing** (004); independent of US1's controller
-- **US3 (Phase 6)**: depends on US2's controller and mapper (T025, T026) — it is the override path
+- **US3 (Phase 6)**: depends on US2's controller and mapper (T027, T028) — it is the override path
   through the same endpoint, not a new one
 - **US5 (Phase 7)**: depends on US1–US4 existing to sweep across real endpoints, though its
   foundational half (T005/T008) is already provable without them
-- **US6 (Phase 8)**: the OpenAPI authoring (T034) can happen any time after Setup; the contract
+- **US6 (Phase 8)**: the OpenAPI authoring (T036) can happen any time after Setup; the contract
   test's served-operations half needs US1/US2's controllers
 - **US7 (Phase 9)**: depends on US1–US3 **and** on 004's `cli` runners being implemented beyond
-  today's dispatcher skeleton (004 tasks.md T047, T021 in that slice's numbering)
+  today's dispatcher skeleton (004 tasks.md T047, T023 in that slice's numbering)
 - **Polish (Phase 10)**: depends on every story to be included in that release being complete
 
 ### Parallel Opportunities
 
 - T001–T004 in parallel (Setup)
 - T005, T007, T009 in parallel (Foundational tests, different files)
-- T012–T014 in parallel (US4 tests)
-- Once `application.ReplayAction`/`LegResender` exist: T017/T018 (US1) and T022–T024 (US2) can
-  proceed in parallel — different files, independent endpoints
-- T034 (the OpenAPI document) can be authored in parallel with US1–US3's implementation, since it
+- T012, T014–T016 in parallel (US4 tests); T013 depends on T012
+- T019/T020 (US1) can proceed now, in parallel with US4's tests, since `application.ReplayAction`
+  already exists; T024–T026 (US2) still wait on `application.LegResender`
+- T036 (the OpenAPI document) can be authored in parallel with US1–US3's implementation, since it
   does not depend on the controllers existing, only on the shapes this plan already fixes
 
 ---
@@ -402,18 +456,20 @@ an identically seeded store, and compare the reports ID for ID.
 
 ### MVP First
 
-1. Setup → Foundational → US4 (authorisation/audit proven) → US1 (replay), **the moment
-   `application.ReplayAction` exists on this branch**. Stop and validate against US1's Independent
-   Test. This alone gives operators the HTTP route to the general-use recovery action.
+1. Setup → Foundational → US4 (authorisation/audit proven) → US1 (replay) — **buildable today**,
+   since `application.ReplayAction` already exists with the assumed shape. Stop and validate
+   against US1's Independent Test (its `@WebMvcTest` half; the manual end-to-end half waits on the
+   `ReplayEnqueuer` adapter). This alone gives operators the HTTP route to the general-use recovery
+   action.
 
 ### Incremental Delivery
 
-1. Setup + Foundational + US4 → ready, independent of 004's progress.
-2. The instant 004's `ReplayAction` lands: US1 (MVP).
+1. Setup + Foundational + US4 → ready now.
+2. US1 (MVP) → ready now (T019–T022); T023's manual run waits on 004's `ReplayEnqueuer` adapter.
 3. The instant 004's `LegResender` lands: US2 → US3 (same endpoint, the override).
 4. US5 and US6 can be finished alongside US1–US3, since their foundational halves need no
    endpoint.
 5. US7 last, once 004's `cli` runners are implemented for real, not just their dispatcher skeleton.
 
-Nothing in Phases 1–3 (Setup, Foundational, US4) needs to wait on 004 at all — they are the biggest
-single chunk of this slice's work that can start today.
+Phases 1–4 (Setup, Foundational, US4, US1) no longer wait on 004 at all beyond the one adapter noted
+above — that is most of this slice's P1 scope, buildable starting now.
