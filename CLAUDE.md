@@ -152,25 +152,32 @@ Postgres, Redis, WireMock).
 ## Setup
 
 <!-- SPECKIT START -->
-All six features are specified (design rev 3.6 + H35, constitution v2.0.1). `001-parity-kernel` and
-`002-hmpps-distribution` are implemented (combined on branch `002-hmpps-distribution`, PR #8 — Flyway
-V1, enums, state machine, ports, metric registry, the redaction pipeline and the ported rules).
-`001-parity-kernel`'s own corpus is **not** yet a satisfied go-live evidence gate (H21, FR-001-017):
-the committed corpus is synthetic-only, holding only the `CACHE` form, pending the owning team's SIT
-capture (`doc/DEVIATIONS.md` "Corpus status"; an external dependency, not a code gap). Both
-`[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are resolved (spec.md Clarifications).
-`003-body-retention` is specified, clarified (including the 2026-10-22 session resolving the
-job-stopped-running visibility gap with Option C+D) and now planned: **the current plan is
-`specs/003-body-retention/plan.md`**, with `research.md`, `data-model.md`, `quickstart.md` and
-`tasks.md` alongside it. `004-recovery`, `005-operations-api` and `006-production-readiness` are
-specified but not yet planned.
+All six features are specified (design rev 3.6 + H35, constitution v2.0.1). **This branch,
+`002-hmpps-distribution` (PR #8), is now the one common integration branch for every slice**: all
+further work on any spec, for any slice, lands here, rather than spreading across per-slice
+branches — open one long-lived PR, not one per slice. `001-parity-kernel` and `002-hmpps-distribution`
+are implemented here (Flyway V1, enums, state machine, ports, metric registry, the redaction pipeline
+and the ported rules). `001-parity-kernel`'s own corpus is **not** yet a satisfied go-live evidence
+gate (H21, FR-001-017): the committed corpus is synthetic-only, holding only the `CACHE` form, pending
+the owning team's SIT capture (`doc/DEVIATIONS.md` "Corpus status"; an external dependency, not a code
+gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are resolved (spec.md
+Clarifications). `003-body-retention` is implemented here too (the body-maintenance job, Flyway V2).
+`004-recovery` is planned here: **the current plan is `specs/004-recovery/plan.md`**, with
+`research.md`, `data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it, and its
+first foundational pieces (the `cli` runner-dispatch package, the `WholeRunRefusal`/`RunnerOutcome`
+vocabulary) are implemented; the rest of its 77 tasks await the remaining guard/runner/port work.
+`005-operations-api` and `006-production-readiness` are specified but not yet planned.
 
-To start a feature: branch from `main` with the spec's folder name (e.g. `git switch -c
-003-body-retention`) — the Spec Kit scripts resolve `specs/<NNN>-*` from the branch prefix — then run
-`/speckit-clarify` for any remaining `[NEEDS CLARIFICATION]` (answers come from the design owner),
-`/speckit-plan`, `/speckit-tasks`, `/speckit-analyze`, `/speckit-implement`. The plan
-(`specs/<NNN-slug>/plan.md`, with `spec.md` and `tasks.md` alongside it) then becomes the current
-context here. Specs are written against `doc/design/DIGEST.md` and the design it cites.
+**The Spec Kit scripts resolve the active feature from the current branch name by default**
+(`specs/<NNN>-*` matching the branch's numeric prefix), which only resolves correctly for
+`002-hmpps-distribution` itself while everything lands on this one branch. Before running
+`/speckit-clarify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-analyze` or `/speckit-implement` for
+any other feature (e.g. `004-recovery`, `005-operations-api`), export
+`SPECIFY_FEATURE=<NNN-slug>` first so the scripts resolve that feature's own `specs/<NNN-slug>/`
+folder instead of this branch's. `/speckit-clarify` resolves any remaining `[NEEDS CLARIFICATION]`
+(answers come from the design owner). The plan (`specs/<NNN-slug>/plan.md`, with `spec.md` and
+`tasks.md` alongside it) then becomes the current context here. Specs are written against
+`doc/design/DIGEST.md` and the design it cites.
 <!-- SPECKIT END -->
 
 <!-- BEGIN token-budget compact-backups -->
