@@ -43,7 +43,11 @@ import uk.gov.hmcts.testfixtures.ResendLegAuthorisationTestController;
  * uk.gov.moj.cpp.authz.http.IdentityResponse} rather than an exception) refuses {@code 403}; an
  * admitted caller reaches the mapped route; and {@link OperationsActionResolutionFilter} (T013) is
  * confirmed to make the resolved action immune to a caller-supplied {@code CPP-ACTION} header,
- * closing the bypass research.md Decision 2 found in the real library.
+ * closing the bypass research.md Decision 2 found in the real library. That last assertion uses a
+ * caller-named action matching neither of the two allow rules in {@code operations-api.drl} (both of
+ * which admit the same single group), rather than the other of the two real action names, so the
+ * result is only ever {@code 202} when the engine evaluates the path-derived action the filter fixes,
+ * never the header's claim -- a real other-action name would pass under either, proving nothing.
  *
  * <p>Both routes below are minimal test-only controllers mapped at the real paths, not the
  * production {@link ReplayController}: the authorisation filter chain (this test's actual subject)
@@ -194,16 +198,24 @@ class OperationsAuthorisationIT {
     }
 
     @Test
-    @DisplayName("a caller admitted to replay cannot reach resend-leg by naming it in CPP-ACTION")
+    @DisplayName("a caller admitted to the real route is authorised under its own action, "
+            + "never a caller-named one, on a conflicting CPP-ACTION header")
     void action_header_cannot_redirect_authorisation() {
-        stubIdentity(OTHER_GROUP);
+        // operations-api.drl admits exactly the same group, "Second Line Support", to BOTH actions
+        // with no other condition, so stubbing a header naming the real "replay" action here would
+        // authorise this Second-Line-Support caller on the resend-leg route whether or not
+        // OperationsActionResolutionFilter overrides the header: that scenario cannot tell a working
+        // filter apart from a bypassed one. A caller-named action that matches NEITHER rule can: the
+        // Drools engine denies (deny-when-no-rules) unless the real, path-derived action -- never the
+        // header's claim -- is what the engine actually evaluates.
+        stubIdentity(SECOND_LINE_SUPPORT);
         final HttpHeaders headers = new HttpHeaders();
         headers.add("CJSCPPUID", "caller-5");
-        headers.add("CPP-ACTION", "probation-results-distribution-operations.replay");
+        headers.add("CPP-ACTION", "some-action-the-caller-chose");
 
         final ResponseEntity<String> response = callResendLeg(headers);
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
     }
 
 }
