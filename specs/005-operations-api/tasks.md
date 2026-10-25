@@ -157,6 +157,13 @@ it landed) rather than invented here.
   (`OperationsProblemDetailHandler`'s `metrics.operationsFailure(...)` on every 5xx,
   `OperationsAuditPublisher`'s on an unpublished response event) are pinned by the metric assertions
   already recorded in both tests above; no separate commit is needed for T011.
+- **T012/T013** (`OperationsActionResolutionFilterTest` / `OperationsActionResolutionFilter`): RED
+  reconstructed by swapping in a stub filter that always passes the request through unwrapped —
+  `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.config.OperationsActionResolutionFilterTest"` →
+  `6 tests completed, 4 failed` (the two cases that expect no wrapping — outside `/operations/**`,
+  an unmapped method on an operations path — correctly still pass), every failure an assertion, no
+  compile error. Real filter restored → `BUILD SUCCESSFUL`, all 6 green.
 
 ---
 
@@ -182,7 +189,7 @@ new component this finding requires.
 
 ### Tests for User Story 4 (write first, confirm red, then implement) ⚠️
 
-- [ ] T012 [P] [US4] `OperationsActionResolutionFilterTest`: for `POST
+- [X] T012 [P] [US4] `OperationsActionResolutionFilterTest`: for `POST
       /operations/requests/{requestId}/replay` and `POST /operations/resend-leg`, the wrapped
       request's `getHeader("CPP-ACTION")` always returns this slice's fixed action string
       (`probation-results-distribution-operations.replay` / `...resend-leg`) regardless of what the
@@ -190,7 +197,7 @@ new component this finding requires.
       token through, even when the caller supplied one; a request outside `/operations/**` is
       returned unwrapped (FR-005-022; research.md Decision 2) —
       `src/test/java/.../config/OperationsActionResolutionFilterTest.java`
-- [ ] T013 [US4] Implement `config/OperationsActionResolutionFilter.java` (`OncePerRequestFilter`)
+- [X] T013 [US4] Implement `config/OperationsActionResolutionFilter.java` (`OncePerRequestFilter`)
       and register it via a `FilterRegistrationBean` ordered before `cp-auth-rules-filter`'s own
       filter, scoped to `/operations/*` — satisfies T012
 - [ ] T014 [P] [US4] `OperationsAuthorisationIT` (real `cp-auth-rules-filter` wired, users-groups
