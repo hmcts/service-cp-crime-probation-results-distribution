@@ -140,6 +140,12 @@ it landed) rather than invented here.
   `24 tests completed, 23 failed`, every failure an `AssertionFailedError`/`AssertionError` on the
   expected status or property, no compile error. Real handler restored →
   `BUILD SUCCESSFUL`, all 24 green.
+- **T007/T008** (`OperationsRequestMapperTest` / `OperationsRequestMapper`): RED reconstructed by
+  swapping in a stub mapper that never refuses anything and returns a fixed, empty parse —
+  `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRequestMapperTest"` →
+  `15 tests completed, 13 failed`, every failure an assertion on the expected refusal/parse, no
+  compile error. Real mapper restored → `BUILD SUCCESSFUL`, all 15 green.
 
 ---
 
