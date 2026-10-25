@@ -69,12 +69,15 @@ container (plan.md "Technical Context").
 - [ ] T005 [P] Add `SchemaVocabularyIT` assertions (extend slice 002's existing test, do not
       duplicate it) confirming `intake_control` has exactly one row and the CHECK holds —
       `src/test/java/.../persistence/SchemaVocabularyIT.java`
-- [X] T006 [P] Add closed value-set enums in `domain/`: `ReplayRoute` (`SERVICE`, `SUPPORT`, `COPY`),
-      `ResendRefusalReason` (`UNKNOWN_REQUEST`, `NOT_ELIGIBLE`, `RESEND_IN_PROGRESS`,
-      `REQUEST_CLAIMED`), `WholeRunRefusal` (`INTAKE_PAUSED`, `TOO_MANY_REQUEST_IDS`,
-      `MISSING_ARGUMENT`, `UNREADABLE_ARGUMENT`, `ARGUMENT_TOO_LONG`, `STORE_UNAVAILABLE`,
-      `BROKER_UNAVAILABLE`, `INTAKE_NOT_PAUSED`), `RunnerOutcome` (`DONE`, `REFUSED`, `FAILED`) — one
-      file per enum under `domain/`
+- [X] T006 [P] Add closed value-set enums in `domain/`: `WholeRunRefusal` (`INTAKE_PAUSED`,
+      `TOO_MANY_REQUEST_IDS`, `MISSING_ARGUMENT`, `UNREADABLE_ARGUMENT`, `ARGUMENT_TOO_LONG`,
+      `STORE_UNAVAILABLE`, `BROKER_UNAVAILABLE`, `INTAKE_NOT_PAUSED`) and `RunnerOutcome` (`DONE`,
+      `REFUSED`, `FAILED`) — one file per enum under `domain/`. **`ReplayRoute`
+      (`SERVICE`/`SUPPORT`/`COPY`) and the per-ID resend refusal set already exist on
+      `002-hmpps-distribution` as `ReplayRoute` and `ResendRefusal`, built against that branch's
+      shared `WireValued`/`Vocabularies` helper — discovered only once this branch was merged onto
+      it; do not redefine them here. `WholeRunRefusal` should be refactored onto that same
+      `WireValued`/`Vocabularies` pattern for consistency once this lands for real.**
 - [ ] T007 [P] `PropertiesValidatorTest` case: `distribution.resend.max-ids-per-run` must be ≥ 1 at
       startup, refusal names the property — `src/test/java/.../config/PropertiesValidatorTest.java`
       (extend the existing class; this is the one named case this slice adds, FR-004-019)

@@ -102,11 +102,18 @@ the closed set.
 
 | Type | Values | Written to |
 |---|---|---|
-| `ReplayRoute` | `SERVICE`, `SUPPORT`, `COPY` | `audit_note` line 2; the `route` metric/log label |
-| `ResendRefusalReason` | `UNKNOWN_REQUEST`, `NOT_ELIGIBLE`, `RESEND_IN_PROGRESS`, `REQUEST_CLAIMED` | Report/refusal only — never a row (Key Entities: "all are answer and report codes, never written to a row") |
-| `WholeRunRefusal` | `INTAKE_PAUSED`, `TOO_MANY_REQUEST_IDS`, `MISSING_ARGUMENT`, `UNREADABLE_ARGUMENT`, `ARGUMENT_TOO_LONG`, `STORE_UNAVAILABLE`, `BROKER_UNAVAILABLE`, `INTAKE_NOT_PAUSED` | Report/refusal only |
-| `RunnerOutcome` | `DONE`, `REFUSED`, `FAILED` | The bounded runner result (FR-004-045) |
+| `ReplayRoute` (**already exists** on `002-hmpps-distribution`, `WireValued`-based) | `SERVICE`, `SUPPORT`, `COPY` | `audit_note` line 2; the `route` metric/log label |
+| `ResendRefusal` (**already exists** on `002-hmpps-distribution`, `WireValued`-based; this slice's spec calls it `ResendRefusalReason`) | `UNKNOWN_REQUEST`, `NOT_ELIGIBLE`, `RESEND_IN_PROGRESS`, `REQUEST_CLAIMED` | Report/refusal only — never a row (Key Entities: "all are answer and report codes, never written to a row") |
+| `WholeRunRefusal` (new; should be refactored onto `002-hmpps-distribution`'s `WireValued`/`Vocabularies` pattern once merged) | `INTAKE_PAUSED`, `TOO_MANY_REQUEST_IDS`, `MISSING_ARGUMENT`, `UNREADABLE_ARGUMENT`, `ARGUMENT_TOO_LONG`, `STORE_UNAVAILABLE`, `BROKER_UNAVAILABLE`, `INTAKE_NOT_PAUSED` | Report/refusal only |
+| `RunnerOutcome` (new) | `DONE`, `REFUSED`, `FAILED` | The bounded runner result (FR-004-045) |
 | `AttemptOrigin` (extends slice 002's) | `queue`, `resend`, `replay` — already defined; no new value | `outbound_message.attempt_origin` |
+
+**Note on branch base**: this data model was written against `main`, which does not yet carry slice
+002's implementation. `002-hmpps-distribution` (the open PR branch this slice merges onto) already
+has `ReplayRoute`, `ResendRefusal`, `OperationsAction` and `OperationsFailure`, built against a
+shared `WireValued`/`Vocabularies` helper not described above. Treat this table as superseded by
+that branch's actual `domain/` package where the two differ; the entries above are kept only as the
+record of what this plan anticipated before that was known.
 
 ## State transitions this slice adds to the request state machine
 
