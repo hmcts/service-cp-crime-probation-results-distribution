@@ -196,11 +196,15 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       (FR-004-013; this is RollbackFencingIT's "late queue or replay runner" case, pinned here as its
       own assertion so US1 is independently testable without the rollback runner existing yet) —
       `src/test/java/.../application/RequestRecoveryTransitionTest.java`. **Partially covered**:
-      `completion_reason = recovered` is proven by `RequestDedupeIT` above. **Not tested**: the
-      park-then-later-redelivery-settles case, and FR-004-013's stale-runner-rejection case for a
-      replayed run specifically (the claim-guard mechanism itself is shared, untouched, existing
-      code — `OutboundMessageRepository`'s claim check — so it is very likely already correct, but
-      no test exercises it for a replay).
+      `completion_reason = recovered` is proven by `RequestDedupeIT` above.
+      **FR-004-013's stale-runner-rejection case for a replayed run is now pinned**, per this
+      task's own forward reference: `RollbackFencingIT$LateRunnerFencing
+      .late_replay_runner_write_is_fenced` (and `.late_queue_runner_write_is_fenced` for the queue
+      half) seed a request, run T034's close-in-flight statement to clear its request claim, then
+      call the existing, unchanged `OutboundMessageRepository.writeOutcome`/`writeReplayOutcome`
+      with the pre-close claim and assert 0 rows — added as part of T030, landed (002-hmpps-
+      distribution, "feat(004-recovery): pin the rollback close-in-flight statement").
+      **Still not tested** (so T015 itself stays open): the park-then-later-redelivery-settles case.
 - [X] T016 [P] [US1] `ReplayActionTest`: `replay --request-id` decides under the request-row lock —
       no row → `unknown-request`; `COMPLETED` → `no-op`, nothing enqueued; `RECEIVED`/`RETRYING` →
       `not-eligible`; leg's latest row a `PENDING` resend row (live or expired) → `resend-in-progress`
@@ -328,7 +332,7 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       RED: `NullPointerException` (the stub body always called the purger, ignoring the pause gate)
       + an `UnnecessaryStubbingException`.
       GREEN: all 3 cases pass.
-- [ ] T030 [P] [US7] `RollbackFencingIT` — the close-in-flight case (FR-004-049a): over a seeded
+- [X] T030 [P] [US7] `RollbackFencingIT` — the close-in-flight case (FR-004-049a): over a seeded
       `RECEIVED`+`PENDING` row, a `RETRYING`+`PARKED` row, a `FAILED(leg-exhausted)`+`PENDING`-resend
       row and a `COMPLETED`+`PENDING`-resend row, the statement closes each leg row
       `FAILED(rolled-back)` with the correct `note`/`prev=` form, changes only `status`/`reason`/
@@ -337,7 +341,17 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       `COMPLETED` untouched); a late runner's write after the close changes nothing and counts as a
       stale-runner rejection — **(provisional runner ownership, FR-004-049)** —
       `src/test/java/.../persistence/RollbackFencingIT.java` (this file also carries US1's and US3's
-      late-runner cases, T015/T037, assembled together once this task lands)
+      late-runner cases, T015/T037, assembled together once this task lands).
+      All four acceptance-scenario rows and **US1's late-runner case (T015's second bullet — a late
+      queue and a late replay runner)** are implemented and pass, in `CloseInFlightRows` and
+      `LateRunnerFencing` nested classes respectively. **US3's late resend-runner case (T041) is
+      deliberately not added here**: it needs a guarded resend-completion write method that does
+      not exist until Phase 6 (T046) — out of scope for this pass.
+      RED: all 6 cases failed against a stub `closeInFlight()` returning `(0, 0)` — the 4
+      acceptance-scenario cases with `AssertionFailedError: expected: 1 but was: 0` on
+      `pendingClosed()`/`parkedClosed()`, and the 2 late-runner cases because the rows were never
+      closed in the first place (`expected: 0 but was: 1`; `expected: "FAILED" but was: "PARKED"`).
+      GREEN: all 6 pass against the real `JdbcRollbackFencingRepository`.
 - [ ] T031 [P] [US7] `ResendConcurrencyIT` (US7 half): resend-leg refuses a whole run submitted while
       paused (`intake-paused`, nothing read/changed); a pause beginning mid-run claims no further ID
       and reports the rest `not-run` (FR-004-021) —
