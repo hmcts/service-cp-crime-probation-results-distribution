@@ -147,20 +147,16 @@ public final class OutboundMessageRepository {
 
     private int applyReplayOutcome(final LegOutcome outcome, final RunClaim claim,
                                    final String rerunByMessageId) {
-        final Optional<LatestLegRow> latest = latestLegRow(outcome.command().source(),
-                outcome.command().requestId());
-        if (latest.isEmpty()) {
-            return 0;
-        }
-        final LatestLegRow row = latest.get();
-        // A FAILED row at attempt >= 2 (a resend row or an earlier replay row) is never re-run in
-        // place: a new replay row is appended over it (FR-004-009). Everything else the replay column
-        // re-runs — attempt 1 in any re-runnable state, or a replay-created row that is PARKED/PENDING
-        // at attempt >= 2 — is re-run in place on that row's own attempt (FR-004-008).
-        final boolean appendOverFailedResend = row.attempt() >= 2 && "FAILED".equals(row.status());
-        return appendOverFailedResend
-                ? appendReplayRowOrSkip(outcome, claim, rerunByMessageId, row)
-                : inPlaceReplayOutcome(outcome, claim, rerunByMessageId, row.attempt());
+        // An empty leg history has nothing to re-run or append over, so it fences to 0 rows. A FAILED
+        // row at attempt >= 2 (a resend row or an earlier replay row) is never re-run in place: a new
+        // replay row is appended over it (FR-004-009). Everything else the replay column re-runs —
+        // attempt 1 in any re-runnable state, or a replay-created row that is PARKED/PENDING at
+        // attempt >= 2 — is re-run in place on that row's own attempt (FR-004-008).
+        return latestLegRow(outcome.command().source(), outcome.command().requestId())
+                .map(row -> row.attempt() >= 2 && "FAILED".equals(row.status())
+                        ? appendReplayRowOrSkip(outcome, claim, rerunByMessageId, row)
+                        : inPlaceReplayOutcome(outcome, claim, rerunByMessageId, row.attempt()))
+                .orElse(0);
     }
 
     /**
