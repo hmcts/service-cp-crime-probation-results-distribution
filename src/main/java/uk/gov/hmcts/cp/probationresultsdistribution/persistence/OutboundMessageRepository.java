@@ -149,14 +149,29 @@ public final class OutboundMessageRepository {
                                    final String rerunByMessageId) {
         // An empty leg history has nothing to re-run or append over, so it fences to 0 rows. A FAILED
         // row at attempt >= 2 (a resend row or an earlier replay row) is never re-run in place: a new
-        // replay row is appended over it (FR-004-009). Everything else the replay column re-runs —
+        // replay row is appended over it (FR-004-009). The replay column re-runs in place only
         // attempt 1 in any re-runnable state, or a replay-created row that is PARKED/PENDING at
-        // attempt >= 2 — is re-run in place on that row's own attempt (FR-004-008).
+        // attempt >= 2 (FR-004-008). A resend-origin row that is PARKED/PENDING at attempt >= 2 is
+        // guarded by its own leg claim, not the request claim, so the replay path MUST NOT rewrite it
+        // in place: it fences to 0 rows (FR-004-009; design_rules.md).
         return latestLegRow(outcome.command().source(), outcome.command().requestId())
-                .map(row -> row.attempt() >= 2 && "FAILED".equals(row.status())
-                        ? appendReplayRowOrSkip(outcome, claim, rerunByMessageId, row)
-                        : inPlaceReplayOutcome(outcome, claim, rerunByMessageId, row.attempt()))
+                .map(row -> routeReplayWrite(outcome, claim, rerunByMessageId, row))
                 .orElse(0);
+    }
+
+    private int routeReplayWrite(final LegOutcome outcome, final RunClaim claim,
+                                 final String rerunByMessageId, final LatestLegRow row) {
+        final boolean appendOver = row.attempt() >= 2 && "FAILED".equals(row.status());
+        final boolean inPlaceEligible = row.attempt() == 1 || "replay".equals(row.attemptOrigin());
+        final int rows;
+        if (appendOver) {
+            rows = appendReplayRowOrSkip(outcome, claim, rerunByMessageId, row);
+        } else if (inPlaceEligible) {
+            rows = inPlaceReplayOutcome(outcome, claim, rerunByMessageId, row.attempt());
+        } else {
+            rows = 0;
+        }
+        return rows;
     }
 
     /**
@@ -225,13 +240,13 @@ public final class OutboundMessageRepository {
     }
 
     private Optional<LatestLegRow> latestLegRow(final String source, final UUID requestId) {
-        return jdbc.sql("SELECT attempt, status, note FROM outbound_message "
+        return jdbc.sql("SELECT attempt, attempt_origin, status, note FROM outbound_message "
                         + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
                         + "ORDER BY attempt DESC LIMIT 1")
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
-                .query((rs, rowNum) -> new LatestLegRow(rs.getInt("attempt"), rs.getString(STATUS),
-                        rs.getString("note")))
+                .query((rs, rowNum) -> new LatestLegRow(rs.getInt("attempt"),
+                        rs.getString("attempt_origin"), rs.getString(STATUS), rs.getString("note")))
                 .optional();
     }
 
@@ -293,14 +308,19 @@ public final class OutboundMessageRepository {
 
     /**
      * The leg's latest attempt, as the replay write path reads it to decide between an in-place
-     * re-run (attempt 1, or a {@code PARKED}/{@code PENDING} replay-created row) and appending a new
-     * row over a {@code FAILED} row at attempt ≥ 2 (FR-004-008, FR-004-009).
+     * re-run (attempt 1, or a {@code PARKED}/{@code PENDING} replay-created row), appending a new row
+     * over a {@code FAILED} row at attempt ≥ 2, and fencing a resend-origin {@code PARKED}/
+     * {@code PENDING} row at attempt ≥ 2 to zero rows — the replay path must never rewrite a resend
+     * row in place, which is guarded by its own leg claim, not the request claim (FR-004-008,
+     * FR-004-009).
      *
-     * @param attempt the highest attempt number
-     * @param status  that row's status
-     * @param note    that row's note, used for the per-message rerun-by skip (FR-004-010)
+     * @param attempt       the highest attempt number
+     * @param attemptOrigin that row's {@code attempt_origin} ({@code queue}, {@code resend} or
+     *                      {@code replay}), routing the in-place-vs-fence decision at attempt ≥ 2
+     * @param status        that row's status
+     * @param note          that row's note, used for the per-message rerun-by skip (FR-004-010)
      */
-    private record LatestLegRow(int attempt, String status, String note) {
+    private record LatestLegRow(int attempt, String attemptOrigin, String status, String note) {
     }
 
     private void replaceBody(final UUID outboundMessageId, final String body) {

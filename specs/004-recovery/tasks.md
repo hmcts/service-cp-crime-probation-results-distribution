@@ -270,6 +270,15 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       fix: attempt 1 was overwritten to `SENT`; GREEN after) and the append-path per-message skip by
       `LegRerunTest.skips_an_appended_row_already_rerun_by_this_message`. The RED test landed in its
       own commit before the production fix.
+      **Gate round 2 remediation**: the in-place-vs-append dispatch now reads `attempt_origin` too.
+      A `PARKED`/`PENDING` **resend-origin** row at attempt ≥ 2 is guarded by its own leg claim, not
+      the request claim, so the replay path MUST NOT rewrite it in place — it now fences to 0 rows
+      instead of being re-run under the request claim (FR-004-009; design_rules.md). Only attempt-1
+      rows (any re-runnable state) or `replay`-origin rows go to the in-place path; a `FAILED` row at
+      attempt ≥ 2 is still appended over. Pinned by
+      `LegRerunTest.leaves_a_parked_resend_row_untouched_on_replay` (RED before the fix:
+      `recordReplay` returned `true`, the resend row was re-run to `SENT`; GREEN after). The RED test
+      landed in its own commit before the production fix.
 - [X] T019 [US1] Implement `application/ReplayAction.java`: one `requestId`, checks per T016, returns
       a bounded outcome (`enqueued`/`no-op`/refusal) or fails (`store-unavailable`,
       `broker-unavailable`) with nothing changed; never throws past its outcome
