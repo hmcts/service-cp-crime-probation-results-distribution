@@ -207,6 +207,7 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       attempt 3). The other three cases (in-place attempt-1, the rerun-by skip, the PARKED re-run)
       were green from slice-002's existing `writeReplayOutcome`.
       GREEN (after T018): all four `LegRerunTest` cases PASSED.
+- [X] T015 [P] [US1] `RequestRecoveryTransitionTest` (US1 half): a terminal leg after a replay
       completes the request with `completion_reason = recovered` whenever `audit_note` contains
       `REPLAYED_AFTER_FAILURE`, including when the first replayed run parks and a later redelivery
       settles it (FR-004-012); every leg-outcome write of a replayed run is guarded by the request
@@ -222,7 +223,16 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       call the existing, unchanged `OutboundMessageRepository.writeOutcome`/`writeReplayOutcome`
       with the pre-close claim and assert 0 rows — added as part of T030, landed (002-hmpps-
       distribution, "feat(004-recovery): pin the rollback close-in-flight statement").
-      **Still not tested** (so T015 itself stays open): the park-then-later-redelivery-settles case.
+      **Now tested** (so T015 is closed): the park-then-later-redelivery-settles case, and the two
+      other recovery cases, are pinned in `application/RequestRecoveryTransitionTest.java`
+      (Testcontainers Postgres via `SchemaTestSupport`), driving
+      `admitReplay → markRetrying → reclaim → markCompleted` and asserting
+      `completion_reason = recovered` with `replayed_at` cleared, plus a stale-claim completion that
+      changes nothing. RED not reproducible: the recovered decision keys on `audit_note LIKE
+      '%REPLAYED_AFTER_FAILURE%'` in `markCompleted`, which landed with T017/T020 ([X]) before this
+      test; it is a characterization test. The leg-write fencing of FR-004-013 remains pinned in
+      `RollbackFencingIT$LateRunnerFencing`. GREEN: all three `RequestRecoveryTransitionTest` cases
+      PASSED.
 - [X] T016 [P] [US1] `ReplayActionTest`: `replay --request-id` decides under the request-row lock —
       no row → `unknown-request`; `COMPLETED` → `no-op`, nothing enqueued; `RECEIVED`/`RETRYING` →
       `not-eligible`; leg's latest row a `PENDING` resend row (live or expired) → `resend-in-progress`
