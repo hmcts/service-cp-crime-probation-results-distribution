@@ -139,7 +139,7 @@ container (plan.md "Technical Context").
       RED not reproducible: the predicate (FR-004-001/002/003) landed with T011/T012 (both [X])
       before this test was pinned, so it is a characterization test of existing production code, not
       a test-first guard. GREEN: `the idempotency guard > admitting a FAILED request's delivery
-      (DV-26) > ...` — all 7 `ReplayAdmission` cases PASSED.
+      (DV-26) > ...` — all 8 `ReplayAdmission` cases PASSED.
 - [X] T011 Replace slice 002's interim replay-admission rule (FR-002-008) with the DV-26 predicate in
       the guard's admission statement (FR-004-001, FR-004-002): a `FAILED` request's delivery is
       admitted only if `messageId ≠ exhausted_message_id`, or `exhausted_message_id IS NULL`, or
@@ -259,12 +259,17 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       `appendReplayRowOrSkip` when that row is `FAILED` at attempt ≥ 2 (INSERT a new `replay` row at
       `max(attempt)+1`, no leg claim, `note = rerun-by=<messageId>`, guarded by the request claim via
       `WHERE EXISTS`, body stored via `replaceBody`; a redelivery whose latest row already names the
-      message is skipped), otherwise the unchanged in-place path (`inPlaceReplayOutcome`). GREEN:
-      `LegRerunTest` all four cases; `OutboundLogAdapterIT` and `RequestDedupeIT` still green.
-      **Known gap (out of scope here, flagged in open_points)**: an appended `replay` row that itself
-      ends `PARKED` (a replay that parks) is not re-run in place on redelivery, because the dispatch
-      only generalises the append; the in-place SQL still targets `attempt = 1`. The common recovery
-      path — a replay of a resend-failed leg that now sends — is covered.
+      message is skipped), otherwise the in-place path (`inPlaceReplayOutcome`). GREEN:
+      `LegRerunTest` all cases; `OutboundLogAdapterIT` and `RequestDedupeIT` still green.
+      **Gate round 1 remediation**: `inPlaceReplayOutcome` no longer hardcodes `attempt = 1`. It
+      re-runs the leg's **actual latest attempt** (read once by `latestLegRow`), so an appended
+      `replay` row that itself ends `PARKED`/`PENDING` at attempt ≥ 2 is now re-run in place on
+      redelivery instead of silently overwriting the stale attempt-1 row (FR-004-008). A `FAILED` row
+      at attempt ≥ 2 is still appended over (FR-004-009); an empty leg history fences to 0 rows. Pinned
+      by `LegRerunTest.reruns_an_appended_parked_replay_row_in_place_on_redelivery` (RED before the
+      fix: attempt 1 was overwritten to `SENT`; GREEN after) and the append-path per-message skip by
+      `LegRerunTest.skips_an_appended_row_already_rerun_by_this_message`. The RED test landed in its
+      own commit before the production fix.
 - [X] T019 [US1] Implement `application/ReplayAction.java`: one `requestId`, checks per T016, returns
       a bounded outcome (`enqueued`/`no-op`/refusal) or fails (`store-unavailable`,
       `broker-unavailable`) with nothing changed; never throws past its outcome
