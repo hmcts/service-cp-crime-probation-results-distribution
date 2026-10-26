@@ -123,8 +123,10 @@ public final class OutboundMessageRepository {
     }
 
     /**
-     * Re-runs the attempt-1 row in place for a replayed run, allowing a {@code FAILED} row as well as
-     * {@code PENDING}/{@code PARKED} (slice 004, FR-004-008). The note is always rewritten to
+     * Re-runs the leg's latest attempt in place for a replayed run (slice 004, FR-004-008): attempt 1
+     * in any re-runnable state ({@code FAILED}, {@code PARKED} or {@code PENDING}), or a replay-created
+     * row at attempt ≥ 2 that is {@code PARKED}/{@code PENDING}. A {@code FAILED} row at attempt ≥ 2 is
+     * instead appended over (FR-004-009). The note is always rewritten to
      * {@code prev=<STATUS>/<reason>;rerun-by=<messageId>} — a replay re-run always follows an earlier
      * write, so there is no "first write" case to preserve, unlike {@link #writeOutcome}. A
      * {@code FAILED} row already naming this exact {@code messageId} in its {@code note} is excluded
@@ -147,12 +149,18 @@ public final class OutboundMessageRepository {
                                    final String rerunByMessageId) {
         final Optional<LatestLegRow> latest = latestLegRow(outcome.command().source(),
                 outcome.command().requestId());
-        final boolean appendOverFailedResend = latest
-                .filter(row -> row.attempt() >= 2 && "FAILED".equals(row.status()))
-                .isPresent();
+        if (latest.isEmpty()) {
+            return 0;
+        }
+        final LatestLegRow row = latest.get();
+        // A FAILED row at attempt >= 2 (a resend row or an earlier replay row) is never re-run in
+        // place: a new replay row is appended over it (FR-004-009). Everything else the replay column
+        // re-runs — attempt 1 in any re-runnable state, or a replay-created row that is PARKED/PENDING
+        // at attempt >= 2 — is re-run in place on that row's own attempt (FR-004-008).
+        final boolean appendOverFailedResend = row.attempt() >= 2 && "FAILED".equals(row.status());
         return appendOverFailedResend
-                ? appendReplayRowOrSkip(outcome, claim, rerunByMessageId, latest.orElseThrow())
-                : inPlaceReplayOutcome(outcome, claim, rerunByMessageId);
+                ? appendReplayRowOrSkip(outcome, claim, rerunByMessageId, row)
+                : inPlaceReplayOutcome(outcome, claim, rerunByMessageId, row.attempt());
     }
 
     /**
@@ -232,7 +240,7 @@ public final class OutboundMessageRepository {
     }
 
     private int inPlaceReplayOutcome(final LegOutcome outcome, final RunClaim claim,
-                                     final String rerunByMessageId) {
+                                     final String rerunByMessageId, final int targetAttempt) {
         final String bodyDigest = outcome.bodyDigest().orElse(null);
         final String versionToWrite = bodyDigest == null ? null : serviceVersion;
         final boolean sent = outcome.status() == LegStatus.SENT;
@@ -246,7 +254,7 @@ public final class OutboundMessageRepository {
                         + "|| ';rerun-by=' || :messageId, "
                         + "attempts = attempts + 1, updated_at = now() "
                         + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
-                        + "AND attempt = 1 AND status IN ('PENDING', 'PARKED', 'FAILED') "
+                        + "AND attempt = :targetAttempt AND status IN ('PENDING', 'PARKED', 'FAILED') "
                         + "AND (status <> 'FAILED' OR note IS NULL "
                         + "OR position(('rerun-by=' || :messageId) in note) = 0) "
                         + "AND EXISTS (SELECT 1 FROM processed_request pr "
@@ -269,6 +277,7 @@ public final class OutboundMessageRepository {
                 .param("serviceVersion", versionToWrite)
                 .param("sent", sent)
                 .param("messageId", rerunByMessageId)
+                .param("targetAttempt", targetAttempt)
                 .param(SOURCE, outcome.command().source())
                 .param(REQUEST_ID, outcome.command().requestId())
                 .param("owner", claim.owner().toString())
