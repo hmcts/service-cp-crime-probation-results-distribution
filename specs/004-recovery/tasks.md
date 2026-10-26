@@ -119,7 +119,7 @@ container (plan.md "Technical Context").
       reconcile the in-memory pause flag and `probation_intake_suspended{cause="operator"}` to the
       persisted row, making T009 pass — **(provisional, FR-004-052)** —
       `inbound/ConsumerLifecycleController.java`
-- [ ] T010a [P] `ReplayAdmissionPredicateTest` (plain unit test, no Spring context): the DV-26
+- [X] T010a [P] `ReplayAdmissionPredicateTest` (plain unit test, no Spring context): the DV-26
       predicate decides admit-as-replay vs dead-letter-`exhausted` for a `FAILED` request's delivery
       — `messageId ≠ exhausted_message_id`; `exhausted_message_id IS NULL`; or
       `messageId = exhausted_message_id` at broker delivery count 1 — otherwise dead-lettered
@@ -136,6 +136,10 @@ container (plan.md "Technical Context").
       separate file** — the predicate lives inside `IdempotencyGuard`, so its test joins that
       class's existing style rather than introducing a parallel file for the same production class;
       all cases above are covered there and pass.
+      RED not reproducible: the predicate (FR-004-001/002/003) landed with T011/T012 (both [X])
+      before this test was pinned, so it is a characterization test of existing production code, not
+      a test-first guard. GREEN: `the idempotency guard > admitting a FAILED request's delivery
+      (DV-26) > ...` — all 7 `ReplayAdmission` cases PASSED.
 - [X] T011 Replace slice 002's interim replay-admission rule (FR-002-008) with the DV-26 predicate in
       the guard's admission statement (FR-004-001, FR-004-002): a `FAILED` request's delivery is
       admitted only if `messageId ≠ exhausted_message_id`, or `exhausted_message_id IS NULL`, or
