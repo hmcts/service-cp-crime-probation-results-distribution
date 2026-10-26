@@ -408,9 +408,18 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       RED: `NullPointerException` (the stub body ignored the pause gate and always called the
       repository with no result to wrap) + an `UnnecessaryStubbingException`.
       GREEN: both cases pass.
-- [ ] T035 [US7] [P] Implement `cli/PauseIntakeRunner.java`, `cli/ResumeIntakeRunner.java`,
+- [X] T035 [US7] [P] Implement `cli/PauseIntakeRunner.java`, `cli/ResumeIntakeRunner.java`,
       `cli/PurgeQueueRunner.java`, `cli/RollbackCloseInFlightRunner.java` per
-      `contracts/cli-runners.md` §3, §4, §6 — each refuses per its own guard before any store read
+      `contracts/cli-runners.md` §3, §4, §6 — each refuses per its own guard before any store read.
+      Each is the `ReplayRunner` shape: a thin switch mapping its action's sealed outcome to
+      `RunnerOutcome`, with its own `*RunnerTest`. **Not wired into `RunnerDispatcher`/Spring
+      config** — same stub boundary as T021's `ReplayRunner` (open_points); all four refuse before
+      any store read by construction (the guard is inside the application-layer action they call,
+      not duplicated in the runner).
+      RED (all four, a single run): 5 `AssertionFailedError`s — each store-unavailable/
+      broker-unavailable/refused case answered `DONE` against a stub body that always returned
+      `RunnerOutcome.DONE` without inspecting the action's outcome.
+      GREEN: all 11 cases across the four `*RunnerTest` classes pass.
 - [X] T036 [US7] Wire `LegResender`'s and `PurgeQueueAction`'s pause checks to the reconciled
       in-memory flag from T010 (read-before-claim for resend-leg, FR-004-021; read-before-remove for
       purge-queue) — `application/LegResender.java` stub wiring only; full `LegResender` lands in
