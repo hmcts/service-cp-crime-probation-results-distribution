@@ -23,6 +23,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedVa
  */
 public final class OutboundMessageRepository {
 
+    private static final String STATUS = "status";
+    private static final String SOURCE = "source";
+    private static final String REQUEST_ID = "requestId";
+
     private final JdbcClient jdbc;
     private final TransactionTemplate transactionTemplate;
     private final String serviceVersion;
@@ -87,7 +91,7 @@ public final class OutboundMessageRepository {
                         + "AND pr.request_id = outbound_message.request_id "
                         + "AND pr.claim_owner = :owner AND pr.claim_token = :token) "
                         + "RETURNING id")
-                .param("status", outcome.status().wireValue())
+                .param(STATUS, outcome.status().wireValue())
                 .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
                 .param("youthSwitch",
                         outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
@@ -101,8 +105,8 @@ public final class OutboundMessageRepository {
                 .param("bodyDigest", bodyDigest)
                 .param("serviceVersion", versionToWrite)
                 .param("sent", sent)
-                .param("source", outcome.command().source())
-                .param("requestId", outcome.command().requestId())
+                .param(SOURCE, outcome.command().source())
+                .param(REQUEST_ID, outcome.command().requestId())
                 .param("owner", claim.owner().toString())
                 .param("token", claim.token())
                 .query(UUID.class)
@@ -161,9 +165,13 @@ public final class OutboundMessageRepository {
      */
     private int appendReplayRowOrSkip(final LegOutcome outcome, final RunClaim claim,
                                       final String rerunByMessageId, final LatestLegRow latest) {
-        if (latest.note() != null && latest.note().contains("rerun-by=" + rerunByMessageId)) {
-            return 0;
-        }
+        final boolean alreadyRerunByThisMessage = latest.note() != null
+                && latest.note().contains("rerun-by=" + rerunByMessageId);
+        return alreadyRerunByThisMessage ? 0 : insertReplayRow(outcome, claim, rerunByMessageId);
+    }
+
+    private int insertReplayRow(final LegOutcome outcome, final RunClaim claim,
+                                final String rerunByMessageId) {
         final String bodyDigest = outcome.bodyDigest().orElse(null);
         final String versionToWrite = bodyDigest == null ? null : serviceVersion;
         final boolean sent = outcome.status() == LegStatus.SENT;
@@ -180,7 +188,7 @@ public final class OutboundMessageRepository {
                         + "WHERE EXISTS (SELECT 1 FROM processed_request pr "
                         + "WHERE pr.source = :source AND pr.request_id = :requestId "
                         + "AND pr.claim_owner = :owner AND pr.claim_token = :token) RETURNING id")
-                .param("status", outcome.status().wireValue())
+                .param(STATUS, outcome.status().wireValue())
                 .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
                 .param("youthSwitch",
                         outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
@@ -195,8 +203,8 @@ public final class OutboundMessageRepository {
                 .param("serviceVersion", versionToWrite)
                 .param("sent", sent)
                 .param("messageId", rerunByMessageId)
-                .param("source", outcome.command().source())
-                .param("requestId", outcome.command().requestId())
+                .param(SOURCE, outcome.command().source())
+                .param(REQUEST_ID, outcome.command().requestId())
                 .param("owner", claim.owner().toString())
                 .param("token", claim.token())
                 .query(UUID.class)
@@ -216,9 +224,9 @@ public final class OutboundMessageRepository {
         return jdbc.sql("SELECT attempt, status, note FROM outbound_message "
                         + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
                         + "ORDER BY attempt DESC LIMIT 1")
-                .param("source", source)
-                .param("requestId", requestId)
-                .query((rs, rowNum) -> new LatestLegRow(rs.getInt("attempt"), rs.getString("status"),
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query((rs, rowNum) -> new LatestLegRow(rs.getInt("attempt"), rs.getString(STATUS),
                         rs.getString("note")))
                 .optional();
     }
@@ -246,7 +254,7 @@ public final class OutboundMessageRepository {
                         + "AND pr.request_id = outbound_message.request_id "
                         + "AND pr.claim_owner = :owner AND pr.claim_token = :token) "
                         + "RETURNING id")
-                .param("status", outcome.status().wireValue())
+                .param(STATUS, outcome.status().wireValue())
                 .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
                 .param("youthSwitch",
                         outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
@@ -261,8 +269,8 @@ public final class OutboundMessageRepository {
                 .param("serviceVersion", versionToWrite)
                 .param("sent", sent)
                 .param("messageId", rerunByMessageId)
-                .param("source", outcome.command().source())
-                .param("requestId", outcome.command().requestId())
+                .param(SOURCE, outcome.command().source())
+                .param(REQUEST_ID, outcome.command().requestId())
                 .param("owner", claim.owner().toString())
                 .param("token", claim.token())
                 .query(UUID.class)
