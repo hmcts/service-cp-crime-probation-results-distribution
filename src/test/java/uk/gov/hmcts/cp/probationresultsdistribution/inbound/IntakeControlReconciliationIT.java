@@ -39,6 +39,10 @@ class IntakeControlReconciliationIT extends SchemaTestSupport {
         if (controller != null) {
             controller.stop();
         }
+        // SchemaTestSupport's Postgres container (and its intake_control row) is shared by every
+        // schema IT in this JVM; leaving the row paused would fail SchemaVocabularyIT's "seeds
+        // exactly one row, unpaused" assertion for an entirely different test class.
+        resumeRow();
     }
 
     @Test
@@ -94,6 +98,11 @@ class IntakeControlReconciliationIT extends SchemaTestSupport {
 
     private void pauseRow() {
         execute("UPDATE intake_control SET paused_by_operator = true, paused_at = now() "
+                + "WHERE id = 1");
+    }
+
+    private void resumeRow() {
+        execute("UPDATE intake_control SET paused_by_operator = false, paused_at = NULL "
                 + "WHERE id = 1");
     }
 
