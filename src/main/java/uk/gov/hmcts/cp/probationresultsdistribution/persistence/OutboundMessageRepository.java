@@ -141,6 +141,90 @@ public final class OutboundMessageRepository {
 
     private int applyReplayOutcome(final LegOutcome outcome, final RunClaim claim,
                                    final String rerunByMessageId) {
+        final Optional<LatestLegRow> latest = latestLegRow(outcome.command().source(),
+                outcome.command().requestId());
+        final boolean appendOverFailedResend = latest
+                .filter(row -> row.attempt() >= 2 && "FAILED".equals(row.status()))
+                .isPresent();
+        return appendOverFailedResend
+                ? appendReplayRowOrSkip(outcome, claim, rerunByMessageId, latest.orElseThrow())
+                : inPlaceReplayOutcome(outcome, claim, rerunByMessageId);
+    }
+
+    /**
+     * Appends a new {@code replay} attempt row ({@code max(attempt) + 1}, {@code attempt_origin =
+     * replay}, no leg claim) over a leg whose latest row is {@code FAILED} at attempt ≥ 2 — a resend
+     * row or an earlier replay row — never re-running that row in place (FR-004-009). The write is
+     * guarded by the request claim and carries {@code note = rerun-by=<messageId>}, so a redelivery of
+     * the same replay message whose appended row already names it is skipped, exactly as an in-place
+     * {@code FAILED} row is (FR-004-010).
+     */
+    private int appendReplayRowOrSkip(final LegOutcome outcome, final RunClaim claim,
+                                      final String rerunByMessageId, final LatestLegRow latest) {
+        if (latest.note() != null && latest.note().contains("rerun-by=" + rerunByMessageId)) {
+            return 0;
+        }
+        final String bodyDigest = outcome.bodyDigest().orElse(null);
+        final String versionToWrite = bodyDigest == null ? null : serviceVersion;
+        final boolean sent = outcome.status() == LegStatus.SENT;
+        final Optional<UUID> insertedId = jdbc.sql(
+                        "INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                        + "attempt_origin, status, reason, youth_switch, http_status, payload_source, "
+                        + "payload_shared_time, body_digest, service_version, sent_at, attempts, note, "
+                        + "updated_at) SELECT gen_random_uuid(), :source, :requestId, 'HMPPS', "
+                        + "(SELECT max(attempt) + 1 FROM outbound_message WHERE source = :source "
+                        + "AND request_id = :requestId AND leg = 'HMPPS'), 'replay', :status, :reason, "
+                        + ":youthSwitch, :httpStatus, :payloadSource, :sharedTime, :bodyDigest, "
+                        + ":serviceVersion, CASE WHEN :sent THEN now() ELSE NULL END, 1, "
+                        + "'rerun-by=' || :messageId, now() "
+                        + "WHERE EXISTS (SELECT 1 FROM processed_request pr "
+                        + "WHERE pr.source = :source AND pr.request_id = :requestId "
+                        + "AND pr.claim_owner = :owner AND pr.claim_token = :token) RETURNING id")
+                .param("status", outcome.status().wireValue())
+                .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
+                .param("youthSwitch",
+                        outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
+                .param("httpStatus",
+                        outcome.httpStatus().isPresent() ? outcome.httpStatus().getAsInt() : null)
+                .param("payloadSource",
+                        outcome.payloadSource().map(PayloadSource::wireValue).orElse(null))
+                .param("sharedTime", outcome.payloadSharedTime()
+                        .map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC))
+                        .orElse(null))
+                .param("bodyDigest", bodyDigest)
+                .param("serviceVersion", versionToWrite)
+                .param("sent", sent)
+                .param("messageId", rerunByMessageId)
+                .param("source", outcome.command().source())
+                .param("requestId", outcome.command().requestId())
+                .param("owner", claim.owner().toString())
+                .param("token", claim.token())
+                .query(UUID.class)
+                .optional();
+
+        final int rows;
+        if (insertedId.isEmpty()) {
+            rows = 0;
+        } else {
+            replaceBody(insertedId.get(), outcome.body().orElse(null));
+            rows = 1;
+        }
+        return rows;
+    }
+
+    private Optional<LatestLegRow> latestLegRow(final String source, final UUID requestId) {
+        return jdbc.sql("SELECT attempt, status, note FROM outbound_message "
+                        + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
+                        + "ORDER BY attempt DESC LIMIT 1")
+                .param("source", source)
+                .param("requestId", requestId)
+                .query((rs, rowNum) -> new LatestLegRow(rs.getInt("attempt"), rs.getString("status"),
+                        rs.getString("note")))
+                .optional();
+    }
+
+    private int inPlaceReplayOutcome(final LegOutcome outcome, final RunClaim claim,
+                                     final String rerunByMessageId) {
         final String bodyDigest = outcome.bodyDigest().orElse(null);
         final String versionToWrite = bodyDigest == null ? null : serviceVersion;
         final boolean sent = outcome.status() == LegStatus.SENT;
@@ -192,6 +276,18 @@ public final class OutboundMessageRepository {
             rows = 1;
         }
         return rows;
+    }
+
+    /**
+     * The leg's latest attempt, as the replay write path reads it to decide between an in-place
+     * re-run (attempt 1, or a {@code PARKED}/{@code PENDING} replay-created row) and appending a new
+     * row over a {@code FAILED} row at attempt ≥ 2 (FR-004-008, FR-004-009).
+     *
+     * @param attempt the highest attempt number
+     * @param status  that row's status
+     * @param note    that row's note, used for the per-message rerun-by skip (FR-004-010)
+     */
+    private record LatestLegRow(int attempt, String status, String note) {
     }
 
     private void replaceBody(final UUID outboundMessageId, final String body) {

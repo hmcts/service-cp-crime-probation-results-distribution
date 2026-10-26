@@ -187,7 +187,7 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       GREEN: `the replay admission statement > moves FAILED to RECEIVED, clears the failure columns,
       sets replayed_at, appends the two audit lines and takes a fresh claim PASSED` (and the route
       and non-FAILED cases).
-- [ ] T014 [P] [US1] `LegRerunTest`: an in-place re-run of an attempt-1 `FAILED`/`PARKED` row writes
+- [X] T014 [P] [US1] `LegRerunTest`: an in-place re-run of an attempt-1 `FAILED`/`PARKED` row writes
       one UPDATE (no `PENDING` first), increments `attempts`, rewrites `note` to
       `prev=<STATUS>/<reason>` + `rerun-by=<messageId>`, replaces the stored body in the same
       transaction (FR-004-008); a `FAILED` row with attempt ≥ 2 gets a new appended `replay` row,
@@ -199,7 +199,14 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       `SENT`). **Not implemented or tested**: FR-004-009's append-a-new-row path for attempt ≥ 2, and
       FR-004-010's skip-if-already-rerun-by-this-message exclusion (the SQL guard is written into
       `writeReplayOutcome`'s WHERE clause but has no test proving it skips on a second delivery).
-- [ ] T015 [P] [US1] `RequestRecoveryTransitionTest` (US1 half): a terminal leg after a replay
+      **Now written** as `application/LegRerunTest.java` (Testcontainers Postgres via
+      `SchemaTestSupport`), exercising all four cases through `OutboundLogAdapter.recordReplay`.
+      RED (before T018's append path): the append case failed —
+      `appends a new replay row over a FAILED attempt-2 resend row ... FAILED: Expected size: 3 but
+      was: 2` (the old in-place path wrongly re-ran attempt 1 to `SENT` instead of appending
+      attempt 3). The other three cases (in-place attempt-1, the rerun-by skip, the PARKED re-run)
+      were green from slice-002's existing `writeReplayOutcome`.
+      GREEN (after T018): all four `LegRerunTest` cases PASSED.
       completes the request with `completion_reason = recovered` whenever `audit_note` contains
       `REPLAYED_AFTER_FAILURE`, including when the first replayed run parks and a later redelivery
       settles it (FR-004-012); every leg-outcome write of a replayed run is guarded by the request
@@ -231,14 +238,23 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
 - [X] T017 [US1] Implement the replay statement's SQL/JdbcClient call in `persistence/` behind the
       request store port, satisfying T013 — `persistence/ProcessedRequestRepository.java` (or
       equivalent)
-- [ ] T018 [US1] Implement the in-place re-run and replay-row-append write paths in `persistence/`
+- [X] T018 [US1] Implement the in-place re-run and replay-row-append write paths in `persistence/`
       behind `OutboundLog`, satisfying T014 — `persistence/OutboundMessageRepository.java`.
       **In-place re-run done** (`OutboundMessageRepository.writeReplayOutcome`, `OutboundLog`
       additive `recordReplay` method, `DistributionRunner`'s additive 5-arg `run(...)` overload —
       none of this touched the existing `record`/`run`/`writeOutcome` signatures, so no existing
       test needed updating beyond mechanical call-site fixes for the unrelated `admit()` signature
-      change). **Not done**: the replay-row-append path for a `FAILED` row at attempt ≥ 2
-      (FR-004-009) — this slice's scope so far only reaches an attempt-1 `FAILED` row.
+      change). **Now also done**: the replay-row-append path for a `FAILED` row at attempt ≥ 2
+      (FR-004-009). `writeReplayOutcome` now reads the leg's latest attempt first and dispatches —
+      `appendReplayRowOrSkip` when that row is `FAILED` at attempt ≥ 2 (INSERT a new `replay` row at
+      `max(attempt)+1`, no leg claim, `note = rerun-by=<messageId>`, guarded by the request claim via
+      `WHERE EXISTS`, body stored via `replaceBody`; a redelivery whose latest row already names the
+      message is skipped), otherwise the unchanged in-place path (`inPlaceReplayOutcome`). GREEN:
+      `LegRerunTest` all four cases; `OutboundLogAdapterIT` and `RequestDedupeIT` still green.
+      **Known gap (out of scope here, flagged in open_points)**: an appended `replay` row that itself
+      ends `PARKED` (a replay that parks) is not re-run in place on redelivery, because the dispatch
+      only generalises the append; the in-place SQL still targets `attempt = 1`. The common recovery
+      path — a replay of a resend-failed leg that now sends — is covered.
 - [X] T019 [US1] Implement `application/ReplayAction.java`: one `requestId`, checks per T016, returns
       a bounded outcome (`enqueued`/`no-op`/refusal) or fails (`store-unavailable`,
       `broker-unavailable`) with nothing changed; never throws past its outcome

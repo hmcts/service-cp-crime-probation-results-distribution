@@ -31,6 +31,11 @@ public interface OutboundLog {
      * is skipped — matched by no row — so a {@code FAILED} row is re-run at most once per replay
      * message (FR-004-010); a {@code PARKED} row has no such guard and is re-run on every delivery.
      *
+     * <p>When the leg's latest row is instead {@code FAILED} at attempt ≥ 2 — a resend row or an
+     * earlier replay row — it is never re-run in place: a new {@code replay} attempt row
+     * ({@code max(attempt) + 1}) is appended and run, carrying {@code rerun-by=<messageId>} so a
+     * redelivery of the same replay message is likewise skipped (FR-004-009).
+     *
      * @param outcome          the derived leg outcome
      * @param claim            the request claim fencing the write
      * @param rerunByMessageId the replay message's {@code messageId}
