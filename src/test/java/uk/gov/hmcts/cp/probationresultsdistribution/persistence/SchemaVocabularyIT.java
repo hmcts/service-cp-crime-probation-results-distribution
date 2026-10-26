@@ -168,6 +168,30 @@ class SchemaVocabularyIT extends SchemaTestSupport {
         }
     }
 
+    @Nested
+    @DisplayName("intake_control (slice 004, provisional FR-004-052)")
+    class IntakeControlSingleRow {
+
+        @Test
+        @DisplayName("seeds exactly one row")
+        void seeds_exactly_one_row() {
+            final Integer count = jdbc().sql("SELECT count(*) FROM intake_control")
+                    .query(Integer.class).single();
+            assertThat(count).isEqualTo(1);
+            final Boolean pausedByOperator = jdbc()
+                    .sql("SELECT paused_by_operator FROM intake_control WHERE id = 1")
+                    .query(Boolean.class).single();
+            assertThat(pausedByOperator).isFalse();
+        }
+
+        @Test
+        @DisplayName("the single-row CHECK refuses a second row")
+        void refuses_a_second_row() {
+            assertThatThrownBy(() -> execute("INSERT INTO intake_control (id) VALUES (2)"))
+                    .isInstanceOf(DataAccessException.class);
+        }
+    }
+
     private static String canonicalReason(final LegStatus status) {
         return switch (status) {
             case PENDING, SENT -> null;

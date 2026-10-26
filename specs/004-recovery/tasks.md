@@ -60,15 +60,21 @@ container (plan.md "Technical Context").
 **Purpose**: shared schema, vocabulary and property-validation changes every later story needs.
 **⚠️ CRITICAL**: no user-story phase starts before this one is complete.
 
-- [ ] T004 Add the provisional `intake_control` single-row table migration
+- [X] T004 Add the provisional `intake_control` single-row table migration
       `src/main/resources/db/migration/V{next}__add_intake_control.sql` exactly as specified in
       data-model.md (columns `id`, `paused_by_operator`, `paused_at`, `updated_at`; CHECK
       `id = 1`; seed row) — **(provisional, FR-004-052)**. `{next}` is the first unused Flyway
       version once this branch is rebased onto 002's (and, if landed first, 003's) migrations —
-      never renumber an already-applied migration
-- [ ] T005 [P] Add `SchemaVocabularyIT` assertions (extend slice 002's existing test, do not
+      never renumber an already-applied migration. Landed as `V3__add_intake_control.sql` (V1, V2
+      already taken by slices 002/003 on this branch).
+- [X] T005 [P] Add `SchemaVocabularyIT` assertions (extend slice 002's existing test, do not
       duplicate it) confirming `intake_control` has exactly one row and the CHECK holds —
-      `src/test/java/.../persistence/SchemaVocabularyIT.java`
+      `src/test/java/.../persistence/SchemaVocabularyIT.java`.
+      RED (before V3 existed): `org.postgresql.util.PSQLException: ERROR: relation
+      "intake_control" does not exist` in `seeds_exactly_one_row`.
+      GREEN (after V3 landed): both `IntakeControlSingleRow` cases pass —
+      `SchemaVocabularyIT > intake_control (slice 004, provisional FR-004-052) > seeds exactly one
+      row PASSED`, `... > the single-row CHECK refuses a second row PASSED`.
 - [X] T006 [P] Add closed value-set enums in `domain/`: `WholeRunRefusal` (`INTAKE_PAUSED`,
       `TOO_MANY_REQUEST_IDS`, `MISSING_ARGUMENT`, `UNREADABLE_ARGUMENT`, `ARGUMENT_TOO_LONG`,
       `STORE_UNAVAILABLE`, `BROKER_UNAVAILABLE`, `INTAKE_NOT_PAUSED`) and `RunnerOutcome` (`DONE`,
