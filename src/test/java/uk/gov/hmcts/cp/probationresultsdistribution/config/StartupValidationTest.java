@@ -12,6 +12,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.config.DistributionPropertie
 import uk.gov.hmcts.cp.probationresultsdistribution.config.DistributionProperties.Gateway;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.DistributionProperties.Hmpps;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.DistributionProperties.Redis;
+import uk.gov.hmcts.cp.probationresultsdistribution.config.DistributionProperties.Resend;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.DistributionProperties.Results;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.DistributionProperties.ServiceBus;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.DistributionProperties.UsersGroups;
@@ -141,6 +142,15 @@ class StartupValidationTest {
                 .hasMessageContaining("distribution.servicebus.max-delivery-count");
     }
 
+    @Test
+    @DisplayName("refuses a resend cap below 1, naming the property (slice 004, FR-004-019)")
+    void refuses_a_resend_cap_below_one() {
+        assertThatThrownBy(() -> validator.validate(
+                valid().withResend(new Resend(0)).build(), false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.resend.max-ids-per-run");
+    }
+
     private static Builder valid() {
         return new Builder();
     }
@@ -168,6 +178,7 @@ class StartupValidationTest {
                 Duration.ofMinutes(5));
         private YouthSwitch youthSwitch = new YouthSwitch("ACTIVE");
         private Hmpps hmpps = new Hmpps("https://hmpps");
+        private Resend resend = new Resend(100);
 
         private Builder withBudget(final Budget value) {
             this.budget = value;
@@ -209,9 +220,14 @@ class StartupValidationTest {
             return this;
         }
 
+        private Builder withResend(final Resend value) {
+            this.resend = value;
+            return this;
+        }
+
         private DistributionProperties build() {
             return new DistributionProperties(budget, gateway, results, usersgroups, redis, claim,
-                    servicebus, youthSwitch, hmpps);
+                    servicebus, youthSwitch, hmpps, resend);
         }
     }
 }

@@ -64,6 +64,7 @@ class YouthSwitchDefaultConfigTest {
                 new DistributionProperties.ServiceBus(5, Duration.ofMinutes(5),
                         Duration.ofMinutes(5)),
                 new DistributionProperties.YouthSwitch(CONFIGURED_DEFAULT),
-                new DistributionProperties.Hmpps("https://hmpps"));
+                new DistributionProperties.Hmpps("https://hmpps"),
+                new DistributionProperties.Resend(100));
     }
 }

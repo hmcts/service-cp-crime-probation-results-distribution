@@ -102,6 +102,7 @@ class ServiceBusConsumerConfigIT {
                         Duration.ofMinutes(4).plusSeconds(30), Duration.ofMinutes(4)),
                 new DistributionProperties.ServiceBus(5, Duration.ofMinutes(5), Duration.ofMinutes(5)),
                 new DistributionProperties.YouthSwitch("ACTIVE"),
-                new DistributionProperties.Hmpps("https://localhost/hmpps"));
+                new DistributionProperties.Hmpps("https://localhost/hmpps"),
+                new DistributionProperties.Resend(100));
     }
 }

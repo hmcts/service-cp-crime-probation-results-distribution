@@ -36,6 +36,7 @@ public final class StartupValidator {
         validateIdentity(props);
         validateYouthDefault(props);
         validateDeliveryLimit(props);
+        validateResend(props);
         if (requireSecrets) {
             validateSecrets(props);
         }
@@ -157,6 +158,18 @@ public final class StartupValidator {
                 "distribution.servicebus.max-delivery-count",
                 "must equal the queue's configured maxDeliveryCount ("
                         + EXPECTED_MAX_DELIVERY_COUNT + ", design §4.2)");
+    }
+
+    /**
+     * Refuses a resend-leg cap below 1 (slice 004, FR-004-019): {@code distribution.resend
+     * .max-ids-per-run} bounds the explicit {@code requestId} list resend-leg takes per run, and a
+     * run of zero or fewer ids is meaningless.
+     *
+     * @param props the bound configuration
+     */
+    private void validateResend(final DistributionProperties props) {
+        require(props.resend().maxIdsPerRun() >= 1,
+                "distribution.resend.max-ids-per-run", "must be at least 1");
     }
 
     private void validateSecrets(final DistributionProperties props) {

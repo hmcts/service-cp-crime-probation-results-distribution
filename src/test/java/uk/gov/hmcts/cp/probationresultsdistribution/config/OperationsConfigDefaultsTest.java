@@ -141,6 +141,7 @@ class OperationsConfigDefaultsTest {
                 new DistributionProperties.ServiceBus(5, Duration.ofMinutes(5),
                         Duration.ofMinutes(5)),
                 new DistributionProperties.YouthSwitch("ACTIVE"),
-                new DistributionProperties.Hmpps("https://hmpps"));
+                new DistributionProperties.Hmpps("https://hmpps"),
+                new DistributionProperties.Resend(100));
     }
 }

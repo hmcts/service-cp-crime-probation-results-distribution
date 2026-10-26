@@ -84,12 +84,23 @@ container (plan.md "Technical Context").
       shared `WireValued`/`Vocabularies` helper — discovered only once this branch was merged onto
       it; do not redefine them here. `WholeRunRefusal` should be refactored onto that same
       `WireValued`/`Vocabularies` pattern for consistency once this lands for real.**
-- [ ] T007 [P] `PropertiesValidatorTest` case: `distribution.resend.max-ids-per-run` must be ≥ 1 at
+- [X] T007 [P] `PropertiesValidatorTest` case: `distribution.resend.max-ids-per-run` must be ≥ 1 at
       startup, refusal names the property — `src/test/java/.../config/PropertiesValidatorTest.java`
-      (extend the existing class; this is the one named case this slice adds, FR-004-019)
-- [ ] T008 Bind and validate `distribution.resend.max-ids-per-run` (default 100) in the
+      (extend the existing class; this is the one named case this slice adds, FR-004-019).
+      **Implemented as `refuses_a_resend_cap_below_one` in the existing
+      `config/StartupValidationTest.java`**, this branch's actual properties-validator test class
+      (`PropertiesValidatorTest` is the design's proposed name; `StartupValidationTest` is what
+      002 already built and the one slice-002 test this case joins).
+      RED: `java.lang.AssertionError: Expecting code to raise a throwable.` (no `Resend` cap
+      validation existed yet).
+      GREEN: `the startup configuration validator > refuses a resend cap below 1, naming the
+      property (slice 004, FR-004-019) PASSED`.
+- [X] T008 Bind and validate `distribution.resend.max-ids-per-run` (default 100) in the
       `distribution.*` `@ConfigurationProperties` class — `config/DistributionProperties.java` (or
-      the equivalent existing properties record) — makes T007 pass
+      the equivalent existing properties record) — makes T007 pass. Added `DistributionProperties
+      .Resend(maxIdsPerRun)` and `StartupValidator.validateResend`; all `new DistributionProperties
+      (...)` call sites updated (`ServiceBusConsumerConfigIT`, `OperationsConfigDefaultsTest`,
+      `YouthSwitchDefaultConfigTest`, `StartupValidationTest`).
 - [ ] T009 [P] `IntakeControlReconciliationIT` (Testcontainers Postgres): a pod that starts with the
       row `paused_by_operator = true` reconciles to paused before taking its first delivery; a pod
       that restarts mid-pause stays paused after reconciliation —

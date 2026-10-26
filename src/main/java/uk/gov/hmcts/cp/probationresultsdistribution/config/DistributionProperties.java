@@ -18,6 +18,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param servicebus  the broker delivery and lock settings
  * @param youthSwitch the youth-switch default
  * @param hmpps       the HMPPS route
+ * @param resend      the resend-leg run cap (slice 004, FR-004-019)
  */
 @ConfigurationProperties(prefix = "distribution")
 public record DistributionProperties(
@@ -29,7 +30,8 @@ public record DistributionProperties(
         Claim claim,
         ServiceBus servicebus,
         YouthSwitch youthSwitch,
-        Hmpps hmpps) {
+        Hmpps hmpps,
+        Resend resend) {
 
     /* default */ record Budget(Duration payload, Duration youthSwitch, Duration leg) {
     }
@@ -61,5 +63,8 @@ public record DistributionProperties(
     }
 
     /* default */ record Hmpps(String url) {
+    }
+
+    /* default */ record Resend(int maxIdsPerRun) {
     }
 }
