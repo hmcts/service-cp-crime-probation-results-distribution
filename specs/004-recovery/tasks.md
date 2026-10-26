@@ -317,10 +317,17 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       RED: 2 `UnnecessaryStubbingException`s (the stub `pause()`/`resume()` always returned `Done`,
       ignoring the mocked repository) + 2 `AssertionFailedError: expected: NoOp[] but was: Done[]`.
       GREEN: all 6 cases pass.
-- [ ] T029 [P] [US7] `PurgeQueueActionTest`: refused `intake-not-paused` while running, removing
+- [X] T029 [P] [US7] `PurgeQueueActionTest`: refused `intake-not-paused` while running, removing
       nothing; while paused, removes every message enqueued before the run's start instant, leaves
       the DLQ untouched, reports count + cut-off (FR-004-053) —
-      `src/test/java/.../application/PurgeQueueActionTest.java`
+      `src/test/java/.../application/PurgeQueueActionTest.java`.
+      New port `application/QueuePurger.java` (`purgeBefore(Instant)`, `PurgeResult`,
+      `QueuePurgeException`) stands in for the Service Bus admin/management client — "leaves the
+      DLQ untouched" is the port's own contract (a dead-letter call is never made by this action);
+      no production adapter is wired yet (same stub boundary as T021's `ReplayRunner` — open_points).
+      RED: `NullPointerException` (the stub body always called the purger, ignoring the pause gate)
+      + an `UnnecessaryStubbingException`.
+      GREEN: all 3 cases pass.
 - [ ] T030 [P] [US7] `RollbackFencingIT` — the close-in-flight case (FR-004-049a): over a seeded
       `RECEIVED`+`PENDING` row, a `RETRYING`+`PARKED` row, a `FAILED(leg-exhausted)`+`PENDING`-resend
       row and a `COMPLETED`+`PENDING`-resend row, the statement closes each leg row
@@ -356,10 +363,17 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       lifecycle controller (or a narrower "force reconcile now" port), which no task in this range
       asks for; flagged in open_points for a later pass if sub-probe-interval pause latency turns
       out to matter operationally.
-- [ ] T033 [US7] Implement `application/PurgeQueueAction.java`: refuse `intake-not-paused` unless
+- [X] T033 [US7] Implement `application/PurgeQueueAction.java`: refuse `intake-not-paused` unless
       paused; otherwise remove messages on `probation.requests` enqueued before the run's start
       instant via the Service Bus admin/management client, leave the DLQ untouched, report count +
-      cut-off, log one structured line (FR-004-053)
+      cut-off, log one structured line (FR-004-053).
+      Reads `IntakePauseGate.pausedByOperator()` first; when paused, calls the new `QueuePurger`
+      port with the clock's current instant and maps its `PurgeResult`/`QueuePurgeException` to
+      `Done`/`BrokerUnavailable`, logging one structured line per outcome. **No production
+      `QueuePurger` adapter (the actual Service Bus admin/management client call) is implemented in
+      this range** — no task here names that adapter class, and building one needs a receive-and
+      classify-by-enqueued-time loop over the live queue that no test in this phase exercises;
+      flagged in open_points, same boundary as T021's unwired `ReplayEnqueuer`.
 - [ ] T034 [US7] Implement `application/RollbackCloseInFlightAction.java`: one transaction per
       `PENDING`/`PARKED` row exactly as FR-004-049a states — **(provisional, FR-004-049)**
 - [ ] T035 [US7] [P] Implement `cli/PauseIntakeRunner.java`, `cli/ResumeIntakeRunner.java`,
