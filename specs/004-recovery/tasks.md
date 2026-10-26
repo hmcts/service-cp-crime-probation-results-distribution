@@ -171,7 +171,7 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
 
 ### Tests for User Story 1 (write first, confirm red, then implement) ⚠️
 
-- [ ] T013 [P] [US1] `RequestReplayStatementTest`: the admission statement moves
+- [X] T013 [P] [US1] `RequestReplayStatementTest`: the admission statement moves
       `FAILED → RECEIVED`, clears `failure_reason`/`exhausted_message_id`, sets `replayed_at`,
       appends `REPLAYED_AFTER_FAILURE prior=<reason>` to `audit_note`, takes the request claim — one
       statement, condition = T011's predicate (FR-004-001, FR-004-004) —
@@ -180,6 +180,13 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       claim) are exercised end-to-end by `RequestDedupeIT`'s
       `failed_request_copy_at_first_delivery_is_admitted_as_replay` (a real Postgres + Service Bus
       emulator IT), which passes. A dedicated statement-level unit/IT test is still worth adding.
+      **Now added** as `application/RequestReplayStatementTest.java` (Testcontainers Postgres via the
+      public `SchemaTestSupport`), calling `JdbcProcessedRequestRepository.admitReplay` directly.
+      RED not reproducible: `admitReplay` (FR-004-004) landed with T011/T017 (both [X]) before this
+      statement-level test was pinned, so it is a characterization test, not a test-first guard.
+      GREEN: `the replay admission statement > moves FAILED to RECEIVED, clears the failure columns,
+      sets replayed_at, appends the two audit lines and takes a fresh claim PASSED` (and the route
+      and non-FAILED cases).
 - [ ] T014 [P] [US1] `LegRerunTest`: an in-place re-run of an attempt-1 `FAILED`/`PARKED` row writes
       one UPDATE (no `PENDING` first), increments `attempts`, rewrites `note` to
       `prev=<STATUS>/<reason>` + `rerun-by=<messageId>`, replaces the stored body in the same
