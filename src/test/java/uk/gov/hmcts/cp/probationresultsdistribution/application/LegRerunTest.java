@@ -127,6 +127,41 @@ class LegRerunTest extends SchemaTestSupport {
     }
 
     @Test
+    @DisplayName("re-runs an appended PARKED replay row in place on redelivery, leaving the earlier "
+            + "attempts untouched (FR-004-008)")
+    void reruns_an_appended_parked_replay_row_in_place_on_redelivery() {
+        final UUID requestId = UUID.randomUUID();
+        final UUID hearingId = UUID.randomUUID();
+        final RunClaim claim = RunClaim.fresh();
+        final String messageId = "RESULTS:" + requestId;
+        seedReplayableRequest(requestId, claim);
+        insertFailedAttempt(requestId, 1, "queue", "gateway-transient", null, null);
+        insertFailedAttempt(requestId, 2, "resend", "gateway-transient", null, RunClaim.fresh());
+
+        // The replay appends attempt 3, which itself parks on this delivery.
+        assertThat(adapter.recordReplay(parkedOutcome(requestId, hearingId), claim, messageId))
+                .as("the appended replay row is created").isTrue();
+        // The same replay message is redelivered: attempt 3 must be re-run in place, not attempt 1.
+        assertThat(adapter.recordReplay(sentOutcome(requestId, hearingId), claim, messageId))
+                .as("the redelivery re-runs the appended PARKED row in place").isTrue();
+
+        final List<Map<String, Object>> rows = legRows(requestId);
+        assertThat(rows).as("no fourth attempt is appended").hasSize(3);
+        assertThat(rows.get(0).get("status")).as("attempt 1 is untouched").isEqualTo("FAILED");
+        assertThat(rows.get(0).get("attempts")).as("attempt 1 is untouched").isEqualTo(1);
+        assertThat(rows.get(1).get("status")).as("attempt 2 is untouched").isEqualTo("FAILED");
+        assertThat(rows.get(1).get("attempts")).as("attempt 2 is untouched").isEqualTo(1);
+        final Map<String, Object> appended = rows.get(2);
+        assertThat(appended.get("attempt")).isEqualTo(3);
+        assertThat(appended.get("attempt_origin")).isEqualTo("replay");
+        assertThat(appended.get("status")).as("attempt 3 re-run to SENT in place").isEqualTo("SENT");
+        assertThat(appended.get("attempts")).as("attempt 3's attempts incremented").isEqualTo(2);
+        assertThat(appended.get("note")).asString()
+                .contains("prev=PARKED/gateway-transient").contains("rerun-by=" + messageId);
+        assertThat(storedBody(requestId, 3)).isEqualTo(SENT_BODY);
+    }
+
+    @Test
     @DisplayName("re-runs a PARKED attempt-1 row on every delivery, whatever its note (FR-004-010)")
     void reruns_a_parked_row_on_every_delivery() {
         final UUID requestId = UUID.randomUUID();
