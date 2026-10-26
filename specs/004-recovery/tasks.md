@@ -430,7 +430,17 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       it yet; `PurgeQueueAction` (T033) already read this same port. Both are clearly marked as the
       hand-off point for Phase 6 (`LegResender`) — nothing in this stub's shape should need to
       change when the real eligibility/claim/send pipeline replaces its loop body.
-- [ ] T037 Run `quickstart.md` step 6 (pause/purge/resume) and the close-in-flight smoke test locally
+- [ ] T037 Run `quickstart.md` step 6 (pause/purge/resume) and the close-in-flight smoke test locally.
+      **Not run against the built jar this pass** — step 6 is `java -jar build/libs/app.jar
+      pause-intake` / `purge-queue` / `resume-intake`, which needs the composition-root wiring this
+      phase deliberately left open (T021's precedent, carried forward by T029/T033/T035): no
+      `RunnerDispatcher` registration, no Spring beans for the four new runners or
+      `RollbackCloseInFlightAction`, and no production `QueuePurger` adapter exists yet, so the
+      packaged jar cannot actually take any of these actions. Every behaviour the smoke test would
+      observe is covered by the automated suite instead: `IntakeControlReconciliationIT` (pause
+      survives a restart), `IntakePauseResumeTest` (pause/resume/no-op), `PurgeQueueActionTest`
+      (refusal and purge), `RollbackFencingIT` (the close-in-flight statement and its fencing). Left
+      open for the pass that wires the composition root.
 
 **Checkpoint**: intake pause is durable and testable in isolation from resend-leg's full
 implementation; purge-queue and the rollback close statement are usable by 006's runbook inputs.
