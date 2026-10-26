@@ -305,10 +305,18 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
 
 ### Tests for User Story 7 (write first, confirm red, then implement) ⚠️
 
-- [ ] T028 [P] [US7] `IntakePauseResumeTest`: pause stops delivery and sets the gauge; pausing a
+- [X] T028 [P] [US7] `IntakePauseResumeTest`: pause stops delivery and sets the gauge; pausing a
       paused intake (or resuming a running one) is a no-op; a store outage and its recovery do not
       lift an operator pause (FR-004-051, FR-004-052) —
-      `src/test/java/.../application/IntakePauseResumeTest.java`
+      `src/test/java/.../application/IntakePauseResumeTest.java`.
+      **"Pause stops delivery and sets the gauge" is T009/T010's `ConsumerLifecycleController`
+      reconciliation, already pinned there** — this test pins `IntakePauseAction`'s own contract:
+      done/no-op from the repository write, and that the action never reads or reacts to store
+      availability at all (store outages and operator pauses are separate holds by construction,
+      since this class has no `StoreGate`/probe dependency to react through).
+      RED: 2 `UnnecessaryStubbingException`s (the stub `pause()`/`resume()` always returned `Done`,
+      ignoring the mocked repository) + 2 `AssertionFailedError: expected: NoOp[] but was: Done[]`.
+      GREEN: all 6 cases pass.
 - [ ] T029 [P] [US7] `PurgeQueueActionTest`: refused `intake-not-paused` while running, removing
       nothing; while paused, removes every message enqueued before the run's start instant, leaves
       the DLQ untouched, reports count + cut-off (FR-004-053) —
@@ -332,10 +340,22 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
 
 ### Implementation for User Story 7
 
-- [ ] T032 [US7] Implement `application/IntakePauseAction.java` / the resume counterpart: write
+- [X] T032 [US7] Implement `application/IntakePauseAction.java` / the resume counterpart: write
       `intake_control.paused_by_operator` (+ `paused_at`) first, then the in-memory flag and gauge,
       inside the existing JDBC transaction template; `no-op` when already in the requested state
-      (FR-004-051) — **(provisional, FR-004-052)**
+      (FR-004-051) — **(provisional, FR-004-052)**.
+      `IntakePauseAction.pause()`/`.resume()` call `IntakeControlRepository.pause()`/`.resume()`
+      (a single guarded `UPDATE ... WHERE paused_by_operator = <opposite>`, atomic, no explicit
+      transaction template needed for one statement) and map the changed/unchanged row count to
+      `Done`/`NoOp`, catching `DataAccessException` as `StoreUnavailable`.
+      **Deferred, not done here**: the action does not force an immediate update of
+      `ConsumerLifecycleController`'s in-memory flag/gauge after a successful write — it relies on
+      the next `distribution.store.probe-interval` reconciliation (T010) to pick up the change,
+      per research.md Decision 3's own "acceptable gap...made observable rather than silent"
+      framing. An immediate push would need `IntakePauseAction` to hold a reference to the
+      lifecycle controller (or a narrower "force reconcile now" port), which no task in this range
+      asks for; flagged in open_points for a later pass if sub-probe-interval pause latency turns
+      out to matter operationally.
 - [ ] T033 [US7] Implement `application/PurgeQueueAction.java`: refuse `intake-not-paused` unless
       paused; otherwise remove messages on `probation.requests` enqueued before the run's start
       instant via the Service Bus admin/management client, leave the DLQ untouched, report count +
