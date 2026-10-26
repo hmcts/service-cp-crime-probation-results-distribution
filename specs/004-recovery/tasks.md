@@ -352,12 +352,19 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       `pendingClosed()`/`parkedClosed()`, and the 2 late-runner cases because the rows were never
       closed in the first place (`expected: 0 but was: 1`; `expected: "FAILED" but was: "PARKED"`).
       GREEN: all 6 pass against the real `JdbcRollbackFencingRepository`.
-- [ ] T031 [P] [US7] `ResendConcurrencyIT` (US7 half): resend-leg refuses a whole run submitted while
+- [X] T031 [P] [US7] `ResendConcurrencyIT` (US7 half): resend-leg refuses a whole run submitted while
       paused (`intake-paused`, nothing read/changed); a pause beginning mid-run claims no further ID
       and reports the rest `not-run` (FR-004-021) —
       `src/test/java/.../application/ResendConcurrencyIT.java` (shared file with US3's T038; this
       task writes the pause-related cases first since they need no resend machinery beyond the pause
-      read)
+      read).
+      Written as a plain Mockito test (no Testcontainers yet — "no resend machinery beyond the
+      pause read" needs none); US3's T038/T041 extensions, which need real cross-run concurrency,
+      will add `@Testcontainers`/the Service Bus emulator to this same class when they land.
+      RED: `AssertionError: Expecting Optional to contain: INTAKE_PAUSED but was empty` +
+      `UnnecessaryStubbingException` + a `containsExactly` mismatch against an empty `notRun` list
+      (the stub always proceeded with an empty `notRun`, never reading the pause gate).
+      GREEN: all 3 cases pass.
 
 ### Implementation for User Story 7
 
@@ -404,10 +411,16 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
 - [ ] T035 [US7] [P] Implement `cli/PauseIntakeRunner.java`, `cli/ResumeIntakeRunner.java`,
       `cli/PurgeQueueRunner.java`, `cli/RollbackCloseInFlightRunner.java` per
       `contracts/cli-runners.md` §3, §4, §6 — each refuses per its own guard before any store read
-- [ ] T036 [US7] Wire `LegResender`'s and `PurgeQueueAction`'s pause checks to the reconciled
+- [X] T036 [US7] Wire `LegResender`'s and `PurgeQueueAction`'s pause checks to the reconciled
       in-memory flag from T010 (read-before-claim for resend-leg, FR-004-021; read-before-remove for
       purge-queue) — `application/LegResender.java` stub wiring only; full `LegResender` lands in
-      Phase 6
+      Phase 6.
+      Both depend on the same `application.IntakePauseGate` port `ConsumerLifecycleController`
+      implements (T010) — never a fresh database read. `LegResender`'s stub (this task) checks the
+      gate once before the whole run and once per id in the loop, with no claim/send logic behind
+      it yet; `PurgeQueueAction` (T033) already read this same port. Both are clearly marked as the
+      hand-off point for Phase 6 (`LegResender`) — nothing in this stub's shape should need to
+      change when the real eligibility/claim/send pipeline replaces its loop body.
 - [ ] T037 Run `quickstart.md` step 6 (pause/purge/resume) and the close-in-flight smoke test locally
 
 **Checkpoint**: intake pause is durable and testable in isolation from resend-leg's full
