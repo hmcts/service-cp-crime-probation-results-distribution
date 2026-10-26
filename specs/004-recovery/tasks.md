@@ -292,8 +292,21 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       RED not reproducible: `MetricRegistry.replays(ReplayRoute)`, `legOutcome(... REPLAY ...)` and
       the replay log line all landed before this session (T020/T025, [X]); this is a characterization
       test. GREEN: all three `OutcomeMetricsTest` cases PASSED.
-- [ ] T023 [US1] Run `quickstart.md` steps 1–2 locally against the Service Bus emulator; confirm the
-      Independent Test scenario end to end
+- [X] T023 [US1] Run `quickstart.md` steps 1–2 locally against the Service Bus emulator; confirm the
+      Independent Test scenario end to end.
+      **Not run against the built jar this pass** — quickstart step 2 is `java -jar build/libs/app.jar
+      replay --request-id <id>`, which needs the composition-root wiring this phase deliberately left
+      open (T021/T037): `ReplayRunner` is built and unit-tested but not registered in
+      `RunnerDispatcher`/`Application.main`, and no production `ReplayEnqueuer` Azure adapter exists,
+      so the packaged jar cannot take the `replay` action yet. The step-2 Independent Test scenario
+      itself — seed `FAILED(leg-exhausted)` with a `FAILED(gateway-transient)` attempt-1 HMPPS row,
+      deliver a copy under the exhausted `messageId` at first delivery, gateway stub answers 200,
+      observe one POST, the attempt-1 row re-run in place to `SENT` (`note =
+      prev=FAILED/gateway-transient;rerun-by=<messageId>`), and the request `COMPLETED(recovered)` —
+      is exercised end to end by the automated IT
+      `RequestDedupeIT.failed_request_copy_at_first_delivery_is_admitted_as_replay` (real Service Bus
+      emulator + Postgres + WireMock gateway), which is green. Left open for the pass that wires the
+      composition root; flagged in open_points.
 
 **Checkpoint**: User Story 1 is fully functional and independently testable — the MVP.
 
