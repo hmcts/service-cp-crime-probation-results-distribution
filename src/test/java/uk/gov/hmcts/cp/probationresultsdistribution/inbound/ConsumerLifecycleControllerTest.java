@@ -24,6 +24,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.IntakeControlRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedLogProbe;
 
 /**
@@ -43,6 +44,8 @@ class ConsumerLifecycleControllerTest {
     private ServiceBusProcessorClient processor;
     @Mock
     private ProcessedLogProbe storeProbe;
+    @Mock
+    private IntakeControlRepository intakeControl;
 
     private SimpleMeterRegistry meter;
     private MetricRegistry metrics;
@@ -53,6 +56,7 @@ class ConsumerLifecycleControllerTest {
         meter = new SimpleMeterRegistry();
         metrics = new MetricRegistry(meter);
         lenient().when(processor.getQueueName()).thenReturn("probation.requests");
+        lenient().when(intakeControl.pausedByOperator()).thenReturn(false);
     }
 
     @AfterEach
@@ -133,11 +137,12 @@ class ConsumerLifecycleControllerTest {
     }
 
     private ConsumerLifecycleController newController() {
-        return new ConsumerLifecycleController(processor, storeProbe, () -> null, metrics, PROBE_INTERVAL);
+        return new ConsumerLifecycleController(processor, storeProbe, intakeControl, () -> null,
+                metrics, PROBE_INTERVAL);
     }
 
     private double gauge(final String name) {
-        final Gauge found = meter.find(name).gauge();
+        final Gauge found = meter.find(name).tag("cause", "database").gauge();
         return found == null ? Double.NaN : found.value();
     }
 

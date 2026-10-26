@@ -37,6 +37,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ConsumerLifecycleCon
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.DistributionCommandParser;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.StoreGate;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.IntakeControlRepository;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcIntakeControlRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedLogProbe;
@@ -182,6 +184,11 @@ public class ServiceBusConsumerConfig {
     }
 
     /* default */ @Bean
+    IntakeControlRepository intakeControlRepository(final JdbcClient jdbc) {
+        return new JdbcIntakeControlRepository(jdbc);
+    }
+
+    /* default */ @Bean
     ProbationMessageListener probationMessageListener(final DistributionRunner runner,
             final ProcessedRequestRepository processedRequests, final MetricRegistry metrics,
             final DistributionProperties properties,
@@ -229,11 +236,11 @@ public class ServiceBusConsumerConfig {
 
     /* default */ @Bean
     ConsumerLifecycleController probationConsumerLifecycle(final ServiceBusProcessorClient processor,
-            final ProcessedLogProbe storeProbe, final ObjectProvider<Flyway> flyway,
-            final MetricRegistry metrics,
+            final ProcessedLogProbe storeProbe, final IntakeControlRepository intakeControl,
+            final ObjectProvider<Flyway> flyway, final MetricRegistry metrics,
             @Value("${distribution.store.probe-interval:10s}") final String probeInterval) {
-        return new ConsumerLifecycleController(processor, storeProbe, flyway::getIfAvailable, metrics,
-                DurationStyle.detectAndParse(probeInterval));
+        return new ConsumerLifecycleController(processor, storeProbe, intakeControl,
+                flyway::getIfAvailable, metrics, DurationStyle.detectAndParse(probeInterval));
     }
 
     private static String serviceVersion(final ObjectProvider<BuildProperties> buildProperties) {

@@ -13,7 +13,9 @@ import org.flywaydb.core.Flyway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.SmartLifecycle;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.IntakePauseGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.IntakeControlRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedLogProbe;
 
 /**
@@ -33,15 +35,19 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedLogProb
  * <p>Single replica: suspension is a per-pod decision, so cluster-safe suspension belongs to the
  * scale-out story; the constraint is recorded in the plan.
  */
-public class ConsumerLifecycleController implements SmartLifecycle, StoreGate {
+public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, IntakePauseGate {
 
     private static final Logger LOG = LoggerFactory.getLogger(ConsumerLifecycleController.class);
 
     /** How long shutdown waits for the transition thread to finish what it was doing. */
     private static final Duration SHUTDOWN_GRACE = Duration.ofSeconds(30);
 
+    /** The PMD suppression this class's several deliberately-total catches share. */
+    private static final String SUPPRESS_GENERIC_CATCH = "PMD.AvoidCatchingGenericException";
+
     private final ServiceBusProcessorClient processor;
     private final ProcessedLogProbe storeProbe;
+    private final IntakeControlRepository intakeControl;
     private final Supplier<Flyway> flyway;
     private final MetricRegistry metrics;
     private final Duration probeInterval;
@@ -59,23 +65,28 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate {
     private volatile boolean processorRunning;
     private volatile ScheduledFuture<?> probeSchedule;
     private volatile boolean gatedStartCompleted;
+    private volatile boolean operatorPaused;
 
     /**
      * Creates the controller over everything a gated start needs.
      *
      * @param processor     the client it owns and is the only thing to start
      * @param storeProbe    the availability question the gated start waits on
+     * @param intakeControl the persisted operator-pause record (slice 004, provisional
+     *                      FR-004-052), reconciled into {@link #operatorPaused} on every probe
      * @param flyway        the deferred migration, run once before intake starts
      * @param metrics       the instrument surface suspensions are counted and gauged on
      * @param probeInterval how often the store is asked, driving the start and the resume
      */
     public ConsumerLifecycleController(final ServiceBusProcessorClient processor,
                                        final ProcessedLogProbe storeProbe,
+                                       final IntakeControlRepository intakeControl,
                                        final Supplier<Flyway> flyway,
                                        final MetricRegistry metrics,
                                        final Duration probeInterval) {
         this.processor = processor;
         this.storeProbe = storeProbe;
+        this.intakeControl = intakeControl;
         this.flyway = flyway;
         this.metrics = metrics;
         this.probeInterval = probeInterval;
@@ -180,6 +191,33 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate {
         return storeProbe.available();
     }
 
+    /**
+     * The reconciled, in-memory operator-pause flag (slice 004, provisional FR-004-052). Read by
+     * resend-leg and purge-queue (research.md Decision 3) rather than asking the store afresh.
+     *
+     * @return {@code true} while intake is paused by an operator, as of the last reconciliation
+     */
+    @Override
+    public boolean pausedByOperator() {
+        return operatorPaused;
+    }
+
+    /**
+     * Reads {@code intake_control.paused_by_operator} and reconciles the in-memory flag and the
+     * {@code cause="operator"} gauge to it (research.md Decision 3). Run on every probe, before the
+     * store-outage decision, so a pod that starts (or restarts) with the row already paused never
+     * reaches {@link #resume()} on its first tick.
+     */
+    private void reconcileOperatorPause() {
+        final boolean paused = intakeControl.pausedByOperator();
+        final boolean changed = paused != operatorPaused;
+        operatorPaused = paused;
+        metrics.recordOperatorPause(paused);
+        if (changed) {
+            LOG.info("intake operator-pause reconciled to {}", paused);
+        }
+    }
+
     @Override
     public void suspendIntake() {
         try {
@@ -189,13 +227,19 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate {
         }
     }
 
-    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    @SuppressWarnings(SUPPRESS_GENERIC_CATCH)
     // Deliberately total: whatever ends a probe — an unreachable store, a failed migration, a
     // processor that refused to start — the schedule must outlive it, or a service that has stopped
     // asking whether its store is back never comes back. The next probe is the retry.
     private void probe() {
         try {
-            if (state.get() != State.RUNNING && !closing() && storeProbe.available()) {
+            // Reconciled first, before the store-outage decision: a pod that starts (or restarts)
+            // with the row already paused must never reach resume() on its first tick, whatever the
+            // store answers (research.md Decision 3; provisional FR-004-052).
+            reconcileOperatorPause();
+            if (operatorPaused) {
+                suspendForOperatorPause();
+            } else if (state.get() != State.RUNNING && !closing() && storeProbe.available()) {
                 resume();
             }
         } catch (final RuntimeException failed) {
@@ -206,7 +250,7 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate {
 
     private synchronized void resume() {
         final State from = state.get();
-        if (from != State.RUNNING && !terminal(from)) {
+        if (from != State.RUNNING && !terminal(from) && !operatorPaused) {
             migrateOnce();
             if (state.compareAndSet(from, State.RUNNING)) {
                 startConsuming(from);
@@ -216,7 +260,40 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate {
         }
     }
 
-    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    /**
+     * An operator pause was read as in force: stop consuming, exactly as a store outage would, but
+     * under the {@code operator} cause rather than {@code database} (research.md Decision 3). A pod
+     * already stopped for any other reason is left alone.
+     */
+    private synchronized void suspendForOperatorPause() {
+        final State from = state.get();
+        if (from == State.RUNNING) {
+            if (state.compareAndSet(State.RUNNING, State.SUSPENDING)) {
+                stopForOperatorPause();
+            }
+        } else if (from == State.SUSPENDING) {
+            stopForOperatorPause();
+        }
+    }
+
+    @SuppressWarnings(SUPPRESS_GENERIC_CATCH)
+    // Total, and it does not rethrow, for the same reason stopForSuspension() does not: this runs on
+    // the transition executor, where a thrown exception is reported by nobody. The next probe retries.
+    private void stopForOperatorPause() {
+        try {
+            processor.stop();
+        } catch (final RuntimeException refused) {
+            LOG.error("intake could not be stopped for an operator pause; the next probe retries; "
+                    + "queue={} type={}", processor.getQueueName(), refused.getClass().getName());
+            return;
+        }
+        processorRunning = false;
+        if (state.compareAndSet(State.SUSPENDING, State.SUSPENDED)) {
+            LOG.info("intake suspended by an operator pause; queue={}", processor.getQueueName());
+        }
+    }
+
+    @SuppressWarnings(SUPPRESS_GENERIC_CATCH)
     // Deliberately total, and it rethrows: whatever the SDK raises when a processor refuses to start,
     // the state this method moved before the call has to be given back or the probe would see RUNNING
     // for ever and never retry. The failure is then the probe's to report.
@@ -252,7 +329,7 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate {
         }
     }
 
-    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    @SuppressWarnings(SUPPRESS_GENERIC_CATCH)
     // Total, and it does not rethrow: this runs as a task on the transition executor, where a thrown
     // exception is reported by nobody and simply ends the task. Catching it turns a silently lost
     // failure into an ERROR; the retry is the next delivery's request, and SUSPENDING keeps it live.

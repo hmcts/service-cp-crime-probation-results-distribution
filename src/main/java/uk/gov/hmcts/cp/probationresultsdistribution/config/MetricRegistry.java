@@ -100,6 +100,7 @@ public final class MetricRegistry implements OutcomeMetrics {
 
     private final MeterRegistry registry;
     private final AtomicInteger intakeSuspended = new AtomicInteger(0);
+    private final AtomicInteger intakeSuspendedByOperator = new AtomicInteger(0);
     private final AtomicLong oldestNonTerminalAgeMillis = new AtomicLong(0);
     private final AtomicLong oldestParkedAgeMillis = new AtomicLong(0);
     private final AtomicReference<YouthSwitchRecordedValue> lastYouthSwitch = new AtomicReference<>();
@@ -113,6 +114,9 @@ public final class MetricRegistry implements OutcomeMetrics {
         this.registry = registry;
         Gauge.builder(INTAKE_SUSPENDED_M, intakeSuspended, AtomicInteger::doubleValue)
                 .tag(TAG_CAUSE, "database")
+                .register(registry);
+        Gauge.builder(INTAKE_SUSPENDED_M, intakeSuspendedByOperator, AtomicInteger::doubleValue)
+                .tag(TAG_CAUSE, "operator")
                 .register(registry);
         Gauge.builder(OLDEST_NON_TERMINAL_AGE_M, oldestNonTerminalAgeMillis,
                 value -> value.get() / 1000.0d).register(registry);
@@ -134,6 +138,16 @@ public final class MetricRegistry implements OutcomeMetrics {
      */
     public void recordIntakeSuspended(final boolean suspended) {
         intakeSuspended.set(suspended ? 1 : 0);
+    }
+
+    /**
+     * Sets the {@code probation_intake_suspended{cause="operator"}} gauge to 1 while intake is
+     * paused by an operator, 0 otherwise (slice 004, FR-004-051, FR-004-052).
+     *
+     * @param paused whether intake is currently paused by an operator
+     */
+    public void recordOperatorPause(final boolean paused) {
+        intakeSuspendedByOperator.set(paused ? 1 : 0);
     }
 
     /** Updates the two database-derived ages, in seconds. */

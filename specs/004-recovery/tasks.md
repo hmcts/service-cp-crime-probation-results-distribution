@@ -101,12 +101,20 @@ container (plan.md "Technical Context").
       .Resend(maxIdsPerRun)` and `StartupValidator.validateResend`; all `new DistributionProperties
       (...)` call sites updated (`ServiceBusConsumerConfigIT`, `OperationsConfigDefaultsTest`,
       `YouthSwitchDefaultConfigTest`, `StartupValidationTest`).
-- [ ] T009 [P] `IntakeControlReconciliationIT` (Testcontainers Postgres): a pod that starts with the
+- [X] T009 [P] `IntakeControlReconciliationIT` (Testcontainers Postgres): a pod that starts with the
       row `paused_by_operator = true` reconciles to paused before taking its first delivery; a pod
       that restarts mid-pause stays paused after reconciliation —
       `src/test/java/.../inbound/IntakeControlReconciliationIT.java` — write first, confirm it fails
-      for the right reason, before T010 starts
-- [ ] T010 Extend `ConsumerLifecycleController` (`inbound/`) with a `paused_by_operator` read path
+      for the right reason, before T010 starts.
+      RED: both cases failed `Expecting value to be true but was false` on
+      `controller.pausedByOperator()` (the constructor seam — `IntakeControlRepository` injected
+      but not yet read by `probe()`).
+      GREEN (after T010): both `IntakeControlReconciliationIT` cases pass, and the existing
+      `ConsumerLifecycleControllerTest`/`DatabaseOutageIT` suites stay green (the `database`-cause
+      gauge lookups were narrowed to `.tag("cause","database")` once a second, `operator`-cause
+      gauge of the same name was added; `ClosedLabelSetIT` updated to allow the new `operator`
+      label value).
+- [X] T010 Extend `ConsumerLifecycleController` (`inbound/`) with a `paused_by_operator` read path
       against the `intake_control` row: on startup and every `distribution.store.probe-interval`,
       reconcile the in-memory pause flag and `probation_intake_suspended{cause="operator"}` to the
       persisted row, making T009 pass — **(provisional, FR-004-052)** —

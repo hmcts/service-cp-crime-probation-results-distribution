@@ -156,8 +156,10 @@ class DatabaseOutageIT extends EndToEndTestSupport {
         final ProbationMessageListener listener = listenerOver(store, gate, maxDeliveryCount);
         final MetricRegistry metrics = sharedMetrics();
         outageProcessor = buildProcessor(listener, 2);
-        controller = new ConsumerLifecycleController(outageProcessor, probe, () -> null, metrics,
-                Duration.ofSeconds(1));
+        final IntakeControlRepository intakeControl =
+                new JdbcIntakeControlRepository(JdbcClient.create(store));
+        controller = new ConsumerLifecycleController(outageProcessor, probe, intakeControl,
+                () -> null, metrics, Duration.ofSeconds(1));
         holder.set(controller);
         controller.start();
         awaitIntakeStarted();
@@ -222,7 +224,8 @@ class DatabaseOutageIT extends EndToEndTestSupport {
     }
 
     private double gaugeValue() {
-        final Gauge gauge = meterRegistry().find("probation_intake_suspended").gauge();
+        final Gauge gauge = meterRegistry().find("probation_intake_suspended")
+                .tag("cause", "database").gauge();
         return gauge == null ? Double.NaN : gauge.value();
     }
 

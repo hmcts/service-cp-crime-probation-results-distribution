@@ -49,7 +49,7 @@ class ClosedLabelSetIT {
         metrics.processed("FAILED");
 
         final Set<String> allowed = vocabularyValues();
-        allowed.addAll(Set.of("true", "false", "none", "database", "COMPLETED", "FAILED"));
+        allowed.addAll(Set.of("true", "false", "none", "database", "operator", "COMPLETED", "FAILED"));
         final Set<String> emitted = meters.getMeters().stream().flatMap(meter -> meter.getId().getTags()
                 .stream().map(Tag::getValue)).collect(java.util.stream.Collectors.toSet());
         assertThat(emitted).isNotEmpty().allMatch(allowed::contains);
