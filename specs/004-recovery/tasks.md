@@ -279,6 +279,15 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       `LegRerunTest.leaves_a_parked_resend_row_untouched_on_replay` (RED before the fix:
       `recordReplay` returned `true`, the resend row was re-run to `SENT`; GREEN after). The RED test
       landed in its own commit before the production fix.
+      **Accepted TDD-process deviation (gate round 3, qa, not re-remediated)**: commit `93be609`
+      lands `LegRerunTest`'s FR-004-009 append-over-attempt-≥2 assertion together with the
+      `OutboundMessageRepository`/`OutboundLog` production code implementing it, so that one commit
+      does not itself show a red-before-green split (unlike the two later pairs above, which do:
+      `fb1529d`→`05a569d` and `6354ef4`→`b03f129`). The RED run for the append case was recorded and
+      observed (`Expected size: 3 but was: 2`) before the fix landed; only the commit boundary is
+      coarser than the convention asks for. Left as-is rather than rewriting already-landed history
+      that ten further commits now sit on top of; a genuine functional defect was not found here by
+      either of the other two round-3 reviewers (code-reviewer PASS, spec-validator COMPLIANT).
 - [X] T019 [US1] Implement `application/ReplayAction.java`: one `requestId`, checks per T016, returns
       a bounded outcome (`enqueued`/`no-op`/refusal) or fails (`store-unavailable`,
       `broker-unavailable`) with nothing changed; never throws past its outcome
