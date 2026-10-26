@@ -127,6 +127,34 @@ class LegRerunTest extends SchemaTestSupport {
     }
 
     @Test
+    @DisplayName("skips an appended FAILED replay row already naming this replay message, appending "
+            + "no further row on redelivery (FR-004-010)")
+    void skips_an_appended_row_already_rerun_by_this_message() {
+        final UUID requestId = UUID.randomUUID();
+        final UUID hearingId = UUID.randomUUID();
+        final RunClaim claim = RunClaim.fresh();
+        final String messageId = "RESULTS:" + requestId;
+        seedReplayableRequest(requestId, claim);
+        insertFailedAttempt(requestId, 1, "queue", "gateway-transient", null, null);
+        insertFailedAttempt(requestId, 2, "resend", "gateway-transient", null, RunClaim.fresh());
+
+        // The replay appends attempt 3, which itself FAILS on this delivery.
+        assertThat(adapter.recordReplay(failedOutcome(requestId, hearingId), claim, messageId))
+                .as("the appended FAILED replay row is created").isTrue();
+        // The same replay message is redelivered: the appended FAILED row already names it.
+        assertThat(adapter.recordReplay(failedOutcome(requestId, hearingId), claim, messageId))
+                .as("the redelivery is skipped, not appended again").isFalse();
+
+        final List<Map<String, Object>> rows = legRows(requestId);
+        assertThat(rows).as("no fourth attempt is appended").hasSize(3);
+        final Map<String, Object> appended = rows.get(2);
+        assertThat(appended.get("attempt")).isEqualTo(3);
+        assertThat(appended.get("status")).isEqualTo("FAILED");
+        assertThat(appended.get("attempts")).as("attempt 3 is not re-run").isEqualTo(1);
+        assertThat(appended.get("note")).isEqualTo("rerun-by=" + messageId);
+    }
+
+    @Test
     @DisplayName("re-runs an appended PARKED replay row in place on redelivery, leaving the earlier "
             + "attempts untouched (FR-004-008)")
     void reruns_an_appended_parked_replay_row_in_place_on_redelivery() {
@@ -231,6 +259,14 @@ class LegRerunTest extends SchemaTestSupport {
                 Optional.empty(), Optional.of(YouthSwitchRecordedValue.ACTIVE),
                 Optional.of(PayloadSource.CACHE_DAY), Optional.of(SHARED),
                 Optional.of(sha256(SENT_BODY)), OptionalInt.of(200), Optional.of(SENT_BODY));
+    }
+
+    private LegOutcome failedOutcome(final UUID requestId, final UUID hearingId) {
+        return new LegOutcome(command(requestId, hearingId), AttemptOrigin.REPLAY, LegStatus.FAILED,
+                Optional.of(LegReason.RECEIVER_REJECTED),
+                Optional.of(YouthSwitchRecordedValue.ACTIVE), Optional.of(PayloadSource.CACHE_DAY),
+                Optional.of(SHARED), Optional.of(sha256(SENT_BODY)), OptionalInt.of(400),
+                Optional.of(SENT_BODY));
     }
 
     private LegOutcome parkedOutcome(final UUID requestId, final UUID hearingId) {
