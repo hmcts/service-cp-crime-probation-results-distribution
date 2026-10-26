@@ -70,6 +70,17 @@ class RequestReplayStatementTest extends SchemaTestSupport {
     }
 
     @Test
+    @DisplayName("records the support route in audit_note, admitting a FAILED request")
+    void records_the_support_route() {
+        final UUID requestId = UUID.randomUUID();
+        seedFailedRequest(requestId, "leg-exhausted", "RESULTS:" + requestId, null);
+
+        assertThat(repository.admitReplay(SOURCE, requestId, RunClaim.fresh(), ReplayRoute.SUPPORT))
+                .isTrue();
+        assertThat(requestRow(requestId).get("audit_note")).asString().contains("route=support");
+    }
+
+    @Test
     @DisplayName("matches no row and changes nothing when the request is not FAILED")
     void does_not_touch_a_non_failed_request() {
         final UUID requestId = UUID.randomUUID();
