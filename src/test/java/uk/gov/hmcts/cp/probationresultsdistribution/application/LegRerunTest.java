@@ -107,6 +107,32 @@ class LegRerunTest extends SchemaTestSupport {
     }
 
     @Test
+    @DisplayName("leaves a PARKED resend row at attempt >= 2 untouched on replay, never re-running "
+            + "it in place under the request claim (FR-004-009)")
+    void leaves_a_parked_resend_row_untouched_on_replay() {
+        final UUID requestId = UUID.randomUUID();
+        final UUID hearingId = UUID.randomUUID();
+        final RunClaim claim = RunClaim.fresh();
+        final String messageId = "RESULTS:" + requestId;
+        seedReplayableRequest(requestId, claim);
+        insertFailedAttempt(requestId, 1, "queue", "gateway-transient", null, null);
+        insertParkedResendAttempt(requestId, 2, RunClaim.fresh());
+
+        final boolean recorded = adapter.recordReplay(sentOutcome(requestId, hearingId), claim,
+                messageId);
+
+        assertThat(recorded).as("the replay write is fenced to zero rows").isFalse();
+        final List<Map<String, Object>> rows = legRows(requestId);
+        assertThat(rows).as("no row is appended or removed").hasSize(2);
+        assertThat(rows.get(0).get("status")).as("attempt 1 is untouched").isEqualTo("FAILED");
+        final Map<String, Object> resend = rows.get(1);
+        assertThat(resend.get("attempt")).isEqualTo(2);
+        assertThat(resend.get("attempt_origin")).isEqualTo("resend");
+        assertThat(resend.get("status")).as("the resend row is untouched").isEqualTo("PARKED");
+        assertThat(resend.get("attempts")).as("the resend row is not re-run").isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("skips a FAILED row already naming this replay message in rerun-by (FR-004-010)")
     void skips_a_failed_row_already_rerun_by_this_message() {
         final UUID requestId = UUID.randomUUID();
@@ -239,6 +265,25 @@ class LegRerunTest extends SchemaTestSupport {
                 .param("expires", legClaim == null ? null
                         : java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(5L))
                 .param("runId", "resend".equals(origin) ? UUID.randomUUID() : null)
+                .update();
+    }
+
+    private void insertParkedResendAttempt(final UUID requestId, final int attempt,
+                                           final RunClaim legClaim) {
+        jdbc().sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                        + "attempt_origin, status, reason, attempts, http_status, body_digest, "
+                        + "payload_source, payload_shared_time, service_version, youth_switch, "
+                        + "claim_owner, claim_token, claim_expires_at, resend_run_id) VALUES (:id, "
+                        + ":s, :r, 'HMPPS', :attempt, 'resend', 'PARKED', 'gateway-transient', 1, "
+                        + "503, :digest, 'cache-day', :shared, 'test-version', 'ACTIVE', :owner, "
+                        + ":token, :expires, :runId)")
+                .param("id", UUID.randomUUID()).param("s", SOURCE).param("r", requestId)
+                .param("attempt", attempt).param("digest", PRIOR_DIGEST)
+                .param("shared", java.time.OffsetDateTime.ofInstant(SHARED, java.time.ZoneOffset.UTC))
+                .param("owner", legClaim.owner().toString()).param("token", legClaim.token())
+                .param("expires",
+                        java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(5L))
+                .param("runId", UUID.randomUUID())
                 .update();
     }
 
