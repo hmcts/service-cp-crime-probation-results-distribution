@@ -280,14 +280,18 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       `@Configuration`** (no `ReplayEnqueuer` Azure adapter exists yet either — `ReplayAction` has no
       production implementation of that port wired up). The runner cannot actually be invoked from
       the built jar until that composition-root wiring lands.
-- [ ] T022 [US1] [P] `OutcomeMetricsTest` (US1 half): every replay outcome increments
+- [X] T022 [US1] [P] `OutcomeMetricsTest` (US1 half): every replay outcome increments
       `probation_leg_outcomes_total{origin="replay", forced="false"}` and
       `probation_replays_total{route}`; logs carry `runOrigin`, `route`, status, reason, HTTP status,
       body digest (FR-004-011, FR-004-040) — `src/test/java/.../application/OutcomeMetricsTest.java`.
-      **Not written.** `MetricRegistry.replays(ReplayRoute)` and `.replayDeferred()` exist and are
-      called from `ProbationMessageListener`, and `legOutcome(...)` already accepted
-      `AttemptOrigin.REPLAY` before this session (no change needed there) — but nothing asserts the
-      counters' values directly.
+      **Now written** (Mockito + `SimpleMeterRegistry` + a Logback `ListAppender`, the
+      `LegOutcomeLogLineTest` pattern): a replay run through `DistributionRunner` asserts
+      `leg_outcomes_total{origin=replay, forced=false, status=SENT}` = 1 and a log line carrying
+      `runOrigin=REPLAY` with the bounded fields (no body), and `MetricRegistry.replays(route)`
+      asserts `probation_replays_total{route}` per route.
+      RED not reproducible: `MetricRegistry.replays(ReplayRoute)`, `legOutcome(... REPLAY ...)` and
+      the replay log line all landed before this session (T020/T025, [X]); this is a characterization
+      test. GREEN: all three `OutcomeMetricsTest` cases PASSED.
 - [ ] T023 [US1] Run `quickstart.md` steps 1–2 locally against the Service Bus emulator; confirm the
       Independent Test scenario end to end
 
