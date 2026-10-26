@@ -388,8 +388,19 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       this range** — no task here names that adapter class, and building one needs a receive-and
       classify-by-enqueued-time loop over the live queue that no test in this phase exercises;
       flagged in open_points, same boundary as T021's unwired `ReplayEnqueuer`.
-- [ ] T034 [US7] Implement `application/RollbackCloseInFlightAction.java`: one transaction per
-      `PENDING`/`PARKED` row exactly as FR-004-049a states — **(provisional, FR-004-049)**
+- [X] T034 [US7] Implement `application/RollbackCloseInFlightAction.java`: one transaction per
+      `PENDING`/`PARKED` row exactly as FR-004-049a states — **(provisional, FR-004-049)**.
+      The per-row transaction statement itself (FR-004-049a) lives in
+      `persistence/JdbcRollbackFencingRepository` (T030), per `design_rules.md`'s ports-and-adapters
+      rule (`application/` must not import a JDBC type); `RollbackCloseInFlightAction` is the thin
+      pause-gate wrapper research.md Decision 2 names — refused `intake-not-paused` unless paused
+      (the same guard as `PurgeQueueAction`), otherwise runs the statement and reports the result.
+      Added `RollbackCloseInFlightActionTest` (not separately task-numbered; required by the
+      repo's own TDD mandate for any new production class) pinning just the wrapper's own
+      pause-gate behaviour, since the statement's correctness is `RollbackFencingIT`'s job.
+      RED: `NullPointerException` (the stub body ignored the pause gate and always called the
+      repository with no result to wrap) + an `UnnecessaryStubbingException`.
+      GREEN: both cases pass.
 - [ ] T035 [US7] [P] Implement `cli/PauseIntakeRunner.java`, `cli/ResumeIntakeRunner.java`,
       `cli/PurgeQueueRunner.java`, `cli/RollbackCloseInFlightRunner.java` per
       `contracts/cli-runners.md` §3, §4, §6 — each refuses per its own guard before any store read
