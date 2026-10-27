@@ -67,7 +67,7 @@ dependencies {
   // and the sender the submit-hearing and replay actions enqueue through (design §4.8) ---
   // Spring Boot's BOM does not manage com.azure:*, so the vendor BOM supplies those versions and no
   // com.azure artefact is ever pinned individually.
-  implementation platform('com.azure:azure-sdk-bom:1.3.8')
+  implementation platform('com.azure:azure-sdk-bom:1.3.9')
   implementation 'com.azure:azure-messaging-servicebus'
   implementation 'com.azure:azure-identity'
 
