@@ -84,6 +84,8 @@ public class EndToEndTestSupport {
     protected static final String SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
     protected static final String CACHE_PREFIX = "EXT_";
     protected static final Duration POLL_TIMEOUT = Duration.ofSeconds(90);
+    /** How long a closed processor's receive link is given to detach before the next send. */
+    private static final Duration PROCESSOR_DETACH_GRACE = Duration.ofSeconds(2);
     /** Mirrors the committed emulator queue's {@code maxDeliveryCount}. */
     protected static final int MAX_DELIVERY_COUNT = 5;
 
@@ -199,11 +201,28 @@ public class EndToEndTestSupport {
         wireMock.resetAll();
     }
 
-    /** Stops the active broker processor, allowing a test to inspect one settled delivery. */
+    /**
+     * Stops the active broker processor, allowing a test to inspect one settled delivery.
+     *
+     * <p>{@code close()} returns before the emulator has detached the processor's receive link. A
+     * message the next test sends in that window can be handed to the closing link, which drops it
+     * without releasing it, so it stays locked for the queue's five-minute lock duration and outlives
+     * the next test's wait. The grace below lets the detach complete before anything else is sent.
+     */
     protected final void stopProcessorNow() {
         if (processor != null && !processorClosed) {
             processor.close();
             processorClosed = true;
+            pause(PROCESSOR_DETACH_GRACE);
+        }
+    }
+
+    private static void pause(final Duration duration) {
+        try {
+            Thread.sleep(duration.toMillis());
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while waiting for the processor to detach", e);
         }
     }
 
