@@ -1,11 +1,18 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 /**
- * The producer's {@code requestId} recipe (slice 004, FR-004-055; DIGEST §14).
+ * The producer's {@code requestId} recipe (slice 004, FR-004-055; design A2-4, A2-25; DIGEST §14):
+ * the name-based (version 3) UUID of {@code hearingId|hearingDay|sharedTime} over the UTF-8 bytes
+ * of the raw strings — {@code sharedTime} exactly as the payload carries it, never parsed and
+ * re-rendered. Pinned by the vector of the results producer's own helper test, with no build
+ * dependency on a results artefact; re-taken when Q20 lands.
  */
 public final class RequestIdRecipe {
+
+    private static final String SEPARATOR = "|";
 
     private RequestIdRecipe() {
     }
@@ -20,6 +27,7 @@ public final class RequestIdRecipe {
      */
     public static UUID requestId(final String hearingId, final String hearingDay,
                                  final String sharedTime) {
-        return new UUID(0L, 0L);
+        return UUID.nameUUIDFromBytes((hearingId + SEPARATOR + hearingDay + SEPARATOR + sharedTime)
+                .getBytes(StandardCharsets.UTF_8));
     }
 }

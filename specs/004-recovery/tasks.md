@@ -1305,8 +1305,11 @@ observe a new request with the audit line and `origin=queue` outcomes.
 
 ### Implementation for User Story 8
 
-- [ ] T067 [US8] Implement `application/RequestIdRecipe.java`: `UUID.nameUUIDFromBytes` over
+- [X] T067 [US8] Implement `application/RequestIdRecipe.java`: `UUID.nameUUIDFromBytes` over
       `hearingId|hearingDay|sharedTime` raw strings — satisfies T065
+      `UUID.nameUUIDFromBytes` over the UTF-8 bytes of the three strings joined by `|`; nothing
+      parsed or re-rendered.
+      GREEN: `RequestIdRecipeTest` 4/4 PASSED; the vector reproduces exactly from the raw strings.
 - [ ] T068 [US8] Implement `application/SubmitHearingAction.java`: cache-only read (dated, then
       undated `EXT_` key), `requestId` via T067, command assembly, enqueue via the existing Service
       Bus sender client (FR-004-054–056, FR-004-058)
