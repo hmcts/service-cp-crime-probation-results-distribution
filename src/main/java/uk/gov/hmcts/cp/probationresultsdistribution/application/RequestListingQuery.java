@@ -44,48 +44,66 @@ public final class RequestListingQuery {
     }
 
     /**
+     * Checks the arguments whole, before any store read (FR-004-020): what {@link #list} would
+     * refuse them with, so that a runner can refuse before it opens anything.
+     *
+     * @param request the arguments as supplied
+     * @return the whole refusal, or empty when the arguments are readable
+     */
+    public static Optional<WholeRunRefusal> check(final RequestListingRequest request) {
+        return plan(request).refusal();
+    }
+
+    /**
      * Lists requests by one of the two forms.
      *
      * @param request the arguments as supplied
      * @return the bounded outcome
      */
     public RequestListing list(final RequestListingRequest request) {
+        final Plan plan = plan(request);
+        return plan.refusal().<RequestListing>map(RequestListing.Refused::new)
+                .orElseGet(() -> read(() -> plan.read().rows(repository)));
+    }
+
+    private static Plan plan(final RequestListingRequest request) {
         final boolean hearingForm = request.hearingId().isPresent()
                 || request.hearingDay().isPresent();
         final boolean latestForm = request.status().isPresent() || request.reason().isPresent()
                 || request.updatedAfter().isPresent() || request.updatedBefore().isPresent();
-        final RequestListing listing;
+        final Plan plan;
         if (hearingForm && latestForm) {
-            listing = new RequestListing.Refused(WholeRunRefusal.UNREADABLE_ARGUMENT);
+            plan = Plan.refused(WholeRunRefusal.UNREADABLE_ARGUMENT);
         } else if (hearingForm) {
-            listing = byHearing(request);
+            plan = byHearing(request);
         } else if (latestForm) {
-            listing = byLatestAttempt(request);
+            plan = byLatestAttempt(request);
         } else {
-            listing = new RequestListing.Refused(WholeRunRefusal.MISSING_ARGUMENT);
+            plan = Plan.refused(WholeRunRefusal.MISSING_ARGUMENT);
         }
-        return listing;
+        return plan;
     }
 
     // Each check exits as soon as it decides, so the first unreadable argument names the refusal.
     @SuppressWarnings("PMD.OnlyOneReturn")
-    private RequestListing byHearing(final RequestListingRequest request) {
+    private static Plan byHearing(final RequestListingRequest request) {
         if (blank(request.hearingId()) || blank(request.hearingDay())) {
-            return new RequestListing.Refused(WholeRunRefusal.MISSING_ARGUMENT);
+            return Plan.refused(WholeRunRefusal.MISSING_ARGUMENT);
         }
         final Optional<UUID> hearingId = uuid(request.hearingId().get());
         final Optional<LocalDate> hearingDay = date(request.hearingDay().get());
         if (hearingId.isEmpty() || hearingDay.isEmpty()) {
-            return new RequestListing.Refused(WholeRunRefusal.UNREADABLE_ARGUMENT);
+            return Plan.refused(WholeRunRefusal.UNREADABLE_ARGUMENT);
         }
-        return read(() -> repository.byHearing(hearingId.get(), hearingDay.get(), PAGE_SIZE + 1));
+        return Plan.reading(store -> store.byHearing(hearingId.get(), hearingDay.get(),
+                PAGE_SIZE + 1));
     }
 
     // Each check exits as soon as it decides, so the first unreadable argument names the refusal.
     @SuppressWarnings("PMD.OnlyOneReturn")
-    private RequestListing byLatestAttempt(final RequestListingRequest request) {
+    private static Plan byLatestAttempt(final RequestListingRequest request) {
         if (blank(request.status())) {
-            return new RequestListing.Refused(WholeRunRefusal.MISSING_ARGUMENT);
+            return Plan.refused(WholeRunRefusal.MISSING_ARGUMENT);
         }
         final Optional<LegStatus> status = closed(() -> LegStatus.fromValue(request.status().get()));
         final Optional<Optional<LegReason>> reason = optional(request.reason(),
@@ -95,9 +113,9 @@ public final class RequestListingQuery {
         final Optional<Optional<Instant>> before = optional(request.updatedBefore(),
                 RequestListingQuery::instant);
         if (status.isEmpty() || reason.isEmpty() || after.isEmpty() || before.isEmpty()) {
-            return new RequestListing.Refused(WholeRunRefusal.UNREADABLE_ARGUMENT);
+            return Plan.refused(WholeRunRefusal.UNREADABLE_ARGUMENT);
         }
-        return read(() -> repository.byLatestAttempt(status.get().wireValue(),
+        return Plan.reading(store -> store.byLatestAttempt(status.get().wireValue(),
                 reason.get().map(LegReason::wireValue), after.get(), before.get(),
                 PAGE_SIZE + 1));
     }
@@ -177,6 +195,24 @@ public final class RequestListingQuery {
     @FunctionalInterface
     private interface StoreRead {
         List<ListedAttempt> rows();
+    }
+
+    /** The store read a checked request asks for. */
+    @FunctionalInterface
+    private interface PlannedRead {
+        List<ListedAttempt> rows(RequestListingRepository store);
+    }
+
+    /** A checked request: refused whole, or the store read it asks for. */
+    private record Plan(Optional<WholeRunRefusal> refusal, PlannedRead read) {
+
+        /* default */ static Plan refused(final WholeRunRefusal refusal) {
+            return new Plan(Optional.of(refusal), store -> List.of());
+        }
+
+        /* default */ static Plan reading(final PlannedRead read) {
+            return new Plan(Optional.empty(), read);
+        }
     }
 
     /** Parses one optional argument; empty when it is unreadable. */

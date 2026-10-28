@@ -1,5 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
+import com.azure.messaging.servicebus.ServiceBusReceiverClient;
+import com.azure.messaging.servicebus.models.SubQueue;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -31,14 +33,18 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ChainedHeari
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.DlqCompletedListingQuery;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IntakePauseAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IntakePauseGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.PurgeQueueAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.QueuePurger;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestListingQuery;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RollbackCloseInFlightAction;
+import uk.gov.hmcts.cp.probationresultsdistribution.cli.DlqCompletedListingRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.PauseIntakeRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.PurgeQueueRunner;
+import uk.gov.hmcts.cp.probationresultsdistribution.cli.RequestListingRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.ResendLegRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.ResumeIntakeRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.RollbackCloseInFlightRunner;
@@ -46,9 +52,11 @@ import uk.gov.hmcts.cp.probationresultsdistribution.cli.RunnerDispatcher;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunnerOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.DeadLetterQueuePeeker;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.IntakeControlRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcIntakeControlRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcRequestListingRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcRollbackFencingRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
 
@@ -62,8 +70,10 @@ public final class OperatorCommandLine {
 
     private static final Logger LOG = LoggerFactory.getLogger(OperatorCommandLine.class);
     private static final Set<String> ACTIONS = Set.of("pause-intake", "resume-intake", "purge-queue",
-            "rollback-close-in-flight");
+            "rollback-close-in-flight", "list-dlq-completed");
     private static final String RESEND_LEG = "resend-leg";
+    private static final String LIST_REQUESTS = "list-requests";
+    private static final String LIST_DLQ_COMPLETED = "list-dlq-completed";
 
     private OperatorCommandLine() {
     }
@@ -81,16 +91,24 @@ public final class OperatorCommandLine {
         } else if (args.length > 0 && RESEND_LEG.equals(args[0])) {
             // resend-leg's arguments are checked whole before any context, store or cache is opened
             // (FR-004-020); the refusal code is printed, never the text supplied.
-            final Optional<WholeRunRefusal> refusal = ResendLegRunner.checkArguments(args);
-            if (refusal.isPresent()) {
-                LOG.warn("operator command refused reason={}", refusal.get().value());
-                exitCode = RunnerOutcome.REFUSED.exitCode();
-            } else {
-                exitCode = runInContext(args);
-            }
+            exitCode = checkedThenRun(ResendLegRunner.checkArguments(args), args);
+        } else if (args.length > 0 && LIST_REQUESTS.equals(args[0])) {
+            exitCode = checkedThenRun(RequestListingRunner.checkArguments(args), args);
         } else {
             LOG.warn("operator command refused reason=unreadable-argument");
             exitCode = RunnerOutcome.REFUSED.exitCode();
+        }
+        return exitCode;
+    }
+
+    private static int checkedThenRun(final Optional<WholeRunRefusal> refusal,
+                                      final String... args) {
+        final int exitCode;
+        if (refusal.isPresent()) {
+            LOG.warn("operator command refused reason={}", refusal.get().value());
+            exitCode = RunnerOutcome.REFUSED.exitCode();
+        } else {
+            exitCode = runInContext(args);
         }
         return exitCode;
     }
@@ -269,12 +287,42 @@ public final class OperatorCommandLine {
             return new ResendLegRunner(resender);
         }
 
+        /**
+         * A receiver on the queue's dead-letter sub-queue, for the {@code dlq-completed} listing's
+         * peek: built only when that command is dispatched, after the startup validation, with
+         * the same credential choice as the consumer.
+         */
+        /* default */
+        @Bean(destroyMethod = "close")
+        @Lazy
+        ServiceBusReceiverClient commandDeadLetterReceiver(final Environment environment,
+                final DistributionProperties commandDistributionProperties) {
+            return PipelineClients.serviceBus(
+                    environment.getProperty("distribution.servicebus.connection-string", ""),
+                    environment.getProperty("distribution.servicebus.namespace", ""))
+                    .receiver()
+                    .queueName(environment.getRequiredProperty("distribution.servicebus.queue-name"))
+                    .subQueue(SubQueue.DEAD_LETTER_QUEUE)
+                    .buildClient();
+        }
+
+        /* default */
+        @Bean
+        @Lazy
+        DlqCompletedListingRunner commandDlqCompletedListingRunner(final JdbcClient jdbc,
+                final ServiceBusReceiverClient commandDeadLetterReceiver) {
+            return new DlqCompletedListingRunner(new DlqCompletedListingQuery(
+                    new DeadLetterQueuePeeker(commandDeadLetterReceiver),
+                    new JdbcRequestListingRepository(jdbc)));
+        }
+
         /* default */ @Bean
         RunnerDispatcher commandDispatcher(final IntakeControlRepository repository,
                                            final IntakePauseGate gate, final QueuePurger purger,
                                            final JdbcClient jdbc,
                                            final PlatformTransactionManager transactions,
                                            final ObjectProvider<ResendLegRunner> resendLeg,
+                                           final ObjectProvider<DlqCompletedListingRunner> dlq,
                                            final OperatorArguments operatorArguments) {
             final IntakePauseAction intake = new IntakePauseAction(repository);
             final PauseIntakeRunner pause = new PauseIntakeRunner(intake);
@@ -284,9 +332,13 @@ public final class OperatorCommandLine {
             final RollbackCloseInFlightRunner rollback = new RollbackCloseInFlightRunner(
                     new RollbackCloseInFlightAction(gate, new JdbcRollbackFencingRepository(jdbc,
                             new TransactionTemplate(transactions))));
+            final RequestListingRunner listRequests = new RequestListingRunner(
+                    new RequestListingQuery(new JdbcRequestListingRepository(jdbc)));
             return new RunnerDispatcher(Map.of("pause-intake", pause::run, "resume-intake", resume::run,
                     "purge-queue", purge::run, "rollback-close-in-flight", rollback::run,
-                    RESEND_LEG, () -> resendLeg.getObject().run(operatorArguments.asArray())));
+                    RESEND_LEG, () -> resendLeg.getObject().run(operatorArguments.asArray()),
+                    LIST_REQUESTS, () -> listRequests.run(operatorArguments.asArray()),
+                    LIST_DLQ_COMPLETED, () -> dlq.getObject().run()));
         }
 
     }

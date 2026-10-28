@@ -1,5 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
+import com.azure.identity.DefaultAzureCredentialBuilder;
+import com.azure.messaging.servicebus.ServiceBusClientBuilder;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway.HmppsPublisher;
@@ -15,6 +17,26 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeatureP
 final class PipelineClients {
 
     private PipelineClients() {
+    }
+
+    /**
+     * A Service Bus client builder on exactly one credential source: the connection string for
+     * local and CI, or else the namespace with the pod's workload identity (the consumer's rule).
+     *
+     * @param connectionString {@code distribution.servicebus.connection-string}, blank for none
+     * @param namespace        {@code distribution.servicebus.namespace}
+     * @return the builder
+     */
+    /* default */ static ServiceBusClientBuilder serviceBus(final String connectionString,
+                                                          final String namespace) {
+        final ServiceBusClientBuilder client = new ServiceBusClientBuilder();
+        if (connectionString.isBlank()) {
+            client.fullyQualifiedNamespace(namespace)
+                    .credential(new DefaultAzureCredentialBuilder().build());
+        } else {
+            client.connectionString(connectionString);
+        }
+        return client;
     }
 
     /**

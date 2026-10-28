@@ -1212,8 +1212,39 @@ failed and unknown requests; run both runners; compare output with seeded state.
       reason outside `DeadLetterReason` is `other` (absent: `none`) and a `messageId` that is not
       `RESULTS:<uuid>` or `REPLAY:<uuid>` is `other`. Nothing is received, locked or removed.
       GREEN: `DlqCompletedListingQueryTest` 8/8 and `DeadLetterQueuePeekerIT` 2/2 PASSED.
-- [ ] T063 [US6] [P] Implement `cli/RequestListingRunner.java` and
+- [X] T063 [US6] [P] Implement `cli/RequestListingRunner.java` and
       `cli/DlqCompletedListingRunner.java` per `contracts/cli-runners.md` §7, §8
+      Test first: `cli/RequestListingRunnerTest` (the arguments checked whole before anything is
+      opened, by the listing's own check; a refused run calls nothing and echoes nothing; each
+      form handed over as supplied; one `list-requests row ...` line per row with `-` for an
+      absent value and a `list-requests done rows=<n> more=<bool>` summary, plus a WARN line when
+      more rows exist than the 500 shown; `store-unavailable` exit 2), `cli/
+      DlqCompletedListingRunnerTest` (one `list-dlq-completed entry ...` line per entry, the
+      summary and the more-exist line; broker and store failures exit 2) and `cli/
+      PackagedListingCommandsIT` (the packaged jar against the shared Postgres and the Service Bus
+      emulator: `list-requests --hearing-id/--hearing-day` prints the request's attempt and exits
+      0; `--status SECRET-status` exits 1 `unreadable-argument` without the text;
+      `list-dlq-completed` lists a `COMPLETED` request's `leg-exhausted` entry and not an unknown
+      request's, exits 0, and both entries are still on the dead-letter queue; no seeded
+      `audit_note`/command canary is printed). Seams: both runners answering `DONE` with no output.
+      RED: 14 of 16 failed on assertions, e.g. `no form, or half a form, is missing-argument :
+      Expecting Optional to contain: MISSING_ARGUMENT but was empty`, `hands the hearing form ...
+      : Wanted but not invoked: query.list(...)`, `prints one line per completed entry ... :
+      Expecting actual: [] to contain exactly ...`, `answers failed when the broker cannot be
+      reached : expected: FAILED but was: DONE`, and the packaged list commands `command failed:
+      ... "operator command refused reason=unreadable-argument"` (no such action yet). The packaged
+      unreadable-status case passed before the change (an unknown action was already refused with
+      exit 1; characterisation).
+      Implementation: `RequestListingQuery.check` exposes the listing's whole-input check (the
+      query's own validation, refactored into a static plan, unchanged in behaviour) so the
+      runner and `OperatorCommandLine` refuse before any context is opened. `OperatorCommandLine`
+      registers `list-requests` (store only, like the intake commands) and `list-dlq-completed`
+      (a lazy dead-letter receiver, built after the `distribution.*` startup validation the
+      resend command runs, through a new `PipelineClients.serviceBus` builder that the consumer
+      configuration now shares — one credential rule, connection string or namespace with
+      workload identity).
+      GREEN: `RequestListingRunnerTest` 9/9, `DlqCompletedListingRunnerTest` 4/4,
+      `PackagedListingCommandsIT` 3/3 and `RequestListingQueryTest` 25/25 PASSED.
 - [ ] T064 [US6] `TelemetryPrivacyTest`/`LogStatementSweepTest` extension: sweep both listings'
       output for the forbidden content set (FR-004-041, FR-004-009 SC) —
       `src/test/java/.../support/LogStatementSweepTest.java` (extend, do not duplicate)

@@ -1,6 +1,5 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
-import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.azure.messaging.servicebus.ServiceBusClientBuilder;
 import com.azure.messaging.servicebus.ServiceBusErrorSource;
 import com.azure.messaging.servicebus.ServiceBusProcessorClient;
@@ -188,13 +187,8 @@ public class ServiceBusConsumerConfig {
             @Value("${distribution.servicebus.namespace:}") final String namespace,
             @Value("${distribution.servicebus.queue-name}") final String queueName,
             @Value("${distribution.servicebus.max-concurrent-calls}") final int maxConcurrentCalls) {
-        final ServiceBusClientBuilder client = new ServiceBusClientBuilder();
-        if (connectionString.isBlank()) {
-            client.fullyQualifiedNamespace(namespace)
-                    .credential(new DefaultAzureCredentialBuilder().build());
-        } else {
-            client.connectionString(connectionString);
-        }
+        final ServiceBusClientBuilder client = PipelineClients.serviceBus(connectionString,
+                namespace);
         LOG.info("Building the Service Bus consumer. queue={} maxConcurrentCalls={}", queueName,
                 maxConcurrentCalls);
         return client.processor()
