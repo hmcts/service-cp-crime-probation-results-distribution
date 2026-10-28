@@ -965,6 +965,7 @@ labelled `forced`, without moving the request off `COMPLETED`.
       Ran[status=SENT, ...]` (the forced id, line 252; the `FAILED` id's half already passes). The
       two `WithoutOverride` cases pass against the seam: they pin Phase 6's refusal, kept as the
       FR-004-036 guard that the override never widens eligibility on its own.
+      GREEN (after T055–T057): all 10 `ForcedResendIT` cases PASSED.
 
 ### Implementation for User Story 5
 
@@ -1009,8 +1010,25 @@ labelled `forced`, without moving the request off `COMPLETED`.
       ... : expected: 1.0 but was: 0.0`, `PerId > ... : expected: 1.0 but was: 2.0` (both outcomes
       still labelled `forced=false`). `ResendSharedTimeCheckIT` 9/9, `RequestRecoveryTransitionTest`
       12/12 and `ResendByRequestIdsIT` 24/24 still PASSED.
-- [ ] T057 [US5] Wire `forced=true`/`false` labelling into the outcome metric and log line from T048
+- [X] T057 [US5] Wire `forced=true`/`false` labelling into the outcome metric and log line from T048
       (FR-004-038) — extends `application/LegResender.java`'s outcome recording
+      The outcome is recorded by `DistributionRunner`'s shared `record` path (T045), so the label is
+      wired there rather than in `LegResender`: the resend write path is now a `ResendWriter` (the
+      `LegWriter` strategy gains `forced()`, `false` for the queue and replay paths) that reports
+      the claimed attempt's `forced` flag, and `record` passes it to
+      `probation_leg_outcomes_total{forced}` and writes `forced=<true|false>` on every
+      `HMPPS leg outcome` line, at the line's usual level (ERROR for a failed forced resend).
+      Test first, beside `ForcedResendIT`: two plain-mock `OutcomeMetricsTest` cases (a forced
+      attempt counts `origin=resend, forced=true` and nothing `forced=false`, its line says
+      `forced=true`; an unforced attempt's line says `forced=false`).
+      RED: `a forced resend outcome counts forced=true ... : Expected size: 1 but was: 0 in: []`;
+      `an unforced resend outcome's log line says forced=false : Expecting actual: "HMPPS leg outcome
+      status=SENT reason=null httpStatus=200 bodyDigest=... runOrigin=RESEND youthSwitch=ACTIVE
+      youthSwitchCause=null requestId=..." to contain: ["forced=false"]`; and T054's five remaining
+      `ForcedResendIT` failures (above).
+      GREEN: `ForcedResendIT` 10/10 and `OutcomeMetricsTest` 8/8 PASSED; `DistributionRunnerTest`
+      26/26 and `LegOutcomeLogLineTest` 1/1 still PASSED. The `application` package-info no longer
+      says the override is unbuilt.
 - [ ] T058 [US5] Add `--force-resend-sent` parsing to `cli/ResendLegRunner.java` (T047) per
       `contracts/cli-runners.md` §2
 

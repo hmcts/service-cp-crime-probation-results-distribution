@@ -126,7 +126,9 @@ public final class DistributionRunner {
     /**
      * Runs one claimed resend attempt (slice 004, FR-004-026, FR-004-027, FR-004-029): the payload
      * fetch, the {@code sharedTime} check, the switch, redaction, body digest and send, recording the
-     * outcome on the attempt's own row under its leg claim. A resend never parks.
+     * outcome on the attempt's own row under its leg claim. A resend never parks. An attempt claimed
+     * under the forced-resend override is labelled {@code forced=true} on its outcome metric and log
+     * line (FR-004-038, FR-004-040); every other outcome is {@code forced=false}.
      *
      * @param command             the command rebuilt from the request's columns, with no
      *                            {@code userId}, carrying the stored {@code shared_time}
@@ -144,7 +146,7 @@ public final class DistributionRunner {
         if (fetched.isEmpty()) {
             // A resend never parks: a payload missed everywhere fails at once (FR-004-027).
             result = failPayloadUnavailable(command, origin,
-                    outcome -> outboundLog.recordResend(outcome, attempt, false));
+                    new ResendWriter(outboundLog, attempt, false));
         } else {
             // The sharedTime check runs directly after the fetch, before any leg stage
             // (FR-004-029); the attempt records the instant it parsed (FR-004-030).
@@ -155,10 +157,10 @@ public final class DistributionRunner {
             if (unchanged || allowChangedPayload) {
                 final boolean overrideUsed = !unchanged;
                 result = runLeg(command, origin, checked, true,
-                        outcome -> outboundLog.recordResend(outcome, attempt, overrideUsed));
+                        new ResendWriter(outboundLog, attempt, overrideUsed));
             } else {
                 result = payloadChanged(command, origin, checked,
-                        outcome -> outboundLog.recordResend(outcome, attempt, false));
+                        new ResendWriter(outboundLog, attempt, false));
             }
         }
         return result;
@@ -302,7 +304,8 @@ public final class DistributionRunner {
                     command.requestId(), runOrigin, cause, defaultWhenUnreadable);
         });
         outcome.youthSwitch().ifPresent(metrics::youthSwitchState);
-        metrics.legOutcome(Leg.HMPPS, outcome.status(), outcome.reason(), runOrigin, false,
+        final boolean forced = writer.forced();
+        metrics.legOutcome(Leg.HMPPS, outcome.status(), outcome.reason(), runOrigin, forced,
                 shape, httpBucket(outcome.httpStatus()));
         if (outcome.status() == LegStatus.PARKED) {
             metrics.parked(Leg.HMPPS, outcome.reason().orElseThrow());
@@ -323,20 +326,20 @@ public final class DistributionRunner {
         final String digest = outcome.bodyDigest().orElse(null);
         if (outcome.status() == LegStatus.FAILED || outcome.status() == LegStatus.PARKED) {
             LOG.error("HMPPS leg outcome status={} reason={} httpStatus={} bodyDigest={} "
-                            + "runOrigin={} youthSwitch={} youthSwitchCause={} requestId={}",
-                    status, reason, httpStatus, digest, runOrigin, youthSwitch, youthSwitchCause,
-                    command.requestId());
+                            + "runOrigin={} forced={} youthSwitch={} youthSwitchCause={} requestId={}",
+                    status, reason, httpStatus, digest, runOrigin, forced, youthSwitch,
+                    youthSwitchCause, command.requestId());
         } else if (isDefaulted(youthSwitch)
                 || outcome.status() == LegStatus.SENT && httpStatusValue != HTTP_OK) {
             LOG.warn("HMPPS leg outcome status={} reason={} httpStatus={} bodyDigest={} "
-                            + "runOrigin={} youthSwitch={} youthSwitchCause={} requestId={}",
-                    status, reason, httpStatus, digest, runOrigin, youthSwitch, youthSwitchCause,
-                    command.requestId());
+                            + "runOrigin={} forced={} youthSwitch={} youthSwitchCause={} requestId={}",
+                    status, reason, httpStatus, digest, runOrigin, forced, youthSwitch,
+                    youthSwitchCause, command.requestId());
         } else {
             LOG.info("HMPPS leg outcome status={} reason={} httpStatus={} bodyDigest={} "
-                            + "runOrigin={} youthSwitch={} youthSwitchCause={} requestId={}",
-                    status, reason, httpStatus, digest, runOrigin, youthSwitch, youthSwitchCause,
-                    command.requestId());
+                            + "runOrigin={} forced={} youthSwitch={} youthSwitchCause={} requestId={}",
+                    status, reason, httpStatus, digest, runOrigin, forced, youthSwitch,
+                    youthSwitchCause, command.requestId());
         }
         return new RunResult(runOrigin, outcome.status(), outcome.reason(), recorded);
     }
@@ -448,5 +451,36 @@ public final class DistributionRunner {
     private interface LegWriter {
 
         boolean write(LegOutcome outcome);
+
+        /**
+         * Whether the outcome is a forced resend's, labelled {@code forced=true} (FR-004-038).
+         *
+         * @return {@code false} for every write path but a forced resend attempt
+         */
+        default boolean forced() {
+            return false;
+        }
+    }
+
+    /**
+     * The resend write path: the claimed attempt row, completed under its own leg claim, labelled
+     * forced when the attempt was claimed under the forced-resend override.
+     *
+     * @param outboundLog  the outbound-log port
+     * @param attempt      the claimed resend attempt row
+     * @param overrideUsed whether {@code allow-changed-payload} let a changed {@code sharedTime} through
+     */
+    private record ResendWriter(OutboundLog outboundLog, ResendAttempt attempt, boolean overrideUsed)
+            implements LegWriter {
+
+        @Override
+        public boolean write(final LegOutcome outcome) {
+            return outboundLog.recordResend(outcome, attempt, overrideUsed);
+        }
+
+        @Override
+        public boolean forced() {
+            return attempt.forced();
+        }
     }
 }

@@ -171,6 +171,32 @@ class OutcomeMetricsTest {
                         "youthSwitchCause=TIMEOUT");
     }
 
+    @Test
+    @DisplayName("a forced resend outcome counts forced=true and its log line says forced=true")
+    void forced_resend_outcome_is_labelled_forced() throws Exception {
+        stubResendSend(new YouthSwitchDecision.Active(), 200);
+
+        runner.runResend(command, new uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt(
+                UUID.randomUUID(), 2, RunClaim.fresh(), UUID.randomUUID(), true), false);
+
+        assertThat(meter.find("probation_leg_outcomes_total")
+                .tag("origin", "resend").tag("forced", "true").tag("status", "SENT")
+                .counters()).hasSize(1);
+        assertThat(meter.find("probation_leg_outcomes_total").tag("forced", "false").counters())
+                .isEmpty();
+        assertThat(outcomeLine().getFormattedMessage()).contains("runOrigin=RESEND", "forced=true");
+    }
+
+    @Test
+    @DisplayName("an unforced resend outcome's log line says forced=false")
+    void unforced_resend_outcome_log_line_says_forced_false() throws Exception {
+        stubResendSend(new YouthSwitchDecision.Active(), 200);
+
+        runner.runResend(command, resendAttempt(), false);
+
+        assertThat(outcomeLine().getFormattedMessage()).contains("forced=false");
+    }
+
     private ILoggingEvent outcomeLine() {
         return appender.list.stream()
                 .filter(e -> e.getFormattedMessage().contains("HMPPS leg outcome"))
