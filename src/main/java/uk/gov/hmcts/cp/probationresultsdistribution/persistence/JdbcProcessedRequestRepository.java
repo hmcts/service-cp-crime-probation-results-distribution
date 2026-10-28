@@ -88,6 +88,20 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     @Override
     public boolean admitReplay(final String source, final UUID requestId, final RunClaim claim,
                                final ReplayRoute route) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(status ->
+                lockedAdmitReplay(source, requestId, claim, route)));
+    }
+
+    private boolean lockedAdmitReplay(final String source, final UUID requestId,
+                                      final RunClaim claim, final ReplayRoute route) {
+        // Lock the request row first, as resend-leg's claim does, so this statement runs either
+        // before a resend's claim or after it has committed — and, as a fresh statement, then sees
+        // its PENDING resend row. A replay is never admitted over one (FR-004-003, FR-004-035).
+        jdbc.sql("SELECT status FROM processed_request " + REQUEST_WHERE + "FOR UPDATE")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query(String.class)
+                .optional();
         final int rows = jdbc.sql("UPDATE processed_request SET status = 'RECEIVED', "
                         + "exhausted_message_id = NULL, replayed_at = now(), "
                         + "claim_owner = :owner, claim_token = :token, "
@@ -97,7 +111,11 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "|| ' REPLAYED_AFTER_FAILURE prior=' || failure_reason "
                         + "|| E'\\n' || now()::text || ' route=' || :route, "
                         + "failure_reason = NULL "
-                        + REQUEST_WHERE + "AND status = 'FAILED'")
+                        + REQUEST_WHERE + "AND status = 'FAILED' "
+                        + "AND NOT EXISTS (SELECT 1 FROM outbound_message_latest oml "
+                        + "WHERE oml.source = processed_request.source "
+                        + "AND oml.request_id = processed_request.request_id AND oml.leg = 'HMPPS' "
+                        + "AND oml.attempt_origin = 'resend' AND oml.status = 'PENDING')")
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
                 .param("lease", (double) leaseSeconds)

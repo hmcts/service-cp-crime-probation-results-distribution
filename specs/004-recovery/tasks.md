@@ -578,6 +578,7 @@ code, five report entries, refusal counters incremented.
       Refused[reason=NOT_ELIGIBLE] but was empty`, `ClaimBeforePost > ... : Expected size: 1 but was:
       0`, `RegisteredDeviations > DV-07 ... : Expecting Optional to contain: Ran[status=FAILED,
       reason=Optional[PAYLOAD_UNAVAILABLE]] but was empty`.
+      GREEN (after T043–T046): all 15 `ResendByRequestIdsIT` cases PASSED.
 - [X] T039 [P] [US3] `ResendSharedTimeCheckIT`: the `sharedTime` check runs directly after the fetch,
       before any leg stage, comparing as instants at stored precision; a cache-vs-query rendering
       difference still proceeds; a later/absent/unparseable `sharedTime` →
@@ -596,6 +597,7 @@ code, five report entries, refusal counters incremented.
       Ran[status=FAILED, reason=Optional[PAYLOAD_CHANGED]] but was empty`, `Proceeds > a rendering
       that names a zone still proceeds : Expecting Optional to contain: Ran[status=SENT,
       reason=Optional.empty] but was empty`.
+      GREEN (after T044–T046): all 9 `ResendSharedTimeCheckIT` cases PASSED.
 - [X] T040 [P] [US3] `RequestRecoveryTransitionTest` (US3 half, extends T015's file): a resend that
       ends `SENT`/`NOT_APPLICABLE`/class-1-`FAILED` recovers a `FAILED` request to
       `COMPLETED(recovered)` in the outcome's transaction, clearing both columns and appending to
@@ -615,6 +617,7 @@ code, five report entries, refusal counters incremented.
       expected: "FAILED" but was: "PENDING"`. The ninth (`a SENT resend of a COMPLETED request's
       leg does not re-complete it`) asserts only an absence and passes against the seam too; it is
       kept as the FR-004-034 regression guard.
+      GREEN (after T046): all 9 `ResendRecovery` cases PASSED, with T015's three still PASSED.
 - [X] T041 [P] [US3] `ResendConcurrencyIT` (US3 half, extends T031's file): two resend runs and a
       late queue delivery for one leg, or a replay and a resend racing in either order — exactly one
       runs the leg and exactly one POST results (FR-004-035); a late resend-runner completion by its
@@ -637,6 +640,7 @@ code, five report entries, refusal counters incremented.
       `Races > a replay statement reached after a resend claimed the leg is not admitted : Expecting
       actual: [] to contain exactly (and in same order): [false]`, `LateResendRunner > ... :
       Expecting Optional to contain: NotRun[] but was empty`. The three pause cases stay green.
+      GREEN (after T043–T046): all 8 `ResendConcurrencyIT` cases PASSED.
 - [X] T042 [US3] `PropertiesValidatorTest`/eligibility unit test for the confirmed FR-004-024
       resolution: an expired `PENDING` resend row is refused `resend-in-progress`, never reclaimed —
       **(confirmed 2026-10-26)**; assert unchanged attempt and claim, and no POST — add to `ResendByRequestIdsIT` (T038) as its own case, not a new file
@@ -644,6 +648,8 @@ code, five report entries, refusal counters incremented.
       (attempt 2 stays `PENDING` with its seeded claim token, no third row, no POST,
       `probation_resend_refusals_total{reason="resend-in-progress"}` = 1).
       RED: `Expecting Optional to contain: Refused[reason=RESEND_IN_PROGRESS] but was empty`.
+      GREEN (after T043): `CheckOrder > an expired PENDING resend row is refused
+      resend-in-progress, never reclaimed (T042) PASSED`.
 
 ### Implementation for User Story 3
 
@@ -702,12 +708,33 @@ code, five report entries, refusal counters incremented.
       `Optional<String> replayMessageId` flag; `DistributionRunnerTest`, `OutcomeMetricsTest` and
       `LegOutcomeLogLineTest` stay green unchanged (25 cases PASSED). GREEN for T038/T039 recorded
       with T046, when the completion is first written.
-- [ ] T046 [US3] Implement the recovery transition inside the attempt's completion transaction
+- [X] T046 [US3] Implement the recovery transition inside the attempt's completion transaction
       (FR-004-032–034), reusing the request-row-lock discipline from T017 — satisfies T040. **The
       completion UPDATE itself is `WHERE id = ? AND claim_token = ?`: zero rows updated (the token
       was rotated by the rollback protocol, or another runner already completed the row) means
       nothing changes and the run counts one `probation_stale_runner_rejections_total`, without
       attempting recovery** (FR-004-028) — satisfies the claim-token-guard half of T041
+      `OutboundMessageRepository.writeResendOutcome` (behind `OutboundLog.recordResend`), in one
+      transaction: lock the request row `FOR UPDATE`; then one `UPDATE outbound_message ... WHERE
+      id = :id AND claim_token = :token AND status = 'PENDING'` writing the outcome columns,
+      `override`/`note` (`override=allow-changed-payload` only when the override was used) and
+      `attempts + 1`, keeping the claim and `resend_run_id`; zero rows → 0, nothing else written (the
+      runner's unrecorded result is the stale-runner rejection `LegResender` counts). On a write: the
+      body replaced as for every attempt; a `payload-changed` outcome appends one `RESEND_REFUSED
+      attempt=<n> reason=payload-changed` line to `audit_note` and changes nothing else; a `SENT`,
+      `NOT_APPLICABLE` or class-1 `FAILED` outcome moves a `FAILED` request to
+      `COMPLETED(recovered)` (`... WHERE status = 'FAILED'`, so a `COMPLETED` request is never
+      moved), clearing `failure_reason`/`exhausted_message_id`/`replayed_at` and appending one
+      `RECOVERED_BY_RESEND attempt=<n> prior=<reason> exhausted=<id>` line.
+      Also, for FR-004-035 (T041's replay race): `JdbcProcessedRequestRepository.admitReplay` now
+      locks the request row `FOR UPDATE` in its own transaction before the replay statement, and the
+      statement adds `AND NOT EXISTS` a `PENDING` resend latest row — so a guard whose read preceded
+      a resend's committed claim is not admitted (it abandons, and the redelivery is deferred by
+      FR-004-003's existing path) instead of running beside the resend.
+      GREEN: `ResendByRequestIdsIT` 15/15, `ResendSharedTimeCheckIT` 9/9, `ResendConcurrencyIT` 8/8
+      (T041's five and T031's three), `RequestRecoveryTransitionTest` 12/12 (T040's nine and T015's
+      three) PASSED; `RequestReplayStatementTest` 4/4, `IdempotencyGuardTest` 20/20 and
+      `RollbackFencingIT` 6/6 still PASSED.
 - [ ] T047 [US3] [P] Implement `cli/ResendLegRunner.java` per `contracts/cli-runners.md` §2:
       argument parsing/validation, calls `LegResender`, prints the per-ID report + summary, one
       structured log line, `probation_resend_refusals_total{reason}` per refused ID (FR-004-039)

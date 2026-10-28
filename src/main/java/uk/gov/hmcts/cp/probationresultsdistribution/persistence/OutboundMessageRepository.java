@@ -9,6 +9,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.NoteForm;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
@@ -334,8 +335,116 @@ public final class OutboundMessageRepository {
      */
     public int writeResendOutcome(final LegOutcome outcome, final ResendAttempt attempt,
                                   final boolean overrideAllowChangedPayload) {
-        // Seam (T038): the guarded completion and recovery land with T046.
-        return 0;
+        return transactionTemplate.execute(status ->
+                applyResendOutcome(outcome, attempt, overrideAllowChangedPayload));
+    }
+
+    private int applyResendOutcome(final LegOutcome outcome, final ResendAttempt attempt,
+                                   final boolean overrideAllowChangedPayload) {
+        final String source = outcome.command().source();
+        final UUID requestId = outcome.command().requestId();
+        // The request row is locked before the leg row (FR-004-028), the same order the claim took.
+        jdbc.sql("SELECT status FROM processed_request WHERE source = :source "
+                        + "AND request_id = :requestId FOR UPDATE")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query(String.class)
+                .optional();
+        final String bodyDigest = outcome.bodyDigest().orElse(null);
+        final String versionToWrite = bodyDigest == null ? null : serviceVersion;
+        final String note = overrideAllowChangedPayload
+                ? NoteForm.OVERRIDE_ALLOW_CHANGED_PAYLOAD.wireValue() : null;
+        // Guarded by the attempt's own leg-claim token: a token rotated by the rollback protocol, or
+        // a row another runner already completed, matches nothing (FR-004-028). The claim and
+        // resend_run_id stay on the row as the record of who ran it (FR-004-025).
+        final Optional<UUID> updatedId = jdbc.sql(
+                        "UPDATE outbound_message SET status = :status, reason = :reason, "
+                        + "youth_switch = :youthSwitch, http_status = :httpStatus, "
+                        + "payload_source = :payloadSource, payload_shared_time = :sharedTime, "
+                        + "body_digest = :bodyDigest, service_version = :serviceVersion, "
+                        + "sent_at = CASE WHEN :sent THEN now() ELSE NULL END, "
+                        + "override = :override, note = :note, "
+                        + "attempts = attempts + 1, updated_at = now() "
+                        + "WHERE id = :id AND claim_token = :token AND status = 'PENDING' "
+                        + "RETURNING id")
+                .param(STATUS, outcome.status().wireValue())
+                .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
+                .param("youthSwitch",
+                        outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
+                .param("httpStatus",
+                        outcome.httpStatus().isPresent() ? outcome.httpStatus().getAsInt() : null)
+                .param("payloadSource",
+                        outcome.payloadSource().map(PayloadSource::wireValue).orElse(null))
+                .param("sharedTime", outcome.payloadSharedTime()
+                        .map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC))
+                        .orElse(null))
+                .param("bodyDigest", bodyDigest)
+                .param("serviceVersion", versionToWrite)
+                .param("sent", outcome.status() == LegStatus.SENT)
+                .param("override", overrideAllowChangedPayload)
+                .param("note", note)
+                .param("id", attempt.attemptId())
+                .param("token", attempt.legClaim().token())
+                .query(UUID.class)
+                .optional();
+        final int rows;
+        if (updatedId.isEmpty()) {
+            rows = 0;
+        } else {
+            replaceBody(updatedId.get(), outcome.body().orElse(null));
+            if (outcome.reason().filter(LegReason.PAYLOAD_CHANGED::equals).isPresent()) {
+                appendPayloadChangedLine(source, requestId, attempt.attempt());
+            } else if (recovers(outcome)) {
+                recoverFailedRequest(source, requestId, attempt.attempt());
+            }
+            rows = 1;
+        }
+        return rows;
+    }
+
+    /**
+     * A {@code SENT}, {@code NOT_APPLICABLE} or class-1 {@code FAILED} resend outcome recovers a
+     * {@code FAILED} request (FR-004-032); a class-2 {@code FAILED} outcome leaves it as it was
+     * (FR-004-033).
+     */
+    private static boolean recovers(final LegOutcome outcome) {
+        return switch (outcome.status()) {
+            case SENT, NOT_APPLICABLE -> true;
+            case FAILED -> outcome.reason().filter(reason -> reason == LegReason.RECEIVER_REJECTED
+                    || reason == LegReason.RULES_EXCEPTION).isPresent();
+            default -> false;
+        };
+    }
+
+    private void recoverFailedRequest(final String source, final UUID requestId, final int attempt) {
+        // Only a FAILED request moves: no statement of this slice changes a COMPLETED one
+        // (FR-004-034). One timestamped line records the prior reason and the cleared id.
+        jdbc.sql("UPDATE processed_request SET status = 'COMPLETED', "
+                        + "completion_reason = 'recovered', "
+                        + "audit_note = coalesce(audit_note || E'\\n', '') || now()::text "
+                        + "|| ' RECOVERED_BY_RESEND attempt=' || :attempt || ' prior=' "
+                        + "|| failure_reason || ' exhausted=' || coalesce(exhausted_message_id, '-'), "
+                        + "failure_reason = NULL, exhausted_message_id = NULL, replayed_at = NULL, "
+                        + "updated_at = now() "
+                        + "WHERE source = :source AND request_id = :requestId AND status = 'FAILED'")
+                .param("attempt", attempt)
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+    }
+
+    private void appendPayloadChangedLine(final String source, final UUID requestId,
+                                          final int attempt) {
+        // The refusal is recorded on the request's append-only audit log, quoting no payload
+        // content (FR-004-030); its status and reasons stay exactly as they were (FR-004-033).
+        jdbc.sql("UPDATE processed_request SET audit_note = coalesce(audit_note || E'\\n', '') "
+                        + "|| now()::text || ' RESEND_REFUSED attempt=' || :attempt "
+                        + "|| ' reason=payload-changed' "
+                        + "WHERE source = :source AND request_id = :requestId")
+                .param("attempt", attempt)
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
     }
 
     private void replaceBody(final UUID outboundMessageId, final String body) {
