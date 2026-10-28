@@ -551,7 +551,7 @@ code, five report entries, refusal counters incremented.
 
 ### Tests for User Story 3 (write first, confirm red, then implement) ⚠️
 
-- [ ] T038 [P] [US3] `ResendByRequestIdsIT`: the mixed-list scenario above; duplicates collapsed and
+- [X] T038 [P] [US3] `ResendByRequestIdsIT`: the mixed-list scenario above; duplicates collapsed and
       run once; empty list → `missing-argument`; over-cap distinct IDs → `too-many-request-ids`
       before any read; per-ID check order `unknown-request` → `request-claimed` →
       `resend-in-progress` → `not-eligible` (FR-004-022); eligibility table incl. attempt-1
@@ -560,6 +560,24 @@ code, five report entries, refusal counters incremented.
       (FR-004-025); the resend halves of DV-07 (Redis failure → query API → `FAILED(payload-
       unavailable)`, never `PARKED`) and DV-17 (every resend's query-API read carries the system
       user as `CJSCPPUID`) (FR-004-050a) — `src/test/java/.../application/ResendByRequestIdsIT.java`
+      Written over a shared `application/ResendTestSupport` (extends `EndToEndTestSupport`: real
+      Postgres, Redis and WireMock, the production payload chain, users-groups client and gateway
+      publisher; no broker — resend-leg is a direct call). Compile-safe seams landed with it:
+      `ResendRequest`, `ResendRunResult`, `ResendEntryOutcome`, `domain/ResendAttempt`, the
+      `LegResender` five-argument constructor (loop body still the T036 pause stub),
+      `ProcessedRequestRepository.claimResend` (seam: always `unknown-request`, not yet called),
+      `OutboundLog.recordResend`/`OutboundMessageRepository.writeResendOutcome` (seam:
+      0 rows), `DistributionRunner.runResend` (seam: unrecorded `PENDING`) and
+      `OutcomeMetrics.staleRunnerRejection`/`resendRefusal` (seam: not counted).
+      `LegResenderStubOutcome` is replaced by `ResendRunResult` (same `wholeRunRefusal()`/`notRun()`
+      shape); T031's three pause cases updated mechanically to the new constructor and stay green.
+      RED: all 15 `ResendByRequestIdsIT` cases fail on assertions against the stub loop — e.g.
+      `MixedList > two FAILED legs resent ... : Expecting actual: [] to contain exactly (and in same
+      order): [...]`, `Input > an empty list is refused whole missing-argument : Expecting Optional
+      to contain: MISSING_ARGUMENT but was empty`, `CheckOrder > ... : Expecting Optional to contain:
+      Refused[reason=NOT_ELIGIBLE] but was empty`, `ClaimBeforePost > ... : Expected size: 1 but was:
+      0`, `RegisteredDeviations > DV-07 ... : Expecting Optional to contain: Ran[status=FAILED,
+      reason=Optional[PAYLOAD_UNAVAILABLE]] but was empty`.
 - [ ] T039 [P] [US3] `ResendSharedTimeCheckIT`: the `sharedTime` check runs directly after the fetch,
       before any leg stage, comparing as instants at stored precision; a cache-vs-query rendering
       difference still proceeds; a later/absent/unparseable `sharedTime` →
@@ -578,9 +596,13 @@ code, five report entries, refusal counters incremented.
       rotated claim token changes nothing and counts as a stale-runner rejection — RollbackFencingIT's
       "late resend runner" case, pinned here (FR-004-028) — extends
       `src/test/java/.../application/ResendConcurrencyIT.java`
-- [ ] T042 [US3] `PropertiesValidatorTest`/eligibility unit test for the confirmed FR-004-024
+- [X] T042 [US3] `PropertiesValidatorTest`/eligibility unit test for the confirmed FR-004-024
       resolution: an expired `PENDING` resend row is refused `resend-in-progress`, never reclaimed —
       **(confirmed 2026-10-26)**; assert unchanged attempt and claim, and no POST — add to `ResendByRequestIdsIT` (T038) as its own case, not a new file
+      Added as `ResendByRequestIdsIT$CheckOrder.expired_pending_resend_row_is_never_reclaimed`
+      (attempt 2 stays `PENDING` with its seeded claim token, no third row, no POST,
+      `probation_resend_refusals_total{reason="resend-in-progress"}` = 1).
+      RED: `Expecting Optional to contain: Refused[reason=RESEND_IN_PROGRESS] but was empty`.
 
 ### Implementation for User Story 3
 

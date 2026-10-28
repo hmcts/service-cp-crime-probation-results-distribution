@@ -80,6 +80,14 @@ class CrashRerunCountingIT extends EndToEndTestSupport {
                                         final String rerunByMessageId) {
                 throw new UnsupportedOperationException("not exercised by this test");
             }
+
+            @Override
+            public boolean recordResend(final LegOutcome outcome,
+                                        final uk.gov.hmcts.cp.probationresultsdistribution.domain
+                                                .ResendAttempt attempt,
+                                        final boolean overrideAllowChangedPayload) {
+                throw new UnsupportedOperationException("not exercised by this test");
+            }
         };
         startProcessorWith(listenerOverWithOutboundLog(sharedDataSource(), alwaysAvailableStore(),
                 10, crashBeforeRecord), 1);

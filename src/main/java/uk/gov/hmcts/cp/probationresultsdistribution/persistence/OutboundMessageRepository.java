@@ -10,6 +10,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 
@@ -321,6 +322,20 @@ public final class OutboundMessageRepository {
      * @param note          that row's note, used for the per-message rerun-by skip (FR-004-010)
      */
     private record LatestLegRow(int attempt, String attemptOrigin, String status, String note) {
+    }
+
+    /**
+     * Completes a claimed resend attempt row (slice 004, FR-004-028, FR-004-032, FR-004-033).
+     *
+     * @param outcome                     the derived leg outcome
+     * @param attempt                     the claimed resend attempt row
+     * @param overrideAllowChangedPayload whether the changed-payload override was used
+     * @return 1 when written, 0 when fenced out (the leg-claim token no longer matches)
+     */
+    public int writeResendOutcome(final LegOutcome outcome, final ResendAttempt attempt,
+                                  final boolean overrideAllowChangedPayload) {
+        // Seam (T038): the guarded completion and recovery land with T046.
+        return 0;
     }
 
     private void replaceBody(final UUID outboundMessageId, final String body) {

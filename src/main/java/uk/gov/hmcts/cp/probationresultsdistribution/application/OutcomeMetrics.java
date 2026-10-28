@@ -10,6 +10,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Non200SuccessStatus;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadableCause;
 
@@ -69,4 +70,14 @@ public interface OutcomeMetrics {
 
     /** Records the duration of one gateway POST attempt, excluding retry waits. */
     void gatewayRequestDuration(Leg leg, Duration duration);
+
+    /** Counts one stale-runner rejection: a guarded outcome write that matched no row. */
+    void staleRunnerRejection();
+
+    /**
+     * Counts one resend-leg ID refused with its bounded code (slice 004, FR-004-039).
+     *
+     * @param reason the refusal code
+     */
+    void resendRefusal(ResendRefusal reason);
 }

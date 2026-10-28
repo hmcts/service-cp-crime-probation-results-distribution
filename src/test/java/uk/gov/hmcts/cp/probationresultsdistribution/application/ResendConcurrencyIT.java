@@ -12,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
 /**
  * Pins FR-004-021 (US7 half): a resend run submitted while intake is paused is refused whole,
@@ -34,12 +35,18 @@ class ResendConcurrencyIT {
 
     @Mock
     private IntakePauseGate pauseGate;
+    @Mock
+    private ProcessedRequestRepository store;
+    @Mock
+    private DistributionRunner runner;
+    @Mock
+    private OutcomeMetrics metrics;
 
     private LegResender resender;
 
     @BeforeEach
     void setUp() {
-        resender = new LegResender(pauseGate);
+        resender = new LegResender(pauseGate, store, runner, metrics, 100);
     }
 
     @Test
@@ -47,7 +54,8 @@ class ResendConcurrencyIT {
     void refuses_whole_run_while_paused() {
         when(pauseGate.pausedByOperator()).thenReturn(true);
 
-        final LegResenderStubOutcome outcome = resender.resend(List.of(ID_1, ID_2));
+        final ResendRunResult outcome = resender.resend(
+                new ResendRequest(List.of(ID_1, ID_2), "an-operator", "a reason", false));
 
         assertThat(outcome.wholeRunRefusal()).contains(WholeRunRefusal.INTAKE_PAUSED);
         assertThat(outcome.notRun()).isEmpty();
@@ -58,7 +66,8 @@ class ResendConcurrencyIT {
     void proceeds_when_not_paused() {
         when(pauseGate.pausedByOperator()).thenReturn(false);
 
-        final LegResenderStubOutcome outcome = resender.resend(List.of(ID_1, ID_2));
+        final ResendRunResult outcome = resender.resend(
+                new ResendRequest(List.of(ID_1, ID_2), "an-operator", "a reason", false));
 
         assertThat(outcome.wholeRunRefusal()).isEmpty();
     }
@@ -70,7 +79,8 @@ class ResendConcurrencyIT {
         // from the second id's check onward.
         when(pauseGate.pausedByOperator()).thenReturn(false, false, true);
 
-        final LegResenderStubOutcome outcome = resender.resend(List.of(ID_1, ID_2));
+        final ResendRunResult outcome = resender.resend(
+                new ResendRequest(List.of(ID_1, ID_2), "an-operator", "a reason", false));
 
         assertThat(outcome.wholeRunRefusal()).isEmpty();
         assertThat(outcome.notRun()).containsExactly(ID_2);

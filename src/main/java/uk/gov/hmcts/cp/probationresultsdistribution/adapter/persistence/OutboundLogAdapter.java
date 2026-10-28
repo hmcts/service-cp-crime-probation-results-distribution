@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence;
 
 import uk.gov.hmcts.cp.probationresultsdistribution.application.OutboundLog;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
 
@@ -55,5 +56,20 @@ public final class OutboundLogAdapter implements OutboundLog {
     public boolean recordReplay(final LegOutcome outcome, final RunClaim claim,
                                 final String rerunByMessageId) {
         return repository.writeReplayOutcome(outcome, claim, rerunByMessageId) == 1;
+    }
+
+    /**
+     * Completes a claimed resend attempt under its own leg claim, with any recovery transition, in
+     * the repository's single transaction (slice 004, FR-004-028, FR-004-032).
+     *
+     * @param outcome                     the derived leg outcome
+     * @param attempt                     the claimed resend attempt row
+     * @param overrideAllowChangedPayload whether the changed-payload override was used
+     * @return {@code true} when the guarded write took effect; {@code false} when it matched no row
+     */
+    @Override
+    public boolean recordResend(final LegOutcome outcome, final ResendAttempt attempt,
+                                final boolean overrideAllowChangedPayload) {
+        return repository.writeResendOutcome(outcome, attempt, overrideAllowChangedPayload) == 1;
     }
 }

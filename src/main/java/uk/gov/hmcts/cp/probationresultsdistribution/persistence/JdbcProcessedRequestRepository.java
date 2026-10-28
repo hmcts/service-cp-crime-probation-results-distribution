@@ -13,6 +13,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
@@ -130,6 +131,13 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         (UUID) rs.getObject("hearing_id"), rs.getString("command"),
                         rs.getBoolean("pending_resend_row_latest")))
                 .optional();
+    }
+
+    @Override
+    public ResendClaim claimResend(final String source, final UUID requestId, final UUID resendRunId,
+                                   final String operator, final RunClaim legClaim) {
+        // Seam (T038): the per-ID check and claim land with T043.
+        return new ResendClaim.Refused(ResendRefusal.UNKNOWN_REQUEST);
     }
 
     @Override

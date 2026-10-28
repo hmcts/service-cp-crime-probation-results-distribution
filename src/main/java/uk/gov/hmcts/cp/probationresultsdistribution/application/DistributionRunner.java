@@ -25,6 +25,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Non200SuccessStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RedactionResult;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchDecision;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
@@ -115,6 +116,23 @@ public final class DistributionRunner {
                          final String replayMessageId) {
         return run(command, runOrigin, claim, finalPermittedDelivery,
                 Optional.of(Objects.requireNonNull(replayMessageId, "replayMessageId")));
+    }
+
+    /**
+     * Runs one claimed resend attempt (slice 004, FR-004-026, FR-004-027, FR-004-029): the payload
+     * fetch, the {@code sharedTime} check, the switch, redaction, body digest and send, recording the
+     * outcome on the attempt's own row under its leg claim. A resend never parks.
+     *
+     * @param command             the command rebuilt from the request's columns, with no
+     *                            {@code userId}, carrying the stored {@code shared_time}
+     * @param attempt             the claimed resend attempt row
+     * @param allowChangedPayload whether {@code allow-changed-payload} was requested
+     * @return the run result; {@code recorded} is {@code false} on a stale-runner rejection
+     */
+    public RunResult runResend(final DistributionCommand command, final ResendAttempt attempt,
+                               final boolean allowChangedPayload) {
+        // Seam (T038): the resend stage sequence lands with T044/T045.
+        return new RunResult(AttemptOrigin.RESEND, LegStatus.PENDING, Optional.empty(), false);
     }
 
     private RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,

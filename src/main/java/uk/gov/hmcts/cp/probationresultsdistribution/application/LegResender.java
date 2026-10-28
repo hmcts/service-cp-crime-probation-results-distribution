@@ -2,55 +2,64 @@ package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
 /**
  * Resend-leg (design §4.8 action 3; slice 004, FR-004-018 onward).
  *
- * <p><strong>Pause-only stub (Phase 5, T036).</strong> This phase wires only the pause-check this
- * capability shares with {@link PurgeQueueAction} (FR-004-021): refuse the whole run while intake
- * is paused by an operator — read against the reconciled in-memory flag
- * ({@link IntakePauseGate}, research.md Decision 3), never a fresh store read, exactly like
- * purge-queue's own read-before-remove — and stop claiming further ids the moment a pause is read
- * mid-run. Phase 6 (T043 onward) replaces {@link #resend(List)}'s body with the full eligibility,
- * claim and send pipeline (FR-004-018–FR-004-041), keeping this method's two pause checks as its
- * first and per-id guard; nothing here should block or complicate that work — this class is
- * deliberately minimal and narrowly scoped to the one behaviour {@code ResendConcurrencyIT}'s
- * pause-related cases need (FR-004-021).
+ * <p>Seam (T038): the constructor carries the collaborators the per-ID check, claim and run need;
+ * the run itself still has only the T036 pause checks (FR-004-021). T043 onward replaces the loop
+ * body.
  */
 public final class LegResender {
 
     private final IntakePauseGate pauseGate;
+    private final ProcessedRequestRepository store;
+    private final DistributionRunner runner;
+    private final OutcomeMetrics metrics;
+    private final int maxIdsPerRun;
 
     /**
-     * Creates the stub.
+     * Creates the capability.
      *
-     * @param pauseGate the reconciled operator-pause read
+     * @param pauseGate    the reconciled operator-pause read
+     * @param store        the processed-log store the per-ID check and claim run against
+     * @param runner       the pipeline each claimed attempt runs through
+     * @param metrics      the telemetry port
+     * @param maxIdsPerRun {@code distribution.resend.max-ids-per-run}
      */
-    public LegResender(final IntakePauseGate pauseGate) {
+    public LegResender(final IntakePauseGate pauseGate, final ProcessedRequestRepository store,
+                       final DistributionRunner runner, final OutcomeMetrics metrics,
+                       final int maxIdsPerRun) {
         this.pauseGate = pauseGate;
+        this.store = store;
+        this.runner = runner;
+        this.metrics = metrics;
+        this.maxIdsPerRun = maxIdsPerRun;
     }
 
     /**
-     * The pause-only stub run (T036). Phase 6 replaces the body with the real per-id pipeline.
+     * Runs resend-leg over an explicit list of ids.
      *
-     * @param requestIds the distinct ids to resend (duplicate-collapsing is T043's job)
-     * @return a whole-run refusal when paused at the start; otherwise the ids not reached because
-     *     a pause began mid-run (every other id is, for now, left untouched by this stub)
+     * @param request the run's input
+     * @return the run's report, or its whole-run refusal
      */
-    public LegResenderStubOutcome resend(final List<UUID> requestIds) {
-        final LegResenderStubOutcome outcome;
+    public ResendRunResult resend(final ResendRequest request) {
+        final ResendRunResult outcome;
         if (pauseGate.pausedByOperator()) {
-            outcome = LegResenderStubOutcome.refusedWhole();
+            outcome = ResendRunResult.refusedWhole(
+                    uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal.INTAKE_PAUSED);
         } else {
-            final List<UUID> notRun = new ArrayList<>();
-            for (final UUID requestId : requestIds) {
+            final List<ResendRunResult.Entry> entries = new ArrayList<>();
+            for (final UUID requestId : request.requestIds()) {
                 if (pauseGate.pausedByOperator()) {
-                    notRun.add(requestId);
+                    entries.add(new ResendRunResult.Entry(requestId, new ResendEntryOutcome.NotRun()));
                 }
-                // Phase 6 (T043 onward) claims and runs requestId here when not paused.
             }
-            outcome = LegResenderStubOutcome.ranWithRemaining(notRun);
+            outcome = new ResendRunResult(Optional.empty(), Optional.of(UUID.randomUUID()),
+                    request.allowChangedPayload(), entries);
         }
         return outcome;
     }

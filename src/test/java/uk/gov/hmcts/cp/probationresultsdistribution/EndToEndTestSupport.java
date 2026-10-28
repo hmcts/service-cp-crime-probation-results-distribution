@@ -499,6 +499,28 @@ public class EndToEndTestSupport {
     }
 
     /**
+     * The shared Redis connection the payload cache adapter reads through.
+     *
+     * @return the shared Redis connection
+     */
+    protected final StatefulRedisConnection<String, String> sharedRedisConnection() {
+        return redisConnection;
+    }
+
+    /**
+     * The {@code CJSCPPUID} header of every results query-API read made for a hearing.
+     *
+     * @param hearingId the hearing id in the path
+     * @return each read's header value, in request order
+     */
+    protected final List<String> resultsQueryUserHeaders(final UUID hearingId) {
+        return wireMock.findAll(com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(
+                        urlPathEqualTo("/results-query-api/query/api/rest/results/hearingDetails/"
+                                + hearingId)))
+                .stream().map(request -> request.getHeader("CJSCPPUID")).toList();
+    }
+
+    /**
      * The WireMock base URL the users-groups client reads from.
      *
      * @return the users-groups base URL

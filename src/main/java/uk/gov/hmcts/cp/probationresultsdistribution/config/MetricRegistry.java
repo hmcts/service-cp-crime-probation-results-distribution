@@ -26,6 +26,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsFailure;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadableCause;
 
@@ -305,6 +306,7 @@ public final class MetricRegistry implements OutcomeMetrics {
     }
 
     /** Counts one stale-runner rejection. */
+    @Override
     public void staleRunnerRejection() {
         registry.counter(STALE_RUNNER_M).increment();
     }
@@ -332,6 +334,16 @@ public final class MetricRegistry implements OutcomeMetrics {
      */
     public void replays(final ReplayRoute route) {
         registry.counter(REPLAYS_M, Tags.of(Tag.of(TAG_ROUTE, route.wireValue()))).increment();
+    }
+
+    /**
+     * Counts one resend-leg ID refused, by its bounded code (slice 004, FR-004-039).
+     *
+     * @param reason the refusal code
+     */
+    @Override
+    public void resendRefusal(final ResendRefusal reason) {
+        // Seam (T038): counted with T043.
     }
 
     /**

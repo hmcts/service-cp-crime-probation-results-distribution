@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
@@ -43,4 +44,21 @@ public interface OutboundLog {
      *     row (a stale runner, or a {@code FAILED} row already re-run by this message)
      */
     boolean recordReplay(LegOutcome outcome, RunClaim claim, String rerunByMessageId);
+
+    /**
+     * Completes a claimed resend attempt row (slice 004, FR-004-028): the outcome, the stored body
+     * when one was serialised, and any recovery transition of a {@code FAILED} request
+     * (FR-004-032) are written in one transaction that locks the request row before the leg row. The
+     * outcome write is guarded by the attempt's own leg-claim token, so a completion whose token was
+     * rotated (by the rollback protocol, for example) changes nothing.
+     *
+     * @param outcome                     the derived leg outcome
+     * @param attempt                     the claimed resend attempt row
+     * @param overrideAllowChangedPayload whether {@code allow-changed-payload} let through a
+     *                                    {@code sharedTime} that differed, so the row records
+     *                                    {@code override = true} and its note form (FR-004-031)
+     * @return {@code true} when the row was written; {@code false} when the guarded write matched no
+     *     row, which is a stale-runner rejection
+     */
+    boolean recordResend(LegOutcome outcome, ResendAttempt attempt, boolean overrideAllowChangedPayload);
 }

@@ -8,6 +8,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
 /**
@@ -131,6 +133,62 @@ public interface ProcessedRequestRepository {
      * @return the replay candidate, or empty when no row exists
      */
     Optional<ReplayCandidate> findForReplay(String source, UUID requestId);
+
+    /**
+     * Checks one resend-leg ID and, when it is eligible, claims it — in one transaction that locks
+     * the request row before the leg's rows (slice 004, FR-004-022–FR-004-025). The refusals run in
+     * the fixed order {@code unknown-request} → {@code request-claimed} →
+     * {@code resend-in-progress} → {@code not-eligible}. An eligible ID gets a new attempt row —
+     * {@code max(attempt) + 1}, {@code attempt_origin = resend}, {@code PENDING}, its own leg claim,
+     * the run's {@code resend_run_id} and the {@code operator} — committed before this method
+     * returns, so before any POST. No earlier attempt row is changed, and a refused ID changes
+     * nothing.
+     *
+     * @param source      the command source
+     * @param requestId   the request id
+     * @param resendRunId the resend run claiming it
+     * @param operator    the operator, already sanitised to one line of at most 200 characters
+     * @param legClaim    the leg claim to take on the new row
+     * @return the claimed attempt with the command rebuilt from the request's columns, or the refusal
+     */
+    ResendClaim claimResend(String source, UUID requestId, UUID resendRunId, String operator,
+                            RunClaim legClaim);
+
+    /**
+     * The result of {@link #claimResend}: the ID was claimed, or refused with a bounded code that is
+     * never written to a row.
+     */
+    sealed interface ResendClaim permits ResendClaim.Claimed, ResendClaim.Refused {
+
+        /**
+         * The ID was claimed: its new attempt row is committed {@code PENDING}.
+         *
+         * @param attempt the claimed attempt row
+         * @param command the command rebuilt from the request's columns, with no {@code userId}, so
+         *                the results query fallback always reads as the system user (DV-17, H30)
+         */
+        record Claimed(ResendAttempt attempt, DistributionCommand command) implements ResendClaim {
+
+            /** Rejects null components. */
+            public Claimed {
+                Objects.requireNonNull(attempt, "attempt");
+                Objects.requireNonNull(command, "command");
+            }
+        }
+
+        /**
+         * The ID was refused; nothing changed.
+         *
+         * @param reason the refusal code
+         */
+        record Refused(ResendRefusal reason) implements ResendClaim {
+
+            /** Rejects a null reason. */
+            public Refused {
+                Objects.requireNonNull(reason, "reason");
+            }
+        }
+    }
 
     /**
      * A request's state as the replay action needs it (FR-004-014–FR-004-017).
