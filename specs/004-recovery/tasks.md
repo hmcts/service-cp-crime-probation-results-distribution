@@ -1161,9 +1161,22 @@ failed and unknown requests; run both runners; compare output with seeded state.
 
 ### Implementation for User Story 6
 
-- [ ] T061 [US6] Implement `application/RequestListingQuery.java` against
+- [X] T061 [US6] Implement `application/RequestListingQuery.java` against
       `outbound_message_latest`, two input forms per `contracts/cli-runners.md` §7, input checked
       per FR-004-020
+      `RequestListingQuery` takes the arguments as supplied (`RequestListingRequest`) and checks
+      them whole before any read: both forms at once, or a hearing id that is not a UUID, a day
+      that is not exactly `YYYY-MM-DD` and a real date, a status outside `LegStatus`, a reason
+      outside `LegReason`, or an `updated_at` bound that is not an ISO-8601 instant with an offset
+      is `unreadable-argument`; no form, half of the hearing form, a blank value, or a reason or
+      range without a status is `missing-argument`; the outcome never carries the text. It asks
+      the store for 501 rows and shows 500, `more` set when the 501st exists; a store failure is
+      `store-unavailable`. `JdbcRequestListingRepository` selects only identifiers, statuses and
+      reasons, attempt numbers and origins, the HTTP status and the `updated_at`/`sent_at` times:
+      by hearing and day from `outbound_message` (every attempt, ordered by request and attempt),
+      by latest attempt from `outbound_message_latest` (after inclusive, before exclusive, ordered
+      by `updated_at` then request), plus the `request_id`/`status` lookup for `dlq-completed`.
+      GREEN: `RequestListingQueryTest` 25/25 and `JdbcRequestListingRepositoryIT` 7/7 PASSED.
 - [ ] T062 [US6] Implement `application/DlqCompletedListingQuery.java`: peeks the DLQ via the
       Service Bus management client, joins against `processed_request.status = 'COMPLETED'`
 - [ ] T063 [US6] [P] Implement `cli/RequestListingRunner.java` and
