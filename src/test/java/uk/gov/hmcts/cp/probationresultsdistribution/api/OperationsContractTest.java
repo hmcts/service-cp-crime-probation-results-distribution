@@ -127,13 +127,15 @@ class OperationsContractTest {
     }
 
     @Test
-    @DisplayName("the per-ID refusal code enum is the four domain ResendRefusal codes plus not-run")
+    @DisplayName("the per-ID refusal code enum is the four domain ResendRefusal codes plus not-run "
+            + "and claimed-incomplete")
     void resend_refusal_code_enum_is_domain_codes_plus_not_run() throws IOException {
         final Map<String, Object> schemas = at(document(), "components", "schemas");
         final Map<String, Object> refusalCode = at(schemas, "ResendRefusalCode");
         final List<String> expected = Arrays.stream(ResendRefusal.values())
                 .map(ResendRefusal::wireValue).collect(Collectors.toCollection(java.util.ArrayList::new));
         expected.add("not-run");
+        expected.add("claimed-incomplete");
 
         assertThat(enumAt(refusalCode)).containsExactlyInAnyOrderElementsOf(expected);
     }

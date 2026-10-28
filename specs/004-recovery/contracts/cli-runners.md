@@ -64,8 +64,33 @@ resend-leg --leg HMPPS --request-ids <id,id,...> --operator <name> --reason <tex
 
 **Per-ID outcomes** (checked in this order — FR-004-022): `unknown-request` →
 `request-claimed` → `resend-in-progress` → `not-eligible` → the resend's own result (`SENT`,
-`NOT_APPLICABLE(<reason>)`, `FAILED(<reason>)`) or `not-run` (the run was cut short by an
-intake pause beginning mid-run).
+`NOT_APPLICABLE(<reason>)`, `FAILED(<reason>)`), `not-run` (the ID was never claimed: the run was
+cut short by an intake pause beginning mid-run, or the store failed or could not confirm the pause
+before the ID's claim committed), or `claimed-incomplete` (the ID's attempt row was claimed and
+committed `PENDING`, so its POST may have gone out, but its outcome could not be recorded: the store
+failed during or after the run, or the completion was fenced as a stale runner; the row stays
+`PENDING` — or as the fencing statement left it — for the guarded rollback close-in-flight
+procedure, spec edge case "The store fails during a resend run").
+
+**Exit code**: a run that produced a report exits `0` (`DONE`) unless the store failed during it —
+a claim, a completion write or a mid-run pause read raising a store error — in which case the report
+is still written and the run exits `2` (`FAILED`), the edge case's "the run's result is failed". A
+store that cannot answer the run's first pause read refuses it whole `store-unavailable`, exit `2`,
+with nothing changed.
+
+**Startup checks**: before the resend pipeline is built, the command runs the service's own startup
+validation over the same `distribution.*` properties (the composed stage budgets including the send
+stage, lease ordering, one system user, the youth-switch default — logged at INFO —, the delivery
+limit, `max-ids-per-run` ≥ 1, the deployed-profile secrets and forbidden properties), and refuses a
+blank `distribution.gateway.subscription-key` outside the `local` and `test` profiles. A failed
+check exits `2` (`FAILED`) with `reason=invalid-configuration`, before any client is built.
+
+**Telemetry**: a command-line run is a short-lived process with no metrics scrape of its own, so its
+`probation_resend_refusals_total`, `probation_stale_runner_rejections_total` and
+`probation_leg_outcomes_total` increments are process-local and are not relied on. For a
+command-line run, the authoritative record is the run's one structured report line (every ID's
+outcome, refusal codes included, and the summary) and the per-outcome log lines; the counters are
+exported for runs served by the pod (slice 005's operations API).
 
 **Output**: one report (also written as one structured log line) listing the run's `resend_run_id`,
 the leg, whether each override was requested, every distinct listed ID exactly once with its outcome,

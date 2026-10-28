@@ -919,9 +919,13 @@ Assumptions.
 
 - **FR-004-039**: Every resend run that is not refused whole MUST produce a report holding the run's
   `resend_run_id`, the leg, whether each override was requested, every distinct listed ID exactly
-  once with its outcome — the leg's resulting status and reason, a refusal code, or `not-run` — and
-  a summary (IDs taken, `SENT`, `NOT_APPLICABLE` by reason, `FAILED` by reason, refusals by code,
-  `not-run`).
+  once with its outcome — the leg's resulting status and reason, a refusal code, `not-run` (never
+  claimed), or `claimed-incomplete` (claimed, its outcome not recorded: the store failed or the
+  completion was fenced) — and a summary (IDs taken, `SENT`, `NOT_APPLICABLE` by reason, `FAILED` by
+  reason, refusals by code, `not-run`, `claimed-incomplete`). A run during which the store failed
+  still produces its report, and its result is failed (edge case "The store fails during a resend
+  run"). For a command-line run the report line is the authoritative telemetry: the process is
+  short-lived and its counters are not exported (`contracts/cli-runners.md` §2).
   The same report MUST be written as one structured log line, and each refused ID MUST increment
   `probation_resend_refusals_total{reason}`. *(H16; A3-56; §4.4 Output row)*
 - **FR-004-040**: Every leg outcome of a replayed or resent run MUST be logged as one line with its

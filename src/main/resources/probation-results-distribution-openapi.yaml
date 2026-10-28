@@ -281,13 +281,16 @@ components:
       type: string
       description: >-
         A per-ID resend refusal (row A3-56): the four codes slice 002 defines, plus slice 004's
-        not-run for an ID a pause that began mid-run left unreached (FR-004-021)
+        not-run for an ID never claimed (a pause that began mid-run left it unreached, FR-004-021,
+        or the store failed before its claim committed) and claimed-incomplete for an ID whose
+        attempt was claimed but whose outcome could not be recorded (FR-004-039)
       enum:
         - unknown-request
         - not-eligible
         - resend-in-progress
         - request-claimed
         - not-run
+        - claimed-incomplete
     ProblemDetail:
       type: object
       description: >-
