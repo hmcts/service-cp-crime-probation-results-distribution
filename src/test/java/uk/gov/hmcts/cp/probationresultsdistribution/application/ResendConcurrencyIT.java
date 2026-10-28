@@ -130,6 +130,29 @@ class ResendConcurrencyIT extends ResendTestSupport {
         }
 
         @Test
+        @DisplayName("two forced resends of one SENT leg: one runs it, one POST, one audit line")
+        void two_forced_resends_of_a_sent_leg_one_runs_the_leg() {
+            final UUID requestId = UUID.randomUUID();
+            seedRequestRow(requestId, cachedHearing(), "COMPLETED", null);
+            seedSentAttemptOne(requestId, "SENT", null, 200);
+            final List<ResendRunResult> competitor = new ArrayList<>();
+            final LegResender first = resenderSending(() ->
+                    competitor.add(resender().resend(forced(requestId))));
+
+            final ResendRunResult result = first.resend(forced(requestId));
+
+            assertThat(entryFor(result, requestId)).contains(new Ran(LegStatus.SENT, Optional.empty()));
+            assertThat(competitor).hasSize(1);
+            assertThat(entryFor(competitor.get(0), requestId))
+                    .contains(new Refused(ResendRefusal.RESEND_IN_PROGRESS));
+            assertThat(gatewayPostCount()).as("one genuine duplicate at HMPPS").isEqualTo(1);
+            assertThat(attemptCount(requestId)).isEqualTo(2);
+            assertThat(((String) requestRow(requestId).get("audit_note")).lines()
+                    .filter(line -> line.contains("FORCED_RESEND"))).hasSize(1);
+            assertThat(requestRow(requestId).get("status")).isEqualTo("COMPLETED");
+        }
+
+        @Test
         @DisplayName("a late queue delivery meeting an in-flight resend is deferred, not run")
         void late_queue_delivery_is_deferred() {
             final UUID hearingId = cachedHearing();
@@ -219,6 +242,10 @@ class ResendConcurrencyIT extends ResendTestSupport {
             return real.send(redacted);
         };
         return resender(sharedRedisConnection(), 100, () -> false, racing);
+    }
+
+    private static ResendRequest forced(final UUID requestId) {
+        return new ResendRequest(List.of(requestId), OPERATOR, REASON, false, true);
     }
 
     private UUID seedFailedCached() {
