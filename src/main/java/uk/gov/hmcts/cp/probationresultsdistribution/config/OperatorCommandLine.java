@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
 import com.azure.messaging.servicebus.ServiceBusReceiverClient;
+import com.azure.messaging.servicebus.ServiceBusSenderClient;
 import com.azure.messaging.servicebus.models.SubQueue;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -11,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -31,6 +33,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway.HmppsPublish
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.CachedHearingPayloadAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ChainedHearingPayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusCommandEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DlqCompletedListingQuery;
@@ -41,6 +44,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.PurgeQueueAction
 import uk.gov.hmcts.cp.probationresultsdistribution.application.QueuePurger;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestListingQuery;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RollbackCloseInFlightAction;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.SubmitHearingAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.DlqCompletedListingRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.PauseIntakeRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.PurgeQueueRunner;
@@ -49,6 +53,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.cli.ResendLegRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.ResumeIntakeRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.RollbackCloseInFlightRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.RunnerDispatcher;
+import uk.gov.hmcts.cp.probationresultsdistribution.cli.SubmitHearingRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunnerOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
@@ -62,9 +67,11 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageR
 
 /**
  * Composes one operator command without scanning the server, consumer or scheduled jobs. The
- * no-argument intake commands and {@code resend-leg} share this root; {@code resend-leg}'s pipeline
- * (the payload cache, the results-query and users-groups clients, the gateway publisher) is built
- * lazily, only when that command is dispatched.
+ * no-argument intake commands, {@code resend-leg}, the two listings and {@code submit-hearing}
+ * share this root; a command's clients — {@code resend-leg}'s pipeline (the payload cache, the
+ * results-query and users-groups clients, the gateway publisher), the dead-letter receiver of
+ * {@code list-dlq-completed}, the cache and sender of {@code submit-hearing} — are built lazily,
+ * only when that command is dispatched, after the {@code distribution.*} startup validation.
  */
 public final class OperatorCommandLine {
 
@@ -74,6 +81,8 @@ public final class OperatorCommandLine {
     private static final String RESEND_LEG = "resend-leg";
     private static final String LIST_REQUESTS = "list-requests";
     private static final String LIST_DLQ_COMPLETED = "list-dlq-completed";
+    private static final String SUBMIT_HEARING = "submit-hearing";
+    private static final String QUEUE_NAME = "distribution.servicebus.queue-name";
 
     private OperatorCommandLine() {
     }
@@ -94,6 +103,8 @@ public final class OperatorCommandLine {
             exitCode = checkedThenRun(ResendLegRunner.checkArguments(args), args);
         } else if (args.length > 0 && LIST_REQUESTS.equals(args[0])) {
             exitCode = checkedThenRun(RequestListingRunner.checkArguments(args), args);
+        } else if (args.length > 0 && SUBMIT_HEARING.equals(args[0])) {
+            exitCode = checkedThenRun(SubmitHearingRunner.checkArguments(args), args);
         } else {
             LOG.warn("operator command refused reason=unreadable-argument");
             exitCode = RunnerOutcome.REFUSED.exitCode();
@@ -301,7 +312,7 @@ public final class OperatorCommandLine {
                     environment.getProperty("distribution.servicebus.connection-string", ""),
                     environment.getProperty("distribution.servicebus.namespace", ""))
                     .receiver()
-                    .queueName(environment.getRequiredProperty("distribution.servicebus.queue-name"))
+                    .queueName(environment.getRequiredProperty(QUEUE_NAME))
                     .subQueue(SubQueue.DEAD_LETTER_QUEUE)
                     .buildClient();
         }
@@ -316,6 +327,40 @@ public final class OperatorCommandLine {
                     new JdbcRequestListingRepository(jdbc)));
         }
 
+        /**
+         * A sender on {@code probation.requests} for submit-hearing's enqueue: built only when that
+         * command is dispatched, after the startup validation, with the consumer's credential rule.
+         */
+        /* default */
+        @Bean(destroyMethod = "close")
+        @Lazy
+        ServiceBusSenderClient commandSender(final Environment environment,
+                final DistributionProperties commandDistributionProperties) {
+            return PipelineClients.serviceBus(
+                    environment.getProperty("distribution.servicebus.connection-string", ""),
+                    environment.getProperty("distribution.servicebus.namespace", ""))
+                    .sender()
+                    .queueName(environment.getRequiredProperty(QUEUE_NAME))
+                    .buildClient();
+        }
+
+        /**
+         * The submit-hearing runner: the cache-only payload read (the dated, then the undated
+         * {@code EXT_} key — never the results query API) and the sender. It reads no intake
+         * state and writes no store, so no pause gate or repository is given to it (FR-004-058).
+         */
+        /* default */
+        @Bean
+        @Lazy
+        SubmitHearingRunner commandSubmitHearingRunner(final Environment environment,
+                final StatefulRedisConnection<String, String> commandRedisConnection,
+                final ServiceBusSenderClient commandSender) {
+            return new SubmitHearingRunner(new SubmitHearingAction(
+                    new CachedHearingPayloadAdapter(commandRedisConnection,
+                            environment.getRequiredProperty("distribution.redis.key-prefix")),
+                    new ServiceBusCommandEnqueuer(commandSender), UUID::randomUUID));
+        }
+
         /* default */ @Bean
         RunnerDispatcher commandDispatcher(final IntakeControlRepository repository,
                                            final IntakePauseGate gate, final QueuePurger purger,
@@ -323,6 +368,7 @@ public final class OperatorCommandLine {
                                            final PlatformTransactionManager transactions,
                                            final ObjectProvider<ResendLegRunner> resendLeg,
                                            final ObjectProvider<DlqCompletedListingRunner> dlq,
+                                           final ObjectProvider<SubmitHearingRunner> submit,
                                            final OperatorArguments operatorArguments) {
             final IntakePauseAction intake = new IntakePauseAction(repository);
             final PauseIntakeRunner pause = new PauseIntakeRunner(intake);
@@ -338,7 +384,8 @@ public final class OperatorCommandLine {
                     "purge-queue", purge::run, "rollback-close-in-flight", rollback::run,
                     RESEND_LEG, () -> resendLeg.getObject().run(operatorArguments.asArray()),
                     LIST_REQUESTS, () -> listRequests.run(operatorArguments.asArray()),
-                    LIST_DLQ_COMPLETED, () -> dlq.getObject().run()));
+                    LIST_DLQ_COMPLETED, () -> dlq.getObject().run(),
+                    SUBMIT_HEARING, () -> submit.getObject().run(operatorArguments.asArray())));
         }
 
     }

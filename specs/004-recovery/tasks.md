@@ -1396,7 +1396,37 @@ observe a new request with the audit line and `origin=queue` outcomes.
       GREEN: `IdempotencyGuardTest` 24/24 (all nested), `ProbationMessageListenerTest` 19/19,
       `SupportSubmissionAuditIT` 5/5 and `SupportSubmissionAdmissionIT` 3/3 PASSED;
       `DlqResubmissionReplayIT` 23/23 and `RequestReplayStatementTest` 4/4 still PASSED.
-- [ ] T070 [US8] [P] Implement `cli/SubmitHearingRunner.java` per `contracts/cli-runners.md` §5
+- [X] T070 [US8] [P] Implement `cli/SubmitHearingRunner.java` per `contracts/cli-runners.md` §5
+      Test first: `cli/SubmitHearingRunnerTest` (the arguments checked whole before anything is
+      opened, by the action's own check — a missing argument or a flag given last with no value
+      is `missing-argument`, a non-UUID id or non-date day `unreadable-argument`; a refused run
+      calls nothing and prints only the code; the arguments handed to `SubmitHearingAction` as
+      supplied; `submit-hearing done outcome=enqueued requestId=<id> runId=<id>
+      messageId=RESULTS:<id>`, never the operator or reason; `payload-unavailable` and an action
+      refusal exit 1, `broker-unavailable` exit 2) and `cli/PackagedSubmitHearingCommandIT` (the
+      packaged jar against the shared Redis, Postgres, WireMock and the Service Bus emulator:
+      with intake **paused**, a dated `EXT_` payload is enqueued as one command under
+      `RESULTS:<recipe id>`, `correlationId` the hearing id, `application/json`, `origin =
+      SUPPORT` with operator, run id and reason as properties, the raw `sharedTime` and no
+      `userId` in the body, no request row written, exit 0, and the output carries neither the
+      operator nor the reason; with no cache key but a results query stub that would answer, exit
+      1 `payload-unavailable` and the query API is never asked; an unreadable day exits 1 without
+      echoing it). Seam: a runner answering `DONE`.
+      RED: 9 of 11 failed on assertions, e.g. `a missing argument ... : Expecting Optional to
+      contain: MISSING_ARGUMENT but was empty`, `hands the arguments to the action ... : Wanted but
+      not invoked: action.submit(...)`, `answers failed when the broker cannot take the command :
+      expected: FAILED but was: DONE`, and the packaged cases `command failed: ... "operator command
+      refused reason=unreadable-argument"` (no such action yet). The packaged unreadable-day case
+      passed (an unknown action was already refused exit 1; characterisation).
+      Implementation: `SubmitHearingRunner` as tested; `OperatorCommandLine` checks
+      `submit-hearing`'s arguments before any context is opened, then builds — lazily, after the
+      `distribution.*` startup validation the resend command runs — a Service Bus sender (through
+      `PipelineClients.serviceBus`) and the existing command Redis connection, and gives the action
+      the cache-only `CachedHearingPayloadAdapter`, the `ServiceBusCommandEnqueuer` and
+      `UUID::randomUUID`; no pause gate or store is wired to it.
+      GREEN: `SubmitHearingRunnerTest` 8/8 and `PackagedSubmitHearingCommandIT` 3/3 PASSED;
+      `PackagedListingCommandsIT` 3/3, `PackagedResendLegCommandIT` 3/3 and
+      `PackagedIntakeCommandsIT` 4/4 still PASSED.
 - [ ] T071 Run `quickstart.md` step 7 (submit-hearing) locally
 
 **Checkpoint**: all eight user stories are independently functional.
