@@ -1471,6 +1471,13 @@ fixed test-first in its own commit:
   catch `AzureException | IllegalStateException` (`AzureException` covers `AmqpException` and
   `ServiceBusException`); `ServiceBusCommandEnqueuerTest` 2/2, `ServiceBusCommandEnqueuerIT` 2/2,
   `DeadLetterQueuePeekerTest` 3/3 and `DeadLetterQueuePeekerIT` 3/3 PASSED.
+- *The 200-character cut never splits a character* (T069): `SupportSubmission` cut at
+  `substring(0, 200)`, which could leave half a surrogate pair in `audit_note`. Test first:
+  `domain/SupportSubmissionTest` (new; also pins stripping, tab, NUL and CRLF, 200 vs 201
+  characters, blank/empty/absent/non-text as `-`, all characterisation of the existing rule).
+  RED (1 of 12): `a cut that would split a surrogate pair drops the whole character: expected:
+  "xxx…x" but was: "xxx…x?"`. GREEN: the cut steps back one when character 200 is a high
+  surrogate; `SupportSubmissionTest` 12/12 PASSED.
 
 ---
 

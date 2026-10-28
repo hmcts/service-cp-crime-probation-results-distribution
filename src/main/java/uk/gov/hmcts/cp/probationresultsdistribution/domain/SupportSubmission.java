@@ -28,7 +28,8 @@ public record SupportSubmission(String operator, String runId, String reason) {
     /**
      * Reads the markers from the delivery's application property values, each sanitised to one
      * line of at most 200 characters before it can reach {@code audit_note}: control characters
-     * become a space and the value is stripped and cut at 200 characters. A value that is absent,
+     * become a space and the value is stripped and cut at 200 characters, never inside a
+     * surrogate pair. A value that is absent,
      * not text, or blank once sanitised is {@code -}. The values are written to
      * {@code audit_note} only, never logged or echoed (FR-004-041).
      *
@@ -47,9 +48,14 @@ public record SupportSubmission(String operator, String runId, String reason) {
         if (value instanceof String text) {
             final String sanitised = CONTROL.matcher(text).replaceAll(" ").strip();
             final String bounded = sanitised.length() > MAX_LENGTH
-                    ? sanitised.substring(0, MAX_LENGTH).strip() : sanitised;
+                    ? sanitised.substring(0, cut(sanitised)).strip() : sanitised;
             line = bounded.isEmpty() ? ABSENT : bounded;
         }
         return line;
+    }
+
+    /** The cut at 200 characters, one earlier when it would split a surrogate pair. */
+    private static int cut(final String text) {
+        return Character.isHighSurrogate(text.charAt(MAX_LENGTH - 1)) ? MAX_LENGTH - 1 : MAX_LENGTH;
     }
 }
