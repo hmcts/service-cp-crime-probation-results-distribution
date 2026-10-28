@@ -1245,9 +1245,24 @@ failed and unknown requests; run both runners; compare output with seeded state.
       workload identity).
       GREEN: `RequestListingRunnerTest` 9/9, `DlqCompletedListingRunnerTest` 4/4,
       `PackagedListingCommandsIT` 3/3 and `RequestListingQueryTest` 25/25 PASSED.
-- [ ] T064 [US6] `TelemetryPrivacyTest`/`LogStatementSweepTest` extension: sweep both listings'
+- [X] T064 [US6] `TelemetryPrivacyTest`/`LogStatementSweepTest` extension: sweep both listings'
       output for the forbidden content set (FR-004-041, FR-004-009 SC) —
       `src/test/java/.../support/LogStatementSweepTest.java` (extend, do not duplicate)
+      Extended the existing `config/LogStatementSweepTest` and `config/TelemetryPrivacyTest` (this
+      branch's sweeps live in `config/`, not `support/`), no new class. Static: every log call
+      and every string literal (each SQL fragment and printed text) of the eleven listing sources
+      names no `operator`, `audit`, `command`, `userId`/`user_id`, `body`, `payload` or
+      `CJSCPPUID`, and the dead-letter peek never reads a message's application properties,
+      dead-letter description or raw AMQP message. Runtime: both runners over the real queries,
+      fed a dead-letter queue and a store whose free-text fields hold a canary, and a refused
+      listing whose arguments are the canary — no captured line carries the canary, and every
+      `key=` on every line is one of the listings' bounded keys.
+      Characterisation over T061–T063's code, so no red run of its own. GREEN on first run:
+      `LogStatementSweepTest` 4/4 and `TelemetryPrivacyTest` 2/2. Shown falsifiable by two
+      reverted mutations: echoing the raw `messageId` in `DlqCompletedListingQuery` failed the
+      runtime sweep (`Expecting no elements of: [... CANARY ...]`), and adding `pr.audit_note` to
+      `JdbcRequestListingRepository`'s select list failed the static sweep (`literal "pr.status AS
+      request_status, ... pr.audit_note ...": audit`).
 
 **Checkpoint**: operators can select resend IDs and DLQ cleanup candidates without reading code or
 writing ad-hoc SQL.

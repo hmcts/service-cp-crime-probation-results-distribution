@@ -8,6 +8,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -33,6 +35,24 @@ class LogStatementSweepTest {
     private static final String SYS_OUT = "System" + ".out";
     private static final String SYS_ERR = "System" + ".err";
     private static final String PRINT_STACK = "printStack" + "Trace";
+
+    private static final String MAIN = "src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/";
+    private static final List<String> LISTING_SOURCES = List.of(
+            MAIN + "application/RequestListingQuery.java",
+            MAIN + "application/RequestListing.java",
+            MAIN + "application/RequestListingRequest.java",
+            MAIN + "application/DlqCompletedListingQuery.java",
+            MAIN + "application/DlqCompletedListing.java",
+            MAIN + "application/DeadLetterReader.java",
+            MAIN + "cli/RequestListingRunner.java",
+            MAIN + "cli/DlqCompletedListingRunner.java",
+            MAIN + "persistence/RequestListingRepository.java",
+            MAIN + "persistence/JdbcRequestListingRepository.java",
+            MAIN + "inbound/DeadLetterQueuePeeker.java");
+    private static final Pattern STRING_LITERAL = Pattern.compile("\"(?:[^\"\\\\]|\\\\.)*\"");
+    private static final List<String> FORBIDDEN_IN_LISTINGS = List.of("oper" + "ator",
+            "audit", "comm" + "and", "user" + "Id", "user_" + "id", "bo" + "dy", "pay" + "load",
+            "CJSCPP" + "UID");
 
     private static final String OPERATOR_TOKEN = "oper" + "ator";
     private static final String REASON_TOKEN = "rea" + "son";
@@ -88,6 +108,45 @@ class LogStatementSweepTest {
         }
         assertThat(offenders).as("operations-API log statements reaching for operator, reason or CJSCPPUID")
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName("no listing log line or store read reaches for a command, body, payload, audit "
+            + "note, operator or userId (slice 004, FR-004-041, FR-004-043)")
+    void no_listing_reaches_for_forbidden_content() {
+        final List<String> offenders = new ArrayList<>();
+        for (final String source : LISTING_SOURCES) {
+            final Path file = Path.of(source);
+            final String content = read(file);
+            final Matcher logCall = LOG_CALL.matcher(content);
+            while (logCall.find()) {
+                forbiddenIn(logCall.group(1)).ifPresent(token ->
+                        offenders.add(file + " log line: " + token));
+            }
+            // Every SQL fragment and every printed text is a string literal: none of them may name
+            // the stored command, audit_note, an operator, a body or a user id.
+            final Matcher literal = STRING_LITERAL.matcher(content);
+            while (literal.find()) {
+                forbiddenIn(literal.group()).ifPresent(token ->
+                        offenders.add(file + " literal " + literal.group() + ": " + token));
+            }
+        }
+        final String peeker = read(Path.of(MAIN + "inbound/DeadLetterQueuePeeker.java"));
+        for (final String accessor : List.of("getApplication" + "Properties(",
+                "getDeadLetterError" + "Description(", "getRaw" + "AmqpMessage(")) {
+            if (peeker.contains(accessor)) {
+                offenders.add("DeadLetterQueuePeeker reads " + accessor);
+            }
+        }
+        assertThat(offenders).as("listing sources reaching for content they must never print")
+                .isEmpty();
+    }
+
+    private static Optional<String> forbiddenIn(final String text) {
+        final String lower = text.toLowerCase(Locale.ROOT);
+        return FORBIDDEN_IN_LISTINGS.stream()
+                .filter(token -> lower.contains(token.toLowerCase(Locale.ROOT)))
+                .findFirst();
     }
 
     private static List<Path> javaSources(final String... roots) {
