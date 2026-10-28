@@ -19,6 +19,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.SupportSubmission;
 
 /**
  * The JDBC {@link ProcessedRequestRepository}. The insert is the idempotency claim: it writes the
@@ -93,6 +94,12 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                                final ReplayRoute route) {
         return Boolean.TRUE.equals(transactionTemplate.execute(status ->
                 lockedAdmitReplay(source, requestId, claim, route)));
+    }
+
+    @Override
+    public boolean admitReplay(final String source, final UUID requestId, final RunClaim claim,
+                               final ReplayRoute route, final SupportSubmission support) {
+        return admitReplay(source, requestId, claim, route);
     }
 
     private boolean lockedAdmitReplay(final String source, final UUID requestId,
@@ -297,6 +304,13 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
             inserted = false;
         }
         return inserted;
+    }
+
+    @Override
+    public boolean insertClaim(final DistributionCommand command, final String commandBody,
+                               final String fingerprint, final RunClaim claim,
+                               final SupportSubmission support) {
+        return insertClaim(command, commandBody, fingerprint, claim);
     }
 
     private void insertRows(final DistributionCommand command, final String commandBody,

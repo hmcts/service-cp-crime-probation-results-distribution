@@ -5,6 +5,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.SupportSubmission;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository.RequestRecord;
 
@@ -75,6 +76,24 @@ public final class IdempotencyGuard {
             }
         }
         return decision;
+    }
+
+    /**
+     * Decides the outcome for one delivery marked {@code origin = SUPPORT}, carrying the
+     * submit-hearing markers to audit when it is admitted (slice 004, FR-004-057).
+     *
+     * @param command       the parsed command
+     * @param commandBody   the admitted body exactly as received
+     * @param messageId     the delivery's {@code messageId}
+     * @param deliveryCount the broker delivery count
+     * @param route         the replay route ({@code support})
+     * @param support       the submit-hearing markers
+     * @return the guard's decision
+     */
+    public GuardDecision admit(final DistributionCommand command, final String commandBody,
+                               final String messageId, final long deliveryCount,
+                               final ReplayRoute route, final SupportSubmission support) {
+        return admit(command, commandBody, messageId, deliveryCount, route);
     }
 
     private GuardDecision decideForKnownKey(final DistributionCommand command,

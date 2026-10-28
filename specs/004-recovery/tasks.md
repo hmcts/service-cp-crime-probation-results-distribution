@@ -1292,7 +1292,7 @@ observe a new request with the audit line and `origin=queue` outcomes.
       RED: 4 of 4 failed, e.g. `reproduces the producer's pinned vector exactly : expected:
       e74ed270-0b62-36d9-bb10-12bd6baa5bea but was: 00000000-0000-0000-0000-000000000000`, `is a
       version-3 name-based UUID : expected: 3 but was: 0`.
-- [ ] T066 [P] [US8] `SubmitHearingActionTest`: dated key, then undated key, never the query API;
+- [X] T066 [P] [US8] `SubmitHearingActionTest`: dated key, then undated key, never the query API;
       neither key present → `payload-unavailable`, nothing enqueued; enqueued command carries the
       raw `sharedTime` string, `eventType=Hearing_Resulted`, no `userId`,
       `messageId=RESULTS:{requestId}`, `correlationId=hearingId`, `origin=SUPPORT` +
@@ -1302,6 +1302,52 @@ observe a new request with the audit line and `origin=queue` outcomes.
       normally while `intake_control.paused_by_operator = true`** — submit-hearing is available
       whatever the intake state and is never refused `intake-paused` (FR-004-054–058, FR-004-058) —
       `src/test/java/.../application/SubmitHearingActionTest.java`
+      Test first. The action's cases are in `application/SubmitHearingActionTest` (plain mocks
+      over the real `CachedHearingPayloadAdapter` and a mocked Lettuce connection: the dated key's
+      payload, else the undated key, in that order, and no other source; neither key, or a
+      payload whose `sharedTime` is absent, not a string or not an instant, is
+      `payload-unavailable` with nothing enqueued; the enqueued command is
+      `RESULTS:{requestId}`/`correlationId = hearingId`, its body exactly the six fields with the
+      raw `sharedTime` string and no `userId`, valid by the closed-contract parser; the properties
+      are exactly `origin = SUPPORT`, `operator`, `runId`, `reason`, operator and reason sanitised
+      to one line; an offset rendering of `sharedTime` keeps its raw string in the recipe and the
+      body; `missing-argument`/`unreadable-argument`/`argument-too-long` refused whole before the
+      cache, never echoed; a fresh run id each time; `broker-unavailable`; and the action's one
+      constructor takes the cache, the enqueue port and the run-id source only — no pause gate,
+      no store — so the intake state cannot refuse it) and `adapter/servicebus/
+      ServiceBusCommandEnqueuerIT` (the emulator: `messageId`, `correlationId`, `contentType =
+      application/json`, body and the four application properties as sent; a closed sender is
+      `CommandEnqueueException`). The admission cases (T069) are where that code lives:
+      `IdempotencyGuardTest` `SupportAdmission` (a first delivery inserts with the markers, a
+      `FAILED` request replays on route `support` with them, `COMPLETED` is a no-op and a live
+      claim abandons, auditing nothing), `ProbationMessageListenerTest` (a `SUPPORT` delivery's
+      `operator`/`runId`/`reason` reach the guard sanitised to one line of at most 200
+      characters, an absent or non-text one as `-`; a `REPLAY` delivery's are never read),
+      `persistence/SupportSubmissionAuditIT` (the timestamped `SUPPORT_SUBMISSION operator=...
+      runId=... reason=...` line on a first-delivery insert and, after the replay's two lines, on
+      a replay; nothing on a lost race or a no-longer-`FAILED` row) and `inbound/
+      SupportSubmissionAdmissionIT` (real deliveries: a first delivery runs `origin = queue` with
+      the line; a `FAILED` request recovers on route `support` with the line last; a second copy
+      after completion is a no-op). The intake-state and never-the-query-API cases against the
+      packaged command are T070's. Compile-safe seams: `CommandEnqueuer` (a send-only broker port
+      beside `ReplayEnqueuer`, which carries no application properties), `SubmitHearingRequest`,
+      `SubmitHearingOutcome`, a `SubmitHearingAction` answering `payload-unavailable`, a no-op
+      `ServiceBusCommandEnqueuer`, `domain/SupportSubmission`, and `IdempotencyGuard`/
+      `ProcessedRequestRepository` overloads taking a `SupportSubmission` that ignore it.
+      RED: 28 of 64 failed, e.g. `uses the dated key's payload ... : expected:
+      Enqueued[requestId=e74ed270-0b62-36d9-bb10-12bd6baa5bea, runId=...] but was:
+      PayloadUnavailable[]`, every input case `expected: Refused[reason=MISSING_ARGUMENT]` (or
+      `UNREADABLE_ARGUMENT`, `ARGUMENT_TOO_LONG`) `but was: PayloadUnavailable[]`, `the enqueued
+      command was not on the queue`, `Expecting code to raise a throwable`, the listener's
+      `Argument(s) are different! Wanted: guard.admit(..., SupportSubmission[operator=local dev,
+      ...])`, `SupportSubmissionAuditIT`'s `Expected size: 3 but was: 2 in:
+      ["... REPLAYED_AFTER_FAILURE prior=leg-exhausted", "... route=support"]` and `Expecting
+      actual not to be null` (no audit line), and the admission IT's `"... route=support" to end
+      with: "SUPPORT_SUBMISSION operator=local-dev runId=... reason=share never admitted"`. Six of
+      them failed through Mockito's strict stubs rather than an AssertJ line — the guard calling
+      the overload without the markers (`PotentialStubbingProblem` on `insertClaim`/
+      `admitReplay`) and the seam never reading the cache (`UnnecessaryStubbingException` on the
+      four payload-unavailable cases) — which is the behaviour under test, not a compile error.
 
 ### Implementation for User Story 8
 

@@ -19,6 +19,8 @@ import io.micrometer.core.instrument.search.Search;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,7 +40,9 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.SupportSubmission;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener.Abandon;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener.Complete;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener.DeadLetter;
@@ -354,6 +358,65 @@ class ProbationMessageListenerTest {
         verify(context, never()).deadLetter(any());
         verify(spiedStore).suspendIntake();
         assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("hands a SUPPORT delivery's operator, run id and reason to the guard, each sanitised "
+            + "to one line of at most 200 characters (slice 004, FR-004-057)")
+    void support_delivery_carries_its_markers_to_the_guard() {
+        final String runId = "7d1f0c9a-55b2-4c1e-8f3a-9b6e2d4c1a77";
+        final ServiceBusReceivedMessageContext context = contextWithProperties(Map.of(
+                "origin", "SUPPORT", "operator", "local\ndev", "runId", runId,
+                "reason", " " + "r".repeat(250) + " "));
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SUPPORT),
+                any(SupportSubmission.class))).thenReturn(new GuardDecision.DuplicateComplete());
+
+        listener.processMessage(context);
+
+        verify(guard).admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SUPPORT),
+                eq(new SupportSubmission("local dev", runId, "r".repeat(200))));
+        verify(guard, never()).admit(any(), any(), any(), anyLong(), any());
+        verify(context).complete();
+    }
+
+    @Test
+    @DisplayName("records an absent or non-text SUPPORT marker as '-'")
+    void support_delivery_without_markers_records_a_dash() {
+        final ServiceBusReceivedMessageContext context = contextWithProperties(Map.of(
+                "origin", "SUPPORT", "runId", 7));
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SUPPORT),
+                any(SupportSubmission.class))).thenReturn(new GuardDecision.DuplicateComplete());
+
+        listener.processMessage(context);
+
+        verify(guard).admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SUPPORT),
+                eq(new SupportSubmission("-", "-", "-")));
+    }
+
+    @Test
+    @DisplayName("reads no operator marker from a delivery not marked SUPPORT")
+    void replay_delivery_carries_no_markers() {
+        final ServiceBusReceivedMessageContext context = contextWithProperties(Map.of(
+                "origin", "REPLAY", "operator", "someone", "reason", "why"));
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SERVICE)))
+                .thenReturn(new GuardDecision.DuplicateComplete());
+
+        listener.processMessage(context);
+
+        verify(guard, never()).admit(any(), any(), any(), anyLong(), any(), any());
+        verify(context).complete();
+    }
+
+    private ServiceBusReceivedMessageContext contextWithProperties(
+            final Map<String, Object> properties) {
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+        final ServiceBusReceivedMessage message = context.getMessage();
+        when(message.getApplicationProperties()).thenReturn(new HashMap<>(properties));
+        when(message.getMessageId()).thenReturn("RESULTS:" + command.requestId());
+        return context;
     }
 
     private ServiceBusReceivedMessageContext contextFor(final String body) {

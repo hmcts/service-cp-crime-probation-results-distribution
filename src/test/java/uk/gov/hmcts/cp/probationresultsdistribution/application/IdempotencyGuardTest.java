@@ -23,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.SupportSubmission;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository.RequestRecord;
 
@@ -321,6 +322,67 @@ class IdempotencyGuardTest {
                     ReplayRoute.SERVICE);
 
             assertThat(decision).isInstanceOf(GuardDecision.Admitted.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("admitting a delivery marked origin = SUPPORT (slice 004, FR-004-057)")
+    class SupportAdmission {
+
+        private final SupportSubmission support = new SupportSubmission("local-dev",
+                "7d1f0c9a-55b2-4c1e-8f3a-9b6e2d4c1a77", "share never admitted");
+
+        @Test
+        @DisplayName("a first delivery inserts its claim with the submit-hearing markers to audit")
+        void first_delivery_inserts_with_the_markers() {
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.empty());
+            when(repository.insertClaim(eq(command), eq(BODY), eq(fp), any(), eq(support)))
+                    .thenReturn(true);
+
+            final GuardDecision decision = guard.admit(command, BODY, MESSAGE_ID, 0L,
+                    ReplayRoute.SUPPORT, support);
+
+            assertThat(decision).isInstanceOf(GuardDecision.Admitted.class);
+            assertThat(((GuardDecision.Admitted) decision).replayMessageId()).isEmpty();
+            verify(repository, never()).insertClaim(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("a FAILED request is admitted as a replay, route support, with the markers")
+        void failed_request_replays_with_the_markers() {
+            when(repository.find("RESULTS", command.requestId()))
+                    .thenReturn(Optional.of(new RequestRecord("FAILED", fp, false)));
+            when(repository.admitReplay(eq("RESULTS"), eq(command.requestId()), any(),
+                    eq(ReplayRoute.SUPPORT), eq(support))).thenReturn(true);
+
+            final GuardDecision decision = guard.admit(command, BODY, MESSAGE_ID, 0L,
+                    ReplayRoute.SUPPORT, support);
+
+            assertThat(decision).isInstanceOf(GuardDecision.Admitted.class);
+            assertThat(((GuardDecision.Admitted) decision).replayMessageId()).contains(MESSAGE_ID);
+            verify(repository, never()).admitReplay(any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("a COMPLETED request is a no-op, auditing nothing")
+        void completed_request_is_a_no_op() {
+            when(repository.find("RESULTS", command.requestId()))
+                    .thenReturn(Optional.of(new RequestRecord("COMPLETED", fp, false)));
+
+            assertThat(guard.admit(command, BODY, MESSAGE_ID, 0L, ReplayRoute.SUPPORT, support))
+                    .isInstanceOf(GuardDecision.DuplicateComplete.class);
+            verify(repository, never()).insertClaim(any(), any(), any(), any(), any());
+            verify(repository, never()).admitReplay(any(), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("a live claim abandons, auditing nothing")
+        void live_claim_abandons() {
+            when(repository.find("RESULTS", command.requestId()))
+                    .thenReturn(Optional.of(new RequestRecord("RECEIVED", fp, true)));
+
+            assertThat(guard.admit(command, BODY, MESSAGE_ID, 0L, ReplayRoute.SUPPORT, support))
+                    .isInstanceOf(GuardDecision.Abandon.class);
         }
     }
 }

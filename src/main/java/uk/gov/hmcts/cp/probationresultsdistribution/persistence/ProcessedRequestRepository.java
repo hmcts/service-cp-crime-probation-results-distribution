@@ -11,6 +11,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.SupportSubmission;
 
 /**
  * The processed-log store the idempotency guard claims through (design §4.4, §4.6). The interface is
@@ -42,6 +43,22 @@ public interface ProcessedRequestRepository {
      */
     boolean insertClaim(DistributionCommand command, String commandBody, String fingerprint,
                         RunClaim claim);
+
+    /**
+     * {@link #insertClaim(DistributionCommand, String, String, RunClaim)} for a delivery marked
+     * {@code origin = SUPPORT}: in the same transaction, the submit-hearing admission line — the
+     * operator, run id and reason, already sanitised to one line each — is appended to
+     * {@code audit_note} (slice 004, FR-004-057).
+     *
+     * @param command     the admitted command
+     * @param commandBody the admitted body exactly as received
+     * @param fingerprint the request fingerprint
+     * @param claim       the claim to take
+     * @param support     the submit-hearing markers to audit
+     * @return {@code true} when the claim was inserted; {@code false} on a unique violation
+     */
+    boolean insertClaim(DistributionCommand command, String commandBody, String fingerprint,
+                        RunClaim claim, SupportSubmission support);
 
     /**
      * Atomically takes over an absent or expired claim, bumping {@code attempts}.
@@ -111,6 +128,21 @@ public interface ProcessedRequestRepository {
      *     when the request was no longer {@code FAILED} (a race with another admission)
      */
     boolean admitReplay(String source, UUID requestId, RunClaim claim, ReplayRoute route);
+
+    /**
+     * {@link #admitReplay(String, UUID, RunClaim, ReplayRoute)} for a delivery marked
+     * {@code origin = SUPPORT}: the same one statement also appends the submit-hearing admission
+     * line — the operator, run id and reason — to {@code audit_note} (slice 004, FR-004-057).
+     *
+     * @param source    the command source
+     * @param requestId the request id
+     * @param claim     the fresh claim to take
+     * @param route     the replay route ({@code support})
+     * @param support   the submit-hearing markers to audit
+     * @return {@code true} when the replay statement matched a {@code FAILED} row
+     */
+    boolean admitReplay(String source, UUID requestId, RunClaim claim, ReplayRoute route,
+                        SupportSubmission support);
 
     /**
      * Checks the latest HMPPS attempt before a claimed queue or replay run performs external work.
