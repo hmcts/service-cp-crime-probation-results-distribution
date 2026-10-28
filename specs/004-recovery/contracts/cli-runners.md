@@ -85,12 +85,15 @@ limit, `max-ids-per-run` ≥ 1, the deployed-profile secrets and forbidden prope
 blank `distribution.gateway.subscription-key` outside the `local` and `test` profiles. A failed
 check exits `2` (`FAILED`) with `reason=invalid-configuration`, before any client is built.
 
-**Telemetry**: a command-line run is a short-lived process with no metrics scrape of its own, so its
-`probation_resend_refusals_total`, `probation_stale_runner_rejections_total` and
-`probation_leg_outcomes_total` increments are process-local and are not relied on. For a
-command-line run, the authoritative record is the run's one structured report line (every ID's
-outcome, refusal codes included, and the summary) and the per-outcome log lines; the counters are
-exported for runs served by the pod (slice 005's operations API).
+**Telemetry**: the command's counters (`probation_resend_refusals_total`,
+`probation_stale_runner_rejections_total`, `probation_leg_outcomes_total`) are recorded on the
+command context's own meter registry, the one the service exports through, and the push registry
+(OTLP) publishes them when the context closes, before the process exits
+(`PackagedResendLegCommandIT`). The command is short-lived and has no scrape of its own, so a
+pull-only registry never sees them, and a push that fails at exit is lost. That makes the run's one
+structured report line, with every ID's outcome, the refusal codes and the summary, and the
+per-outcome log lines the authoritative per-run record. The counters add to it; they do not
+replace it.
 
 **Output**: one report (also written as one structured log line) listing the run's `resend_run_id`,
 the leg, whether each override was requested, every distinct listed ID exactly once with its outcome,

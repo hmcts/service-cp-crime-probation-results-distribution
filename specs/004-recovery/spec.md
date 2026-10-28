@@ -924,8 +924,8 @@ Assumptions.
   completion was fenced) — and a summary (IDs taken, `SENT`, `NOT_APPLICABLE` by reason, `FAILED` by
   reason, refusals by code, `not-run`, `claimed-incomplete`). A run during which the store failed
   still produces its report, and its result is failed (edge case "The store fails during a resend
-  run"). For a command-line run the report line is the authoritative telemetry: the process is
-  short-lived and its counters are not exported (`contracts/cli-runners.md` §2).
+  run"). For a command-line run the report line is the authoritative per-run record; its counters
+  are pushed when the command's context closes and supplement it (`contracts/cli-runners.md` §2).
   The same report MUST be written as one structured log line, and each refused ID MUST increment
   `probation_resend_refusals_total{reason}`. *(H16; A3-56; §4.4 Output row)*
 - **FR-004-040**: Every leg outcome of a replayed or resent run MUST be logged as one line with its

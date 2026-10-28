@@ -17,8 +17,10 @@
  * a bounded code ({@code unknown-request}, {@code not-eligible}, {@code resend-in-progress} or
  * {@code request-claimed}) while the rest proceed (design H16). Directly after the payload fetch,
  * before any leg stage, it compares the payload's {@code sharedTime} with the request's stored
- * one, as instants (design H17). Its forced-resend override sends a leg already {@code SENT} or
- * {@code NOT_APPLICABLE} again, with operator and reason, as a deliberate duplicate (design H9).
+ * one, as instants (design H17). Its forced-resend override, which will send a leg already
+ * {@code SENT} or {@code NOT_APPLICABLE} again, with operator and reason, as a deliberate duplicate
+ * (design H9), is not built yet (slice 004 US5, T058): until then such a leg is
+ * {@code not-eligible}.
  * {@code SubmitHearingAction} and {@code RequestIdRecipe} are the submit-hearing repair (design
  * §4.8 action 5).
  *
