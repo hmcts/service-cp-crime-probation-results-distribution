@@ -931,13 +931,40 @@ labelled `forced`, without moving the request off `COMPLETED`.
 
 ### Tests for User Story 5
 
-- [ ] T054 [P] [US5] `ForcedResendIT`: `SENT`/`NOT_APPLICABLE` without the override → `not-eligible`;
+- [X] T054 [P] [US5] `ForcedResendIT`: `SENT`/`NOT_APPLICABLE` without the override → `not-eligible`;
       with it → re-fetched, `sharedTime`-checked (with `allow-changed-payload` as any resend),
       switch re-read, re-redacted, digested, sent; row records operator + both override forms when
       both used; reason sanitised ≤ 200 chars appended to `audit_note`; request stays `COMPLETED`
       whatever the outcome; outcome counted `origin=resend, forced=true`; override for a `FAILED` ID
       is silently not used (`forced=false`, no reason line) (FR-004-006, FR-004-036–038) —
       `src/test/java/.../application/ForcedResendIT.java`
+      Ten cases over `ResendTestSupport` (real PostgreSQL, Redis, WireMock) in three nested
+      classes: `WithoutOverride` (a `SENT` and a `NOT_APPLICABLE` latest row are `not-eligible`, no
+      row, no POST); `WithOverride` (a `SENT` leg re-run on attempt 2 `resend` with `operator`,
+      `override = true`, note `override=force-resend`, the switch re-read, one POST, the request
+      left `COMPLETED(both-legs-terminal)`, the reason on `audit_note`, `leg_outcomes_total{origin=
+      resend, forced=true}`, the outcome line `forced=true` and the report line
+      `allowTerminalSuccess=true` without the reason text; a `NOT_APPLICABLE` leg re-run to `SENT`,
+      and one the rules still empty staying `NOT_APPLICABLE(sjp-or-box-hearing)` labelled forced; a
+      reason with a line break and control characters appended as one line; a later `sharedTime`
+      `FAILED(payload-changed)` with the forced note and nothing sent, and with
+      `allow-changed-payload` `SENT` with note `override=force-resend;override=allow-changed-payload`;
+      a forced 400 `FAILED(receiver-rejected)` at ERROR with `forced=true`, the request still
+      `COMPLETED`, then resent without the override on attempt 3); `PerId` (one run listing a
+      `FAILED` and a `SENT` id with the override: the `FAILED` id resent with no override, no note,
+      no reason line and `forced=false`, the `SENT` id forced). Compile-safe seam landed with it:
+      `ResendRequest.allowTerminalSuccess` (a five-component record keeping a four-argument
+      constructor), not yet read by `LegResender`.
+      RED: 8 of 10 fail on assertions against the seam — e.g. `WithOverride > a SENT leg is run
+      again on a new resend row ... : Expecting actual: Optional[Refused[reason=NOT_ELIGIBLE]] to
+      contain: Ran[status=SENT, reason=Optional.empty] but did not.`, `... changed sharedTime
+      without allow-changed-payload ... : ... to contain: Ran[status=FAILED,
+      reason=Optional[PAYLOAD_CHANGED]] but did not.`, `the reason is sanitised to one line ... :
+      Expecting actual not to be null` (no `audit_note`), `PerId > for a FAILED leg the override is
+      not used ... : Expecting actual: Optional[Refused[reason=NOT_ELIGIBLE]] to contain:
+      Ran[status=SENT, ...]` (the forced id, line 252; the `FAILED` id's half already passes). The
+      two `WithoutOverride` cases pass against the seam: they pin Phase 6's refusal, kept as the
+      FR-004-036 guard that the override never widens eligibility on its own.
 
 ### Implementation for User Story 5
 
