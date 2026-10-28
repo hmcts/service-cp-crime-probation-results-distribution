@@ -98,7 +98,7 @@ public final class DistributionRunner {
     public RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,
                          final RunClaim claim, final boolean finalPermittedDelivery) {
         Objects.requireNonNull(claim, "claim");
-        return run(command, runOrigin, finalPermittedDelivery,
+        return runPipeline(command, runOrigin, finalPermittedDelivery,
                 outcome -> outboundLog.record(outcome, claim));
     }
 
@@ -119,7 +119,7 @@ public final class DistributionRunner {
                          final String replayMessageId) {
         Objects.requireNonNull(claim, "claim");
         Objects.requireNonNull(replayMessageId, "replayMessageId");
-        return run(command, runOrigin, finalPermittedDelivery,
+        return runPipeline(command, runOrigin, finalPermittedDelivery,
                 outcome -> outboundLog.recordReplay(outcome, claim, replayMessageId));
     }
 
@@ -164,8 +164,8 @@ public final class DistributionRunner {
         return result;
     }
 
-    private RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,
-                          final boolean finalPermittedDelivery, final LegWriter writer) {
+    private RunResult runPipeline(final DistributionCommand command, final AttemptOrigin runOrigin,
+                                  final boolean finalPermittedDelivery, final LegWriter writer) {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(runOrigin, "runOrigin");
         final Optional<FetchedPayload> fetched = payloadSource.fetch(command);

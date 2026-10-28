@@ -32,6 +32,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     private static final String REQUEST_ID = "requestId";
     private static final String OWNER = "owner";
     private static final String TOKEN = "token";
+    private static final String LEASE = "lease";
     private static final String REQUEST_WHERE = "WHERE source = :source AND request_id = :requestId ";
     private static final String ACTIVE_REQUEST = "AND status IN ('RECEIVED', 'RETRYING') ";
 
@@ -118,7 +119,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "AND oml.attempt_origin = 'resend' AND oml.status = 'PENDING')")
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
-                .param("lease", (double) leaseSeconds)
+                .param(LEASE, (double) leaseSeconds)
                 .param("route", route.wireValue())
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
@@ -213,7 +214,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                 .param("attempt", attempt)
                 .param(OWNER, legClaim.owner().toString())
                 .param(TOKEN, legClaim.token())
-                .param("lease", (double) leaseSeconds)
+                .param(LEASE, (double) leaseSeconds)
                 .param("resendRunId", resendRunId)
                 .param("operator", operator)
                 .update();
@@ -236,11 +237,11 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
      */
     private record LatestLeg(int attempt, String attemptOrigin, String status, String reason) {
 
-        boolean pendingResend() {
+        /* default */ boolean pendingResend() {
             return "resend".equals(attemptOrigin) && "PENDING".equals(status);
         }
 
-        boolean resendEligible() {
+        /* default */ boolean resendEligible() {
             return "FAILED".equals(status) && !(attempt == 1 && "rolled-back".equals(reason));
         }
     }
@@ -279,7 +280,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                 .param("command", commandBody)
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
-                .param("lease", (double) leaseSeconds)
+                .param(LEASE, (double) leaseSeconds)
                 .update();
         jdbc.sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
                         + "attempt_origin, status, attempts) VALUES (:id, :source, :requestId, "
@@ -300,7 +301,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "AND (claim_expires_at IS NULL OR claim_expires_at <= now())")
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
-                .param("lease", (double) leaseSeconds)
+                .param(LEASE, (double) leaseSeconds)
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
                 .update();

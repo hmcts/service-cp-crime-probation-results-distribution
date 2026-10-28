@@ -735,7 +735,7 @@ code, five report entries, refusal counters incremented.
       (T041's five and T031's three), `RequestRecoveryTransitionTest` 12/12 (T040's nine and T015's
       three) PASSED; `RequestReplayStatementTest` 4/4, `IdempotencyGuardTest` 20/20 and
       `RollbackFencingIT` 6/6 still PASSED.
-- [ ] T047 [US3] [P] Implement `cli/ResendLegRunner.java` per `contracts/cli-runners.md` §2:
+- [X] T047 [US3] [P] Implement `cli/ResendLegRunner.java` per `contracts/cli-runners.md` §2:
       argument parsing/validation, calls `LegResender`, prints the per-ID report + summary, one
       structured log line, `probation_resend_refusals_total{reason}` per refused ID (FR-004-039)
       Test first: `cli/ResendLegRunnerTest` (11 cases) against a seam runner (`checkArguments`
@@ -750,6 +750,22 @@ code, five report entries, refusal counters incremented.
       packaged command refuses unreadable arguments with exit 1` passes before the change only
       because `OperatorCommandLine` refuses every unregistered action with exit 1; both are kept as
       guards that registering the action does not open resources for unreadable input.
+      Implementation: `ResendLegRunner.checkArguments` (static, the shape only: missing/blank
+      `--leg`/`--request-ids`/`--operator`/`--reason` → `missing-argument`; a leg other than `HMPPS`,
+      a list entry that is not a UUID, or `--force-resend-sent` → `unreadable-argument`; operator or
+      reason over 200 → `argument-too-long`) and `run` (the same check, then `LegResender.resend`;
+      one `resend-leg id ... outcome=<code>` line per ID and a `resend-leg done` summary; whole-run
+      refusal → `REFUSED`, `store-unavailable` → `FAILED`, a report → `DONE`). The refusal counter
+      and the one structured report line are `LegResender`'s (T043), so the operations API gets
+      them too. `OperatorCommandLine` checks `resend-leg`'s arguments before building any context
+      (exit 1), then runs it in the same separate CLI composition root as the four Phase 5 runners,
+      registered in its `RunnerDispatcher`; the arguments reach the runner as an
+      `OperatorArguments` bean, never as Spring command-line properties. The resend pipeline (Redis
+      client and connection, results-query and users-groups clients, gateway publisher, outbound
+      log, `DistributionRunner`, `LegResender`) is `@Lazy` and built only when `resend-leg` is
+      dispatched, from the same `distribution.*` properties the service binds.
+      GREEN: all 11 `ResendLegRunnerTest` cases PASSED; `PackagedIntakeCommandsIT` 4/4 and
+      `RunnerDispatcherTest` 3/3 still PASSED (the intake commands open no cache).
 - [ ] T048 [US3] [P] `OutcomeMetricsTest` (US3 half, extends T022's file): resend outcomes carry
       `origin=resend`, `forced=false`; log lines carry status/reason/HTTP status/body digest/
       `runOrigin`/`youth_switch` (FR-004-011, FR-004-040) — extends

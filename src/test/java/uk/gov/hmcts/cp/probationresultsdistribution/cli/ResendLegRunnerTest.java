@@ -110,7 +110,7 @@ class ResendLegRunnerTest {
 
     @Nested
     @DisplayName("the run (FR-004-039, FR-004-045)")
-    class Run {
+    class TheRun {
 
         @Test
         @DisplayName("hands the parsed ids, operator, reason and override to LegResender")

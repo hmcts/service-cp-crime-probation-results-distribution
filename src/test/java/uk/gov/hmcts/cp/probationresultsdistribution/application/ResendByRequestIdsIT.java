@@ -285,6 +285,8 @@ class ResendByRequestIdsIT extends ResendTestSupport {
     @DisplayName("the resend halves of DV-07 and DV-17 (FR-004-050a)")
     class RegisteredDeviations {
 
+        // The connection is closed on purpose before the run, and the client shut down in finally.
+        @SuppressWarnings("PMD.CloseResource")
         @Test
         @DisplayName("DV-07: a Redis failure falls back to the query API and fails payload-unavailable, never parks")
         void redis_failure_falls_back_and_fails_without_parking() {

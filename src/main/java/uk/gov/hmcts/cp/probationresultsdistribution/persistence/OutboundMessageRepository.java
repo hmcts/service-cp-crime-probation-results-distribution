@@ -28,6 +28,15 @@ public final class OutboundMessageRepository {
     private static final String STATUS = "status";
     private static final String SOURCE = "source";
     private static final String REQUEST_ID = "requestId";
+    private static final String REASON = "reason";
+    private static final String YOUTH_SWITCH = "youthSwitch";
+    private static final String HTTP_STATUS = "httpStatus";
+    private static final String PAYLOAD_SOURCE = "payloadSource";
+    private static final String SHARED_TIME = "sharedTime";
+    private static final String BODY_DIGEST = "bodyDigest";
+    private static final String SERVICE_VERSION = "serviceVersion";
+    private static final String SENT = "sent";
+    private static final String TOKEN = "token";
 
     private final JdbcClient jdbc;
     private final TransactionTemplate transactionTemplate;
@@ -94,23 +103,23 @@ public final class OutboundMessageRepository {
                         + "AND pr.claim_owner = :owner AND pr.claim_token = :token) "
                         + "RETURNING id")
                 .param(STATUS, outcome.status().wireValue())
-                .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
-                .param("youthSwitch",
+                .param(REASON, outcome.reason().map(LegReason::wireValue).orElse(null))
+                .param(YOUTH_SWITCH,
                         outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
-                .param("httpStatus",
+                .param(HTTP_STATUS,
                         outcome.httpStatus().isPresent() ? outcome.httpStatus().getAsInt() : null)
-                .param("payloadSource",
+                .param(PAYLOAD_SOURCE,
                         outcome.payloadSource().map(PayloadSource::wireValue).orElse(null))
-                .param("sharedTime", outcome.payloadSharedTime()
+                .param(SHARED_TIME, outcome.payloadSharedTime()
                         .map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC))
                         .orElse(null))
-                .param("bodyDigest", bodyDigest)
-                .param("serviceVersion", versionToWrite)
-                .param("sent", sent)
+                .param(BODY_DIGEST, bodyDigest)
+                .param(SERVICE_VERSION, versionToWrite)
+                .param(SENT, sent)
                 .param(SOURCE, outcome.command().source())
                 .param(REQUEST_ID, outcome.command().requestId())
                 .param("owner", claim.owner().toString())
-                .param("token", claim.token())
+                .param(TOKEN, claim.token())
                 .query(UUID.class)
                 .optional();
 
@@ -210,24 +219,24 @@ public final class OutboundMessageRepository {
                         + "WHERE pr.source = :source AND pr.request_id = :requestId "
                         + "AND pr.claim_owner = :owner AND pr.claim_token = :token) RETURNING id")
                 .param(STATUS, outcome.status().wireValue())
-                .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
-                .param("youthSwitch",
+                .param(REASON, outcome.reason().map(LegReason::wireValue).orElse(null))
+                .param(YOUTH_SWITCH,
                         outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
-                .param("httpStatus",
+                .param(HTTP_STATUS,
                         outcome.httpStatus().isPresent() ? outcome.httpStatus().getAsInt() : null)
-                .param("payloadSource",
+                .param(PAYLOAD_SOURCE,
                         outcome.payloadSource().map(PayloadSource::wireValue).orElse(null))
-                .param("sharedTime", outcome.payloadSharedTime()
+                .param(SHARED_TIME, outcome.payloadSharedTime()
                         .map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC))
                         .orElse(null))
-                .param("bodyDigest", bodyDigest)
-                .param("serviceVersion", versionToWrite)
-                .param("sent", sent)
+                .param(BODY_DIGEST, bodyDigest)
+                .param(SERVICE_VERSION, versionToWrite)
+                .param(SENT, sent)
                 .param("messageId", rerunByMessageId)
                 .param(SOURCE, outcome.command().source())
                 .param(REQUEST_ID, outcome.command().requestId())
                 .param("owner", claim.owner().toString())
-                .param("token", claim.token())
+                .param(TOKEN, claim.token())
                 .query(UUID.class)
                 .optional();
 
@@ -276,25 +285,25 @@ public final class OutboundMessageRepository {
                         + "AND pr.claim_owner = :owner AND pr.claim_token = :token) "
                         + "RETURNING id")
                 .param(STATUS, outcome.status().wireValue())
-                .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
-                .param("youthSwitch",
+                .param(REASON, outcome.reason().map(LegReason::wireValue).orElse(null))
+                .param(YOUTH_SWITCH,
                         outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
-                .param("httpStatus",
+                .param(HTTP_STATUS,
                         outcome.httpStatus().isPresent() ? outcome.httpStatus().getAsInt() : null)
-                .param("payloadSource",
+                .param(PAYLOAD_SOURCE,
                         outcome.payloadSource().map(PayloadSource::wireValue).orElse(null))
-                .param("sharedTime", outcome.payloadSharedTime()
+                .param(SHARED_TIME, outcome.payloadSharedTime()
                         .map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC))
                         .orElse(null))
-                .param("bodyDigest", bodyDigest)
-                .param("serviceVersion", versionToWrite)
-                .param("sent", sent)
+                .param(BODY_DIGEST, bodyDigest)
+                .param(SERVICE_VERSION, versionToWrite)
+                .param(SENT, sent)
                 .param("messageId", rerunByMessageId)
                 .param("targetAttempt", targetAttempt)
                 .param(SOURCE, outcome.command().source())
                 .param(REQUEST_ID, outcome.command().requestId())
                 .param("owner", claim.owner().toString())
-                .param("token", claim.token())
+                .param(TOKEN, claim.token())
                 .query(UUID.class)
                 .optional();
 
@@ -368,23 +377,23 @@ public final class OutboundMessageRepository {
                         + "WHERE id = :id AND claim_token = :token AND status = 'PENDING' "
                         + "RETURNING id")
                 .param(STATUS, outcome.status().wireValue())
-                .param("reason", outcome.reason().map(LegReason::wireValue).orElse(null))
-                .param("youthSwitch",
+                .param(REASON, outcome.reason().map(LegReason::wireValue).orElse(null))
+                .param(YOUTH_SWITCH,
                         outcome.youthSwitch().map(YouthSwitchRecordedValue::wireValue).orElse(null))
-                .param("httpStatus",
+                .param(HTTP_STATUS,
                         outcome.httpStatus().isPresent() ? outcome.httpStatus().getAsInt() : null)
-                .param("payloadSource",
+                .param(PAYLOAD_SOURCE,
                         outcome.payloadSource().map(PayloadSource::wireValue).orElse(null))
-                .param("sharedTime", outcome.payloadSharedTime()
+                .param(SHARED_TIME, outcome.payloadSharedTime()
                         .map(instant -> OffsetDateTime.ofInstant(instant, ZoneOffset.UTC))
                         .orElse(null))
-                .param("bodyDigest", bodyDigest)
-                .param("serviceVersion", versionToWrite)
-                .param("sent", outcome.status() == LegStatus.SENT)
+                .param(BODY_DIGEST, bodyDigest)
+                .param(SERVICE_VERSION, versionToWrite)
+                .param(SENT, outcome.status() == LegStatus.SENT)
                 .param("override", overrideAllowChangedPayload)
                 .param("note", note)
                 .param("id", attempt.attemptId())
-                .param("token", attempt.legClaim().token())
+                .param(TOKEN, attempt.legClaim().token())
                 .query(UUID.class)
                 .optional();
         final int rows;

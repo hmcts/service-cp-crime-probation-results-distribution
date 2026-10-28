@@ -111,6 +111,8 @@ public final class LegResender {
         return refusal;
     }
 
+    // One report entry per distinct id is the report itself (FR-004-039).
+    @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     private ResendRunResult run(final List<UUID> distinct, final String operator,
                                 final boolean allowChangedPayload) {
         final UUID resendRunId = UUID.randomUUID();

@@ -33,11 +33,11 @@ final class SharedTimeCheck {
      * @param payload the fetched hearing payload
      * @return the instant it names, or empty when it is absent, not a string, or unparseable
      */
-    static Optional<Instant> parse(final JsonNode payload) {
+    /* default */ static Optional<Instant> parse(final JsonNode payload) {
         final JsonNode node = payload.get(SHARED_TIME);
         Optional<Instant> instant = Optional.empty();
         if (node != null && node.isString()) {
-            instant = parse(node.stringValue());
+            instant = parseInstant(node.stringValue());
         }
         return instant;
     }
@@ -50,14 +50,15 @@ final class SharedTimeCheck {
      * @param stored            the request's stored {@code shared_time}
      * @return {@code true} only when both name the same microsecond
      */
-    static boolean matches(final Optional<Instant> payloadSharedTime, final Instant stored) {
+    /* default */ static boolean matches(final Optional<Instant> payloadSharedTime,
+                                         final Instant stored) {
         final Instant storedPrecision = stored.truncatedTo(ChronoUnit.MICROS);
         return payloadSharedTime
                 .map(instant -> instant.truncatedTo(ChronoUnit.MICROS).equals(storedPrecision))
                 .orElse(false);
     }
 
-    private static Optional<Instant> parse(final String value) {
+    private static Optional<Instant> parseInstant(final String value) {
         Optional<Instant> instant;
         try {
             instant = Optional.of(ZonedDateTime.parse(value, DateTimeFormatter.ISO_DATE_TIME)

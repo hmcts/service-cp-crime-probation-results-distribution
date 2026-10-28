@@ -57,6 +57,17 @@ public class ResendTestSupport extends EndToEndTestSupport {
     }
 
     /**
+     * The production gateway publisher over the shared WireMock.
+     *
+     * @param registry the metric registry
+     * @return the publisher
+     */
+    protected final HmppsPublisher publisher(final MetricRegistry registry) {
+        return new HmppsPublisher(gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5),
+                Duration.ofSeconds(60), registry);
+    }
+
+    /**
      * A resend-leg capability over the shared stack and the given cache connection.
      *
      * @param cache        the Redis connection the payload cache reads through
@@ -85,17 +96,6 @@ public class ResendTestSupport extends EndToEndTestSupport {
                 new OutboundLogAdapter(new OutboundMessageRepository(jdbc(), tx, "test-version")),
                 YouthSwitchRecordedValue.ACTIVE, registry);
         return new LegResender(pauseGate, requestStore(), runner, registry, maxIdsPerRun);
-    }
-
-    /**
-     * The production gateway publisher over the shared WireMock.
-     *
-     * @param registry the metric registry
-     * @return the publisher
-     */
-    protected final HmppsPublisher publisher(final MetricRegistry registry) {
-        return new HmppsPublisher(gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5),
-                Duration.ofSeconds(60), registry);
     }
 
     /**
