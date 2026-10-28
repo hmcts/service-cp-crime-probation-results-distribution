@@ -214,8 +214,10 @@ class RequestRecoveryTransitionTest extends SchemaTestSupport {
             seedCompletedRequest(requestId);
             final ResendAttempt attempt = seedPendingResend(requestId);
 
-            outbound.writeResendOutcome(sent(requestId), attempt, false);
+            final int written = outbound.writeResendOutcome(sent(requestId), attempt, false);
 
+            assertThat(written).as("the resend's own outcome is recorded").isEqualTo(1);
+            assertThat(legRow(attempt).get("status")).isEqualTo("SENT");
             final Map<String, Object> row = requestRow(requestId);
             assertThat(row.get("status")).isEqualTo("COMPLETED");
             assertThat(row.get("completion_reason")).isEqualTo("both-legs-terminal");

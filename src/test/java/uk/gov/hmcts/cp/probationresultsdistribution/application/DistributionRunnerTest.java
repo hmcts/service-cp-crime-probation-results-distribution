@@ -2,6 +2,8 @@ package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,6 +17,7 @@ import java.util.OptionalInt;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -34,6 +37,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchDecision;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
@@ -449,6 +453,102 @@ class DistributionRunnerTest {
                 .tag("status", "FAILED").tag("reason", "payload-unavailable").counter().count())
                 .isEqualTo(1.0d);
         assertThat(meter.find("probation_parked_total").counter()).isNull();
+    }
+
+    @Nested
+    @DisplayName("a resend attempt (slice 004, FR-004-026, FR-004-027, FR-004-029)")
+    class RunResend {
+
+        private static final String SHARED = "2026-08-19T16:42:07.512Z";
+        private final ResendAttempt attempt = new ResendAttempt(UUID.randomUUID(), 2,
+                RunClaim.fresh(), UUID.randomUUID());
+
+        @Test
+        @DisplayName("a changed sharedTime fails payload-changed without reading the switch or sending")
+        void changed_payload_skips_the_switch_and_the_send() {
+            givenResendPayload("2026-08-20T09:00:00Z");
+            when(outboundLog.recordResend(any(), any(), anyBoolean())).thenReturn(true);
+
+            final RunResult result = runner.runResend(command, attempt, false);
+
+            verify(youthFilterSource, never()).read(any());
+            verify(hmppsSender, never()).send(any());
+            assertThat(result.status()).isEqualTo(LegStatus.FAILED);
+            assertThat(result.reason()).contains(LegReason.PAYLOAD_CHANGED);
+            final LegOutcome recorded = captureResendOutcome(false);
+            assertThat(recorded.payloadSharedTime()).contains(Instant.parse("2026-08-20T09:00:00Z"));
+        }
+
+        @Test
+        @DisplayName("allow-changed-payload sends the changed payload and records the override")
+        void allow_changed_payload_proceeds_with_the_override() {
+            givenResendPayload("2026-08-20T09:00:00Z");
+            when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
+            when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
+            when(outboundLog.recordResend(any(), any(), anyBoolean())).thenReturn(true);
+
+            final RunResult result = runner.runResend(command, attempt, true);
+
+            assertThat(result.status()).isEqualTo(LegStatus.SENT);
+            assertThat(captureResendOutcome(true).runOrigin()).isEqualTo(AttemptOrigin.RESEND);
+        }
+
+        @Test
+        @DisplayName("a payload missed everywhere fails payload-unavailable at once, never parked")
+        void payload_miss_fails_without_parking() {
+            when(payloadSource.fetch(command)).thenReturn(Optional.empty());
+            when(outboundLog.recordResend(any(), any(), anyBoolean())).thenReturn(true);
+
+            final RunResult result = runner.runResend(command, attempt, false);
+
+            assertThat(result.status()).isEqualTo(LegStatus.FAILED);
+            assertThat(result.reason()).contains(LegReason.PAYLOAD_UNAVAILABLE);
+            assertThat(meter.find("probation_parked_total").counter()).isNull();
+        }
+
+        @Test
+        @DisplayName("an unknown gateway outcome fails gateway-transient at once, never parked")
+        void transient_gateway_outcome_fails_without_parking() {
+            givenResendPayload(SHARED);
+            when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
+            when(hmppsSender.send(any())).thenReturn(new SentBody(
+                    new PublishOutcome.TransientExhausted(OptionalInt.of(503)), BODY));
+            when(outboundLog.recordResend(any(), any(), anyBoolean())).thenReturn(true);
+
+            final RunResult result = runner.runResend(command, attempt, false);
+
+            assertThat(result.status()).isEqualTo(LegStatus.FAILED);
+            assertThat(result.reason()).contains(LegReason.GATEWAY_TRANSIENT);
+            assertThat(captureResendOutcome(false).httpStatus()).hasValue(503);
+            assertThat(meter.find("probation_parked_total").counter()).isNull();
+        }
+
+        @Test
+        @DisplayName("a fenced completion returns an unrecorded result and counts no outcome")
+        void fenced_completion_is_unrecorded() {
+            givenResendPayload(SHARED);
+            when(youthFilterSource.read(command)).thenReturn(new YouthSwitchDecision.Active());
+            when(hmppsSender.send(any())).thenReturn(new SentBody(new PublishOutcome.Sent(200), BODY));
+            when(outboundLog.recordResend(any(), any(), anyBoolean())).thenReturn(false);
+
+            final RunResult result = runner.runResend(command, attempt, false);
+
+            assertThat(result.recorded()).isFalse();
+            assertThat(meter.find("probation_leg_outcomes_total").counter()).isNull();
+        }
+
+        private void givenResendPayload(final String sharedTime) {
+            when(payloadSource.fetch(command)).thenReturn(Optional.of(new FetchedPayload(
+                    MAPPER.readTree("{\"sharedTime\":\"" + sharedTime + "\","
+                            + CASE_PAYLOAD.substring(1)), PayloadSource.CACHE_DAY,
+                    Optional.empty())));
+        }
+
+        private LegOutcome captureResendOutcome(final boolean overrideUsed) {
+            final ArgumentCaptor<LegOutcome> captor = ArgumentCaptor.forClass(LegOutcome.class);
+            verify(outboundLog).recordResend(captor.capture(), any(), eq(overrideUsed));
+            return captor.getValue();
+        }
     }
 
     private void givenPayload(final String json) {
