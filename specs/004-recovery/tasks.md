@@ -1427,7 +1427,23 @@ observe a new request with the audit line and `origin=queue` outcomes.
       GREEN: `SubmitHearingRunnerTest` 8/8 and `PackagedSubmitHearingCommandIT` 3/3 PASSED;
       `PackagedListingCommandsIT` 3/3, `PackagedResendLegCommandIT` 3/3 and
       `PackagedIntakeCommandsIT` 4/4 still PASSED.
-- [ ] T071 Run `quickstart.md` step 7 (submit-hearing) locally
+- [X] T071 Run `quickstart.md` step 7 (submit-hearing) locally
+      Run 2026-10-28 against `docker compose up -d postgres servicebus-emulator-mssql
+      servicebus-emulator redis wiremock` (WireMock stubbed through its admin API: users-groups
+      `permissions` → `{"permissions":[{"active":true}]}`, the HMPPS route → 200) and the built
+      `build/libs/service-cp-crime-probation-results-distribution-0.0.999.jar` on JDK 25, the
+      service started normally (`local` profile) until readiness was `UP`. Seeded only a Redis
+      `EXT_<hearingId>_2026-08-19_result_` key (a synthetic hearing id and payload, `sharedTime`
+      `2026-08-19T16:42:07.512Z`; no queue message, no request row — `count(*) = 0`), then ran
+      `java -jar ... submit-hearing --hearing-id <id> --hearing-day 2026-08-19 --operator
+      "local-dev" --reason "share never admitted"`: exit 0, `submit-hearing done outcome=enqueued
+      requestId=05b91dcd-1643-3f27-a64a-e5bcc28de878 runId=... messageId=RESULTS:05b91dcd-...`
+      (the recipe over the raw strings, re-computed independently). The running service took it
+      as a first delivery: request `COMPLETED(both-legs-terminal)`, attempt 1 `attempt_origin =
+      queue`, `SENT` 200, the outcome line `runOrigin=QUEUE`, and `audit_note` = `<ts>
+      SUPPORT_SUBMISSION operator=local-dev runId=<the run id> reason=share never admitted`. The
+      operator and reason appeared in neither the command's nor the service's log. The stack was
+      stopped afterwards (`docker compose down`).
 
 **Checkpoint**: all eight user stories are independently functional.
 
