@@ -14,6 +14,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -79,7 +80,7 @@ class OperationsProblemDetailHandlerTest {
     @DisplayName("a 400 about one argument")
     class ArgumentRefusals {
 
-        @org.junit.jupiter.api.Test
+        @Test
         @DisplayName("names the argument and never a value")
         void names_the_argument_never_the_value() {
             final ProblemDetail problem = handler.handleRefusal(OperationsRefusalException.ofArgument(
@@ -89,7 +90,7 @@ class OperationsProblemDetailHandlerTest {
             assertThat(problem.getDetail()).isNull();
         }
 
-        @org.junit.jupiter.api.Test
+        @Test
         @DisplayName("too-many-request-ids carries the cap applied")
         void too_many_request_ids_carries_the_cap() {
             final ProblemDetail problem = handler.handleRefusal(
@@ -105,7 +106,7 @@ class OperationsProblemDetailHandlerTest {
     @DisplayName("no exception message, stack trace or far-end words reach the body")
     class NoEcho {
 
-        @org.junit.jupiter.api.Test
+        @Test
         @DisplayName("an unreadable body maps to unreadable-body, never the parser's own message")
         void unreadable_body_never_echoes_the_parser_message() {
             final HttpMessageNotReadableException cause = new HttpMessageNotReadableException(
@@ -120,7 +121,7 @@ class OperationsProblemDetailHandlerTest {
                     value -> value.toString().contains("secret-looking parser message"));
         }
 
-        @org.junit.jupiter.api.Test
+        @Test
         @DisplayName("an unexpected failure maps to unexpected, never the exception's message")
         void unexpected_failure_never_echoes_its_message() {
             final RuntimeException thrown = new IllegalStateException("do not leak this");
@@ -133,7 +134,7 @@ class OperationsProblemDetailHandlerTest {
             verify(metrics).operationsFailure(any(OperationsAction.class), eq(OperationsFailure.UNEXPECTED));
         }
 
-        @org.junit.jupiter.api.Test
+        @Test
         @DisplayName("a content type other than JSON maps to 415 unsupported-content-type")
         void unsupported_content_type_maps_to_415() {
             final HttpMediaTypeNotSupportedException cause = new HttpMediaTypeNotSupportedException(
@@ -146,7 +147,7 @@ class OperationsProblemDetailHandlerTest {
             assertThat(problem.getProperties()).containsEntry("reason", "unsupported-content-type");
         }
 
-        @org.junit.jupiter.api.Test
+        @Test
         @DisplayName("an unrecognised JSON field maps to unknown-field, naming it")
         void unrecognised_field_maps_to_unknown_field() {
             final com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException unrecognised =
@@ -168,7 +169,7 @@ class OperationsProblemDetailHandlerTest {
     @DisplayName("an unmapped path or method (FR-005-034)")
     class UnmappedRoute {
 
-        @org.junit.jupiter.api.Test
+        @Test
         @DisplayName("application.yaml suppresses the stack trace and the path on the default error body")
         void application_yaml_suppresses_stacktrace_and_path() throws IOException {
             final List<PropertySource<?>> sources = new YamlPropertySourceLoader().load("application",

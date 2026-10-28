@@ -1,5 +1,6 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.domain;
 
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -25,7 +26,7 @@ public sealed interface PublishOutcome
         }
 
         public Sent {
-            recovery = recovery == null ? Optional.empty() : recovery;
+            Objects.requireNonNull(recovery, "recovery");
         }
     }
 
