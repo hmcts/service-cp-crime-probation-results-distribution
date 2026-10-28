@@ -102,9 +102,17 @@ public final class ResendLegRunner {
                 LOG.info("resend-leg id resendRunId={} requestId={} outcome={}", resendRunId,
                         entry.requestId(), entry.outcome().reportValue());
             }
-            LOG.info("resend-leg done resendRunId={} ids={} notRun={}", resendRunId,
-                    result.entries().size(), result.notRun().size());
-            outcome = RunnerOutcome.DONE;
+            if (result.storeFailed()) {
+                // The report stands, but the run's result is failed (spec edge case "The store
+                // fails during a resend run").
+                LOG.error("resend-leg failed resendRunId={} reason=store-unavailable ids={} "
+                        + "notRun={}", resendRunId, result.entries().size(), result.notRun().size());
+                outcome = RunnerOutcome.FAILED;
+            } else {
+                LOG.info("resend-leg done resendRunId={} ids={} notRun={}", resendRunId,
+                        result.entries().size(), result.notRun().size());
+                outcome = RunnerOutcome.DONE;
+            }
         }
         return outcome;
     }

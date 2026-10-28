@@ -37,6 +37,14 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
  * one structured log line carrying identifiers and bounded codes only — never the operator's name or
  * the reason's text (FR-004-041).
  *
+ * <p>A store failure is never swallowed (spec edge case "The store fails during a resend run"):
+ * an id whose claim fails is {@code not-run}; an id claimed but whose outcome could not be recorded
+ * — the store failed after the claim, or the completion was fenced — is {@code claimed-incomplete},
+ * its row left for the guarded rollback close-in-flight procedure; each is logged at ERROR with a
+ * bounded cause, and the run's report still stands but its result is failed. A store that cannot
+ * answer the first pause read refuses the run whole {@code store-unavailable}; one that cannot
+ * answer a later pause read stops the run claiming, as a pause would, and fails it.
+ *
  * <p>The forced-resend override ({@code allowTerminalSuccess}) is not part of this capability yet:
  * a leg whose latest row is {@code SENT} or {@code NOT_APPLICABLE} is {@code not-eligible}.
  */
@@ -94,7 +102,7 @@ public final class LegResender {
 
     private Optional<WholeRunRefusal> refusalOf(final ResendRequest request,
                                                 final List<UUID> distinct) {
-        final Optional<WholeRunRefusal> refusal;
+        Optional<WholeRunRefusal> refusal;
         if (distinct.isEmpty() || blank(request.operator()) || blank(request.reason())
                 || sanitised(request.operator()).isEmpty()) {
             refusal = Optional.of(WholeRunRefusal.MISSING_ARGUMENT);
@@ -103,10 +111,16 @@ public final class LegResender {
             refusal = Optional.of(WholeRunRefusal.ARGUMENT_TOO_LONG);
         } else if (distinct.size() > maxIdsPerRun) {
             refusal = Optional.of(WholeRunRefusal.TOO_MANY_REQUEST_IDS);
-        } else if (pauseGate.pausedByOperator()) {
-            refusal = Optional.of(WholeRunRefusal.INTAKE_PAUSED);
         } else {
-            refusal = Optional.empty();
+            try {
+                refusal = pauseGate.pausedByOperator()
+                        ? Optional.of(WholeRunRefusal.INTAKE_PAUSED) : Optional.empty();
+            } catch (final DataAccessException storeFailure) {
+                // The pause cannot be confirmed, so nothing is claimed: refused whole, nothing changed.
+                LOG.error("resend-leg pause read failed reason=store-unavailable cause={}",
+                        storeFailure.getClass().getSimpleName());
+                refusal = Optional.of(WholeRunRefusal.STORE_UNAVAILABLE);
+            }
         }
         return refusal;
     }
@@ -115,38 +129,67 @@ public final class LegResender {
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     private ResendRunResult run(final List<UUID> distinct, final String operator,
                                 final boolean allowChangedPayload) {
-        final UUID resendRunId = UUID.randomUUID();
+        final RunState state = new RunState(UUID.randomUUID());
         final List<ResendRunResult.Entry> entries = new ArrayList<>();
-        boolean paused = false;
         for (final UUID requestId : distinct) {
-            paused = paused || pauseGate.pausedByOperator();
-            final ResendEntryOutcome outcome = paused ? new ResendEntryOutcome.NotRun()
-                    : runOne(requestId, resendRunId, operator, allowChangedPayload);
+            final ResendEntryOutcome outcome = stopClaiming(state, requestId)
+                    ? new ResendEntryOutcome.NotRun()
+                    : runOne(requestId, state, operator, allowChangedPayload);
             entries.add(new ResendRunResult.Entry(requestId, outcome));
         }
-        return new ResendRunResult(Optional.empty(), Optional.of(resendRunId), allowChangedPayload,
-                entries, false);
+        return new ResendRunResult(Optional.empty(), Optional.of(state.resendRunId),
+                allowChangedPayload, entries, state.storeFailed);
     }
 
-    private ResendEntryOutcome runOne(final UUID requestId, final UUID resendRunId,
-                                      final String operator, final boolean allowChangedPayload) {
-        ResendEntryOutcome outcome;
-        try {
-            final ResendClaim claim = store.claimResend(SOURCE, requestId, resendRunId, operator,
-                    RunClaim.fresh());
-            outcome = switch (claim) {
-                case ResendClaim.Refused refused -> refuse(requestId, resendRunId, refused);
-                case ResendClaim.Claimed claimed -> runClaimed(requestId, resendRunId, claimed,
-                        allowChangedPayload);
-            };
-        } catch (final DataAccessException storeFailure) {
-            // The store failed for this id only: it is reported not-run, counted nowhere else, and
-            // the run carries on with the next id (FR-004-022). Not swallowed — logged at ERROR.
-            LOG.error("resend-leg store-unavailable requestId={} resendRunId={}", requestId,
-                    resendRunId);
-            outcome = new ResendEntryOutcome.NotRun();
+    private boolean stopClaiming(final RunState state, final UUID requestId) {
+        if (!state.stopped) {
+            try {
+                state.stopped = pauseGate.pausedByOperator();
+            } catch (final DataAccessException storeFailure) {
+                // The pause cannot be confirmed: claim nothing further, as a pause would, and fail
+                // the run (spec edge case "The store fails during a resend run").
+                LOG.error("resend-leg pause read failed reason=store-unavailable requestId={} "
+                                + "resendRunId={} cause={}", requestId, state.resendRunId,
+                        storeFailure.getClass().getSimpleName());
+                state.stopped = true;
+                state.storeFailed = true;
+            }
         }
-        return outcome;
+        return state.stopped;
+    }
+
+    private ResendEntryOutcome runOne(final UUID requestId, final RunState state,
+                                      final String operator, final boolean allowChangedPayload) {
+        return claim(requestId, state, operator)
+                .map(claim -> outcomeOf(claim, requestId, state, allowChangedPayload))
+                .orElseGet(ResendEntryOutcome.NotRun::new);
+    }
+
+    private ResendEntryOutcome outcomeOf(final ResendClaim claim, final UUID requestId,
+                                         final RunState state, final boolean allowChangedPayload) {
+        return switch (claim) {
+            case ResendClaim.Refused refused -> refuse(requestId, state.resendRunId, refused);
+            case ResendClaim.Claimed claimed -> runClaimed(requestId, state, claimed,
+                    allowChangedPayload);
+        };
+    }
+
+    private Optional<ResendClaim> claim(final UUID requestId, final RunState state,
+                                        final String operator) {
+        Optional<ResendClaim> claim;
+        try {
+            claim = Optional.of(store.claimResend(SOURCE, requestId, state.resendRunId, operator,
+                    RunClaim.fresh()));
+        } catch (final DataAccessException storeFailure) {
+            // The claim did not commit: nothing was written for this id, so it is not-run. The run
+            // carries on with the next id (FR-004-022) and its result is failed.
+            LOG.error("resend-leg claim failed reason=store-unavailable requestId={} resendRunId={} "
+                    + "cause={}", requestId, state.resendRunId,
+                    storeFailure.getClass().getSimpleName());
+            state.storeFailed = true;
+            claim = Optional.empty();
+        }
+        return claim;
     }
 
     private ResendEntryOutcome refuse(final UUID requestId, final UUID resendRunId,
@@ -157,19 +200,29 @@ public final class LegResender {
         return new ResendEntryOutcome.Refused(refused.reason());
     }
 
-    private ResendEntryOutcome runClaimed(final UUID requestId, final UUID resendRunId,
+    private ResendEntryOutcome runClaimed(final UUID requestId, final RunState state,
                                           final ResendClaim.Claimed claimed,
                                           final boolean allowChangedPayload) {
-        final RunResult result = runner.runResend(claimed.command(), claimed.attempt(),
-                allowChangedPayload);
-        final ResendEntryOutcome outcome;
-        if (result.recorded()) {
-            outcome = new ResendEntryOutcome.Ran(result.status(), result.reason());
-        } else {
-            metrics.staleRunnerRejection();
-            LOG.error("resend-leg stale-runner rejection requestId={} resendRunId={} attempt={}",
-                    requestId, resendRunId, claimed.attempt().attempt());
-            outcome = new ResendEntryOutcome.NotRun();
+        ResendEntryOutcome outcome;
+        try {
+            final RunResult result = runner.runResend(claimed.command(), claimed.attempt(),
+                    allowChangedPayload);
+            if (result.recorded()) {
+                outcome = new ResendEntryOutcome.Ran(result.status(), result.reason());
+            } else {
+                metrics.staleRunnerRejection();
+                LOG.error("resend-leg stale-runner rejection requestId={} resendRunId={} "
+                        + "attempt={}", requestId, state.resendRunId, claimed.attempt().attempt());
+                outcome = new ResendEntryOutcome.ClaimedIncomplete();
+            }
+        } catch (final DataAccessException storeFailure) {
+            // The attempt row is committed PENDING and its POST may have gone out, but its outcome
+            // was not recorded: reported claimed-incomplete, never not-run, and the run is failed.
+            LOG.error("resend-leg completion failed reason=store-unavailable requestId={} "
+                            + "resendRunId={} attempt={} cause={}", requestId, state.resendRunId,
+                    claimed.attempt().attempt(), storeFailure.getClass().getSimpleName());
+            state.storeFailed = true;
+            outcome = new ResendEntryOutcome.ClaimedIncomplete();
         }
         return outcome;
     }
@@ -186,10 +239,12 @@ public final class LegResender {
         final List<String> entries = result.entries().stream()
                 .map(entry -> entry.requestId() + "=" + entry.outcome().reportValue()).toList();
         LOG.info("resend-leg report resendRunId={} leg=HMPPS allowChangedPayload={} "
-                        + "allowTerminalSuccess=false ids={} taken={} sent={} summary={} entries={}",
+                        + "allowTerminalSuccess=false ids={} taken={} sent={} storeFailed={} "
+                        + "summary={} entries={}",
                 result.resendRunId().orElseThrow(), result.allowChangedPayloadRequested(),
                 result.entries().size(), taken,
-                byOutcome.getOrDefault(LegStatus.SENT.wireValue(), 0), byOutcome, entries);
+                byOutcome.getOrDefault(LegStatus.SENT.wireValue(), 0), result.storeFailed(),
+                byOutcome, entries);
     }
 
     private static boolean blank(final String value) {
@@ -198,5 +253,17 @@ public final class LegResender {
 
     private static String sanitised(final String operator) {
         return LINE_BREAKS.matcher(operator).replaceAll(" ").strip();
+    }
+
+    /** One run's id and its mutable progress: whether claiming has stopped, whether the store failed. */
+    private static final class RunState {
+
+        private final UUID resendRunId;
+        private boolean stopped;
+        private boolean storeFailed;
+
+        private RunState(final UUID resendRunId) {
+            this.resendRunId = resendRunId;
+        }
     }
 }
