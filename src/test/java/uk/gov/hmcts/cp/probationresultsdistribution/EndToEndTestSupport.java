@@ -827,12 +827,22 @@ public class EndToEndTestSupport {
         }
     }
 
+    /**
+     * Pages through the whole dead-letter sub-queue. The queue is shared by every suite in the JVM and
+     * never drained, so a single peek from sequence 0 misses anything past its first page.
+     */
     private static Optional<ServiceBusReceivedMessage> scanDeadLetter(
             final ServiceBusReceiverClient dlq, final String messageId) {
-        for (final ServiceBusReceivedMessage message : dlq.peekMessages(100, 0L)) {
-            if (messageId.equals(message.getMessageId())) {
-                return Optional.of(message);
+        long sequence = 0L;
+        List<ServiceBusReceivedMessage> page = dlq.peekMessages(100, sequence).stream().toList();
+        while (!page.isEmpty()) {
+            for (final ServiceBusReceivedMessage message : page) {
+                if (messageId.equals(message.getMessageId())) {
+                    return Optional.of(message);
+                }
+                sequence = message.getSequenceNumber() + 1;
             }
+            page = dlq.peekMessages(100, sequence).stream().toList();
         }
         return Optional.empty();
     }
