@@ -9,9 +9,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
 /**
  * The result of one resend-leg run (slice 004, FR-004-039): either refused whole before anything
  * was read, or the run's report — its {@code resend_run_id}, whether {@code allow-changed-payload}
- * and the forced-resend override ({@code allowTerminalSuccess}) were requested, every distinct listed ID exactly once with its outcome, and whether the store
- * failed during the run, which makes the run's result failed although its report stands (spec edge
- * case "The store fails during a resend run").
+ * and the forced-resend override ({@code allowTerminalSuccess}) were requested, every distinct
+ * listed ID exactly once with its outcome, and whether the store failed during the run, which
+ * makes the run's result failed although its report stands (spec edge case "The store fails
+ * during a resend run").
  *
  * @param wholeRunRefusal               present when the run was refused whole
  * @param resendRunId                   the run's id, present when it was not refused whole

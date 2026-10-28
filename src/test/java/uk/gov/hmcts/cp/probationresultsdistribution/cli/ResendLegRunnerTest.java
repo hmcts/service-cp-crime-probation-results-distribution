@@ -28,9 +28,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
 
 /**
  * Pins {@code contracts/cli-runners.md} §2: {@code resend-leg --leg HMPPS --request-ids <id,...>
- * --operator <name> --reason <text> [--force-resend-sent] [--allow-changed-payload]}. Arguments are checked whole before
- * anything is opened (FR-004-020); the runner calls the same {@link LegResender} the operations API
- * calls and maps its result to the bounded exit code (FR-004-045).
+ * --operator <name> --reason <text> [--force-resend-sent] [--allow-changed-payload]}.
+ * Arguments are checked whole before anything is opened (FR-004-020); the runner calls the same
+ * {@link LegResender} the operations API calls and maps its result to the bounded exit code
+ * (FR-004-045).
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("the resend-leg runner")

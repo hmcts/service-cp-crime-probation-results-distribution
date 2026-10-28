@@ -29,6 +29,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PublishOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchDecision;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
@@ -136,7 +137,7 @@ class OutcomeMetricsTest {
     void resend_outcome_labels_leg_outcomes_with_origin_resend() throws Exception {
         stubResendSend(new YouthSwitchDecision.Active(), 200);
 
-        runner.runResend(command, resendAttempt(), false);
+        runner.runResend(command, resendAttempt(false), false);
 
         assertThat(meter.find("probation_leg_outcomes_total")
                 .tag("origin", "resend").tag("forced", "false").tag("status", "SENT")
@@ -148,7 +149,7 @@ class OutcomeMetricsTest {
     void resend_outcome_log_line_carries_run_origin_resend() throws Exception {
         stubResendSend(new YouthSwitchDecision.Active(), 503);
 
-        runner.runResend(command, resendAttempt(), false);
+        runner.runResend(command, resendAttempt(false), false);
 
         final ILoggingEvent event = outcomeLine();
         assertThat(event.getFormattedMessage())
@@ -164,7 +165,7 @@ class OutcomeMetricsTest {
                 uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadableCause.TIMEOUT),
                 200);
 
-        runner.runResend(command, resendAttempt(), false);
+        runner.runResend(command, resendAttempt(false), false);
 
         assertThat(outcomeLine().getFormattedMessage())
                 .contains("runOrigin=RESEND", "youthSwitch=UNREADABLE_DEFAULTED_ACTIVE",
@@ -176,8 +177,7 @@ class OutcomeMetricsTest {
     void forced_resend_outcome_is_labelled_forced() throws Exception {
         stubResendSend(new YouthSwitchDecision.Active(), 200);
 
-        runner.runResend(command, new uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt(
-                UUID.randomUUID(), 2, RunClaim.fresh(), UUID.randomUUID(), true), false);
+        runner.runResend(command, resendAttempt(true), false);
 
         assertThat(meter.find("probation_leg_outcomes_total")
                 .tag("origin", "resend").tag("forced", "true").tag("status", "SENT")
@@ -192,7 +192,7 @@ class OutcomeMetricsTest {
     void unforced_resend_outcome_log_line_says_forced_false() throws Exception {
         stubResendSend(new YouthSwitchDecision.Active(), 200);
 
-        runner.runResend(command, resendAttempt(), false);
+        runner.runResend(command, resendAttempt(false), false);
 
         assertThat(outcomeLine().getFormattedMessage()).contains("forced=false");
     }
@@ -203,9 +203,8 @@ class OutcomeMetricsTest {
                 .findFirst().orElseThrow();
     }
 
-    private static uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt resendAttempt() {
-        return new uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt(
-                UUID.randomUUID(), 2, RunClaim.fresh(), UUID.randomUUID());
+    private static ResendAttempt resendAttempt(final boolean forced) {
+        return new ResendAttempt(UUID.randomUUID(), 2, RunClaim.fresh(), UUID.randomUUID(), forced);
     }
 
     private void stubResendSend(final YouthSwitchDecision decision, final int httpStatus)
