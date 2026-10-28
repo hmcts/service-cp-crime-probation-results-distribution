@@ -591,6 +591,15 @@ public class EndToEndTestSupport {
                 .willReturn(aResponse().withStatus(status).withFixedDelay(delayMillis)));
     }
 
+    /**
+     * Stubs the gateway route to fail at the transport after the request was received.
+     *
+     * @param fault the WireMock fault to answer with
+     */
+    protected final void stubGatewayFault(final com.github.tomakehurst.wiremock.http.Fault fault) {
+        wireMock.stubFor(post(urlPathEqualTo(GATEWAY_PATH)).willReturn(aResponse().withFault(fault)));
+    }
+
     /** Stubs one gateway response followed by a recovered response on the next POST. */
     protected final void stubGatewaySequence(final int firstStatus, final String retryAfter,
                                              final int recoveredStatus) {

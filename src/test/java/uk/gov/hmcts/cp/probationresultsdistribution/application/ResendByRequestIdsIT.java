@@ -1,19 +1,33 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.post;
+import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+import com.github.tomakehurst.wiremock.http.Fault;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
+import java.net.ServerSocket;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway.HmppsPublisher;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendEntryOutcome.Ran;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendEntryOutcome.Refused;
+import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
@@ -257,8 +271,7 @@ class ResendByRequestIdsIT extends ResendTestSupport {
             stubYouthSwitchActive();
             stubGateway(200);
             final List<Map<String, Object>> seenAtSend = new ArrayList<>();
-            final HmppsSender real = publisher(new uk.gov.hmcts.cp.probationresultsdistribution
-                    .config.MetricRegistry(meterRegistry()));
+            final HmppsSender real = publisher(new MetricRegistry(meterRegistry()));
             final HmppsSender observing = redacted -> {
                 // A separate, auto-committing connection sees only committed rows.
                 seenAtSend.add(latestAttempt(failed));
@@ -330,6 +343,124 @@ class ResendByRequestIdsIT extends ResendTestSupport {
             assertThat(entryFor(result, requestId)).contains(new Ran(LegStatus.SENT, Optional.empty()));
             assertThat(latestAttempt(requestId).get("payload_source")).isEqualTo("query");
             assertThat(resultsQueryUserHeaders(hearingId)).containsExactly(SYSTEM_USER_ID);
+        }
+    }
+
+    @Nested
+    @DisplayName("the gateway classes on a resend: no in-run retry of an unknown outcome, never parked "
+            + "(FR-004-026)")
+    class GatewayClasses {
+
+        @Test
+        @DisplayName("a 503 is one POST and FAILED(gateway-transient) at once")
+        void server_error_is_one_post_and_failed() {
+            assertOnePostFailedTransient(() -> stubGateway(503), 503, resender());
+        }
+
+        @Test
+        @DisplayName("a 408 is one POST and FAILED(gateway-transient) at once")
+        void request_timeout_is_one_post_and_failed() {
+            assertOnePostFailedTransient(() -> stubGateway(408), 408, resender());
+        }
+
+        @Test
+        @DisplayName("a read timeout after the write is one POST and FAILED(gateway-transient) at once")
+        void read_timeout_is_one_post_and_failed() {
+            final HmppsSender shortRead = new HmppsPublisher(gatewayUrl(), SUBSCRIPTION_KEY,
+                    Duration.ofSeconds(2), Duration.ofSeconds(1), new MetricRegistry(meterRegistry()));
+            assertOnePostFailedTransient(() -> stubGatewayWithDelay(200, 3_000), null,
+                    resender(sharedRedisConnection(), 100, () -> false, shortRead));
+        }
+
+        @Test
+        @DisplayName("a connection reset after the write is one POST and FAILED(gateway-transient) at once")
+        void connection_reset_is_one_post_and_failed() {
+            assertOnePostFailedTransient(() -> stubGatewayFault(Fault.CONNECTION_RESET_BY_PEER), null,
+                    resender());
+        }
+
+        @Test
+        @DisplayName("a 429 is retried in-run, honouring Retry-After, and then SENT")
+        void too_many_requests_is_retried_in_run_then_sent() {
+            final UUID failed = seedFailedPayloadUnavailable();
+            stubYouthSwitchActive();
+            stubGatewaySequence(429, "1", 200);
+
+            final ResendRunResult result = resender().resend(request(false, failed));
+
+            assertThat(entryFor(result, failed)).contains(new Ran(LegStatus.SENT, Optional.empty()));
+            assertThat(gatewayPostCount()).isEqualTo(2);
+            final Map<String, Object> row = latestAttempt(failed);
+            assertThat(row.get("attempt")).isEqualTo(2);
+            assertThat(row.get("status")).isEqualTo("SENT");
+            assertThat(row.get("http_status")).isEqualTo(200);
+            assertThat(parkedRows(failed)).isZero();
+        }
+
+        @Test
+        @DisplayName("a refused connection is retried in-run and SENT once the gateway is reachable")
+        void refused_connection_is_retried_in_run_then_sent() throws Exception {
+            final UUID failed = seedFailedPayloadUnavailable();
+            stubYouthSwitchActive();
+            final int port;
+            try (ServerSocket reservation = new ServerSocket(0)) {
+                port = reservation.getLocalPort();
+            }
+            final WireMockServer recovering = new WireMockServer(
+                    WireMockConfiguration.options().port(port));
+            try (ScheduledExecutorService starter = Executors.newSingleThreadScheduledExecutor()) {
+                starter.schedule(() -> {
+                    recovering.start();
+                    recovering.stubFor(post(urlPathEqualTo(GATEWAY_PATH))
+                            .willReturn(aResponse().withStatus(200)));
+                }, 150, TimeUnit.MILLISECONDS);
+                final HmppsSender retrying = new HmppsPublisher(
+                        "http://127.0.0.1:" + port + GATEWAY_PATH, SUBSCRIPTION_KEY,
+                        Duration.ofSeconds(1), Duration.ofSeconds(2), 3, Duration.ofSeconds(2),
+                        Duration.ofSeconds(2), Duration.ofSeconds(10),
+                        new MetricRegistry(meterRegistry()));
+                try {
+                    final ResendRunResult result = resender(sharedRedisConnection(), 100,
+                            () -> false, retrying).resend(request(false, failed));
+
+                    assertThat(entryFor(result, failed))
+                            .contains(new Ran(LegStatus.SENT, Optional.empty()));
+                    assertThat(recovering.findAll(postRequestedFor(urlPathEqualTo(GATEWAY_PATH))))
+                            .hasSize(1);
+                    assertThat(latestAttempt(failed).get("status")).isEqualTo("SENT");
+                    assertThat(parkedRows(failed)).isZero();
+                } finally {
+                    recovering.stop();
+                }
+            }
+        }
+
+        private void assertOnePostFailedTransient(final Runnable stub, final Integer httpStatus,
+                                                  final LegResender resender) {
+            final UUID failed = seedFailedPayloadUnavailable();
+            stubYouthSwitchActive();
+            stub.run();
+
+            final ResendRunResult result = resender.resend(request(false, failed));
+
+            assertThat(entryFor(result, failed)).contains(
+                    new Ran(LegStatus.FAILED, Optional.of(LegReason.GATEWAY_TRANSIENT)));
+            assertThat(gatewayPostCount()).isEqualTo(1);
+            final Map<String, Object> row = latestAttempt(failed);
+            assertThat(row.get("attempt")).isEqualTo(2);
+            assertThat(row.get("attempt_origin")).isEqualTo("resend");
+            assertThat(row.get("status")).isEqualTo("FAILED");
+            assertThat(row.get("reason")).isEqualTo("gateway-transient");
+            assertThat(row.get("http_status")).isEqualTo(httpStatus);
+            assertThat(row.get("body_digest")).isNotNull();
+            assertThat(parkedRows(failed)).isZero();
+            assertThat(requestRow(failed).get("status")).isEqualTo("FAILED");
+        }
+
+        private int parkedRows(final UUID requestId) {
+            return jdbc().sql("SELECT count(*) FROM outbound_message WHERE request_id = :requestId "
+                            + "AND status = 'PARKED'")
+                    .param("requestId", requestId).query(Integer.class).single();
         }
     }
 
