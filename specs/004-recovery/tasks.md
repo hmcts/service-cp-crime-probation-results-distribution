@@ -766,10 +766,21 @@ code, five report entries, refusal counters incremented.
       dispatched, from the same `distribution.*` properties the service binds.
       GREEN: all 11 `ResendLegRunnerTest` cases PASSED; `PackagedIntakeCommandsIT` 4/4 and
       `RunnerDispatcherTest` 3/3 still PASSED (the intake commands open no cache).
-- [ ] T048 [US3] [P] `OutcomeMetricsTest` (US3 half, extends T022's file): resend outcomes carry
+- [X] T048 [US3] [P] `OutcomeMetricsTest` (US3 half, extends T022's file): resend outcomes carry
       `origin=resend`, `forced=false`; log lines carry status/reason/HTTP status/body digest/
       `runOrigin`/`youth_switch` (FR-004-011, FR-004-040) — extends
       `src/test/java/.../application/OutcomeMetricsTest.java`
+      Three cases driving `DistributionRunner.runResend` with mocked ports and a
+      `SimpleMeterRegistry`: `leg_outcomes_total{origin=resend, forced=false, status=SENT}` = 1; a
+      `FAILED(gateway-transient)` line carrying `status`, `reason`, `httpStatus=503`, `bodyDigest`,
+      `runOrigin=RESEND`, `youthSwitch=ACTIVE` and not the body; and a defaulted read's line carrying
+      `youthSwitch=UNREADABLE_DEFAULTED_ACTIVE` with `youthSwitchCause=TIMEOUT`.
+      RED not reproducible: the labelling and the log line are the shared `record` path the resend
+      run reached with T045, landed before this test as the task order places it; this is a
+      characterization test, like T022's replay half. (One expectation of the first draft named the
+      cause in lower case and failed — `Expecting actual: "... youthSwitchCause=TIMEOUT ..." to
+      contain "youthSwitchCause=timeout"` — a test error, corrected to the wire value.)
+      GREEN: all 6 `OutcomeMetricsTest` cases PASSED.
 - [ ] T049 Seed the `doc/DEVIATIONS.md` DV-07 and DV-17 rows' resend-half cross-reference, naming
       `ResendByRequestIdsIT` beside slice 002's queue-run tests (FR-004-050a) — `doc/DEVIATIONS.md`
 - [ ] T050 Run `quickstart.md` steps 3–4 (resend, forced-resend precondition) locally

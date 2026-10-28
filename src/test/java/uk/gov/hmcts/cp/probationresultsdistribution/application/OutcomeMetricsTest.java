@@ -38,6 +38,11 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedVa
  * {@code probation_leg_outcomes_total} with {@code origin = replay} and {@code forced = false} and
  * writes one structured log line carrying {@code runOrigin=REPLAY} with the bounded outcome fields;
  * {@code probation_replays_total} counts one admitted replay per {@code route}.
+ *
+ * <p>The US3 half (FR-004-011, FR-004-040): a resend attempt's outcome counts
+ * {@code probation_leg_outcomes_total} with {@code origin = resend} and {@code forced = false}, and
+ * its one log line carries the status, reason, HTTP status, body digest, {@code runOrigin=RESEND},
+ * the {@code youthSwitch} value and, for a defaulted read, its cause — never the body.
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("replay outcome telemetry")
@@ -46,6 +51,9 @@ class OutcomeMetricsTest {
     private static final String PAYLOAD = "{\"hearing\":{\"prosecutionCases\":[{\"defendants\":["
             + "{\"isYouth\":false,\"offences\":[{\"judicialResults\":[]}]}]}]}}";
     private static final String SENT_BODY = "{\"sent\":true}";
+    private static final String RESEND_PAYLOAD = "{\"sharedTime\":\"2026-08-19T16:42:07.512Z\","
+            + "\"hearing\":{\"prosecutionCases\":[{\"defendants\":["
+            + "{\"isYouth\":false,\"offences\":[{\"judicialResults\":[]}]}]}]}}";
 
     @Mock
     private HearingPayloadSource payloadSource;
@@ -121,6 +129,70 @@ class OutcomeMetricsTest {
                 .isEqualTo(1.0d);
         assertThat(meter.find("probation_replays_total").tag("route", "copy").counter().count())
                 .isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("a resend outcome counts leg_outcomes_total with origin=resend and forced=false")
+    void resend_outcome_labels_leg_outcomes_with_origin_resend() throws Exception {
+        stubResendSend(new YouthSwitchDecision.Active(), 200);
+
+        runner.runResend(command, resendAttempt(), false);
+
+        assertThat(meter.find("probation_leg_outcomes_total")
+                .tag("origin", "resend").tag("forced", "false").tag("status", "SENT")
+                .counter().count()).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("a resend outcome log line carries runOrigin=RESEND, the switch and the bounded fields")
+    void resend_outcome_log_line_carries_run_origin_resend() throws Exception {
+        stubResendSend(new YouthSwitchDecision.Active(), 503);
+
+        runner.runResend(command, resendAttempt(), false);
+
+        final ILoggingEvent event = outcomeLine();
+        assertThat(event.getFormattedMessage())
+                .contains("status=FAILED", "reason=gateway-transient", "httpStatus=503",
+                        "bodyDigest=", "runOrigin=RESEND", "youthSwitch=ACTIVE")
+                .doesNotContain("sent=true");
+    }
+
+    @Test
+    @DisplayName("a resend outcome on a defaulted switch read logs the value and its cause")
+    void resend_outcome_log_line_carries_a_defaulted_cause() throws Exception {
+        stubResendSend(new YouthSwitchDecision.Unreadable(
+                uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadableCause.TIMEOUT),
+                200);
+
+        runner.runResend(command, resendAttempt(), false);
+
+        assertThat(outcomeLine().getFormattedMessage())
+                .contains("runOrigin=RESEND", "youthSwitch=UNREADABLE_DEFAULTED_ACTIVE",
+                        "youthSwitchCause=TIMEOUT");
+    }
+
+    private ILoggingEvent outcomeLine() {
+        return appender.list.stream()
+                .filter(e -> e.getFormattedMessage().contains("HMPPS leg outcome"))
+                .findFirst().orElseThrow();
+    }
+
+    private static uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt resendAttempt() {
+        return new uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt(
+                UUID.randomUUID(), 2, RunClaim.fresh(), UUID.randomUUID());
+    }
+
+    private void stubResendSend(final YouthSwitchDecision decision, final int httpStatus)
+            throws Exception {
+        when(payloadSource.fetch(any())).thenReturn(Optional.of(new FetchedPayload(
+                JsonMapper.builder().build().readTree(RESEND_PAYLOAD), PayloadSource.CACHE_DAY,
+                Optional.of(Instant.parse("2026-08-19T16:42:07.512Z")))));
+        when(youthFilterSource.read(any())).thenReturn(decision);
+        final PublishOutcome outcome = httpStatus == 200 ? new PublishOutcome.Sent(httpStatus)
+                : new PublishOutcome.TransientExhausted(java.util.OptionalInt.of(httpStatus));
+        when(hmppsSender.send(any())).thenReturn(new SentBody(outcome, SENT_BODY));
+        when(outboundLog.recordResend(any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(true);
     }
 
     private void stubReplaySend(final int httpStatus) throws Exception {
