@@ -238,6 +238,7 @@ class ForcedResendIT extends ResendTestSupport {
             assertThat(row.get("note")).isNull();
             assertRequestStillCompleted(requestId);
         }
+
         @Test
         @DisplayName("an outcome-unknown 5xx fails gateway-transient at once, the request left COMPLETED")
         void outcome_unknown_5xx_fails_gateway_transient_at_once() {
