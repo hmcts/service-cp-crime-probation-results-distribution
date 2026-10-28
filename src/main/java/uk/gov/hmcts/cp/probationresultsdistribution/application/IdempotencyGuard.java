@@ -119,7 +119,8 @@ public final class IdempotencyGuard {
             final boolean admitted = repository.admitReplay(command.source(), command.requestId(),
                     claim, route);
             decision = admitted ? new GuardDecision.Admitted(claim, false, false,
-                    Optional.of(messageId)) : new GuardDecision.Abandon();
+                    Optional.of(messageId), repository.hasTerminalSuccess(command.source(), command.requestId()))
+                    : new GuardDecision.Abandon();
         }
         return decision;
     }
@@ -145,7 +146,8 @@ public final class IdempotencyGuard {
                     "PARKED"::equals).isPresent() && row.attemptOneReason().filter(
                     "gateway-transient"::equals).isPresent() && row.attemptOneHttpStatus()
                     .stream().anyMatch(status -> status >= 500 && status < 600);
-            decision = reclaimed ? new GuardDecision.Admitted(claim, crashRerun, gatewayParked)
+            decision = reclaimed ? new GuardDecision.Admitted(claim, crashRerun, gatewayParked,
+                    Optional.empty(), repository.hasTerminalSuccess(command.source(), command.requestId()))
                     : new GuardDecision.Abandon();
         }
         return decision;

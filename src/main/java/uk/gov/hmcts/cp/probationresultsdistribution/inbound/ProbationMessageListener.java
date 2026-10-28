@@ -224,8 +224,11 @@ public final class ProbationMessageListener {
                     LOG.info("replay admitted requestId={} route={} messageId={}",
                             command.requestId(), route.wireValue(), replayId);
                 });
+                if (admitted.terminalSuccess()) {
+                    yield completeTerminal(command, admitted.claim(), deliveryCount);
+                }
                 yield runAndSettle(command, admitted.claim(), deliveryCount, admitted.gatewayParked(),
-                        admitted.replayMessageId());
+                        admitted.replayMessageId(), messageId);
             }
         };
     }
@@ -266,7 +269,7 @@ public final class ProbationMessageListener {
 
     private Settlement runAndSettle(final DistributionCommand command, final RunClaim claim,
                                     final long deliveryCount, final boolean gatewayParked,
-                                    final Optional<String> replayMessageId) {
+                                    final Optional<String> replayMessageId, final String messageId) {
         final boolean finalDelivery = isFinalPermittedDelivery(deliveryCount);
         final RunResult result = replayMessageId.isPresent()
                 ? runner.run(command, AttemptOrigin.REPLAY, claim, finalDelivery, replayMessageId.get())
@@ -279,7 +282,7 @@ public final class ProbationMessageListener {
         }
         return switch (result.status()) {
             case SENT, NOT_APPLICABLE -> completeTerminal(command, claim, deliveryCount);
-            case FAILED -> settleFailed(command, claim, deliveryCount, result.reason());
+            case FAILED -> settleFailed(command, claim, deliveryCount, result.reason(), messageId);
             case PARKED -> {
                 final boolean recorded =
                         processedRequests.markRetrying(command.source(), command.requestId(), claim);
@@ -320,15 +323,17 @@ public final class ProbationMessageListener {
      * @param claim         the request claim fencing the transition
      * @param deliveryCount the broker delivery count, for a stale-runner hand-back
      * @param reason        the leg's failure reason
+     * @param messageId     the identity of the delivery that exhausted the leg
      * @return the settlement to apply
      */
     private Settlement settleFailed(final DistributionCommand command, final RunClaim claim,
-                                    final long deliveryCount, final Optional<LegReason> reason) {
+                                    final long deliveryCount, final Optional<LegReason> reason,
+                                    final String messageId) {
         if (!isExhaustionReason(reason)) {
             return completeTerminal(command, claim, deliveryCount);
         }
         final boolean recorded = processedRequests.markFailed(command.source(), command.requestId(),
-                claim, FailureReason.LEG_EXHAUSTED, "RESULTS:" + command.requestId());
+                claim, FailureReason.LEG_EXHAUSTED, messageId);
         if (!recorded) {
             return staleRunnerRejection(deliveryCount);
         }

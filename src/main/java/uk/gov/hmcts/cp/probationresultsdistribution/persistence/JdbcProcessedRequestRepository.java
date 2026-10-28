@@ -19,8 +19,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
  * The JDBC {@link ProcessedRequestRepository}. The insert is the idempotency claim: it writes the
  * {@code processed_request} ({@code RECEIVED}) and the attempt-1 {@code PENDING}
  * {@code outbound_message} row in one transaction, and a unique violation is handled as a concurrent
- * or duplicate delivery, not an error. It issues no {@code DELETE} against either table and writes no
- * {@code audit_note} (FR-002-045, FR-002-056). The database clock computes every claim expiry.
+ * or duplicate delivery, not an error. It issues no {@code DELETE} against either table; replay admission appends to
+ * {@code audit_note} (FR-004-004, FR-004-005). The database clock computes every claim expiry.
  */
 public final class JdbcProcessedRequestRepository implements ProcessedRequestRepository {
 
@@ -102,6 +102,17 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                 .param(REQUEST_ID, requestId)
                 .update();
         return rows > 0;
+    }
+
+    @Override
+    public boolean hasTerminalSuccess(final String source, final UUID requestId) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM outbound_message_latest "
+                        + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
+                        + "AND status IN ('SENT', 'NOT_APPLICABLE'))")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query(Boolean.class)
+                .single();
     }
 
     @Override

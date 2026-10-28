@@ -192,6 +192,27 @@ class IdempotencyGuardTest {
      * FR-004-001–FR-004-003, replacing the interim FR-002-008).
      */
     @Nested
+    @DisplayName("reclaiming a request with a terminal-success latest leg")
+    class ReclaimTerminalSuccess {
+
+        @Test
+        @DisplayName("returns a completion-only admission after a successful expired-claim reclaim")
+        void marks_terminal_success_after_expired_claim_reclaim() {
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(
+                    new RequestRecord("RETRYING", fp, false)));
+            when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
+            when(repository.hasTerminalSuccess("RESULTS", command.requestId())).thenReturn(true);
+
+            final GuardDecision decision = guard.admit(command, "{}", MESSAGE_ID, 1L,
+                    ReplayRoute.COPY);
+
+            assertThat(decision).isInstanceOfSatisfying(GuardDecision.Admitted.class,
+                    admitted -> assertThat(admitted.terminalSuccess()).isTrue());
+            verify(repository).hasTerminalSuccess("RESULTS", command.requestId());
+        }
+    }
+
+    @Nested
     @DisplayName("admitting a FAILED request's delivery (DV-26)")
     class ReplayAdmission {
 

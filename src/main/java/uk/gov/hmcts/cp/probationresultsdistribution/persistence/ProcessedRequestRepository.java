@@ -111,6 +111,17 @@ public interface ProcessedRequestRepository {
     boolean admitReplay(String source, UUID requestId, RunClaim claim, ReplayRoute route);
 
     /**
+     * Checks the latest HMPPS attempt before a claimed queue or replay run performs external work.
+     * A terminal-success leg is preserved; only the claim-guarded request completion may change.
+     *
+     * @param source the request source
+     * @param requestId the claimed request
+     * @return whether its latest HMPPS attempt is SENT or NOT_APPLICABLE
+     */
+    boolean hasTerminalSuccess(String source, UUID requestId);
+
+
+    /**
      * Reads a request's state for the replay action (FR-004-014), without the attempt-1 columns the
      * guard's hot-path {@link #find} carries — a dedicated, lighter read for an operator-triggered
      * action rather than every delivery.

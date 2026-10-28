@@ -27,16 +27,23 @@ public sealed interface GuardDecision
      * @param gatewayParked whether attempt 1 was PARKED for a gateway 5xx before this reclaim
      * @param replayMessageId the admitting delivery's {@code messageId} when this is a replay
      *                        admission (slice 004, FR-004-007); empty for a queue admission
+     * @param terminalSuccess whether the latest leg is already successful and only the request
+     *                        needs claim-guarded completion, without another leg run
      */
     record Admitted(RunClaim claim, boolean crashRerun, boolean gatewayParked,
-                    Optional<String> replayMessageId) implements GuardDecision {
+                    Optional<String> replayMessageId, boolean terminalSuccess) implements GuardDecision {
 
         public Admitted(final RunClaim claim) {
-            this(claim, false, false, Optional.empty());
+            this(claim, false, false, Optional.empty(), false);
         }
 
         public Admitted(final RunClaim claim, final boolean crashRerun, final boolean gatewayParked) {
-            this(claim, crashRerun, gatewayParked, Optional.empty());
+            this(claim, crashRerun, gatewayParked, Optional.empty(), false);
+        }
+
+        public Admitted(final RunClaim claim, final boolean crashRerun, final boolean gatewayParked,
+                        final Optional<String> replayMessageId) {
+            this(claim, crashRerun, gatewayParked, replayMessageId, false);
         }
 
         /** Rejects a null claim or replay-message-id optional. */
