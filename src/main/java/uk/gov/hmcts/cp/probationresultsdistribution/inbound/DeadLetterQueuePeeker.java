@@ -1,6 +1,6 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.inbound;
 
-import com.azure.core.amqp.exception.AmqpException;
+import com.azure.core.exception.AzureException;
 import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
 import com.azure.messaging.servicebus.ServiceBusReceiverClient;
 import java.time.OffsetDateTime;
@@ -37,7 +37,9 @@ public final class DeadLetterQueuePeeker implements DeadLetterReader {
         final List<ServiceBusReceivedMessage> page;
         try {
             page = deadLetterReceiver.peekMessages(maxEntries, fromSequenceNumber).stream().toList();
-        } catch (final AmqpException brokerFailure) {
+        } catch (final AzureException | IllegalStateException brokerFailure) {
+            // A disposed receiver raises IllegalStateException. A broker failure is an AzureException:
+            // the sync receiver reports it as ServiceBusException, a link failure as AmqpException.
             throw new DeadLetterReadException(brokerFailure);
         }
         return page.stream().map(this::entry).toList();

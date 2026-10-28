@@ -1,6 +1,6 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus;
 
-import com.azure.core.amqp.exception.AmqpException;
+import com.azure.core.exception.AzureException;
 import com.azure.messaging.servicebus.ServiceBusMessage;
 import com.azure.messaging.servicebus.ServiceBusSenderClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.CommandEnqueuer;
@@ -36,8 +36,9 @@ public final class ServiceBusCommandEnqueuer implements CommandEnqueuer {
         message.getApplicationProperties().putAll(command.applicationProperties());
         try {
             sender.sendMessage(message);
-        } catch (final AmqpException | IllegalStateException brokerFailure) {
-            // A disposed sender raises IllegalStateException; a broker failure, an AmqpException.
+        } catch (final AzureException | IllegalStateException brokerFailure) {
+            // A disposed sender raises IllegalStateException. A broker failure is an AzureException:
+            // the sync sender reports it as ServiceBusException, a link failure as AmqpException.
             throw new CommandEnqueueException(brokerFailure);
         }
     }

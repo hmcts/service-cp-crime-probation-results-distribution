@@ -1205,7 +1205,9 @@ failed and unknown requests; run both runners; compare output with seeded state.
       DeadLetterQueuePeeker` implements the `DeadLetterReader` port (in `inbound` because it is
       the one other class that handles a `ServiceBusReceivedMessage`), reading each entry's
       `requestId` with the closed-contract parser and passing on only the sequence number,
-      `messageId`, reason and enqueued time; an `AmqpException` is `DeadLetterReadException`.
+      `messageId`, reason and enqueued time; an `AzureException` (the sync receiver's
+      `ServiceBusException`, or an `AmqpException`) or a disposed receiver's
+      `IllegalStateException` is `DeadLetterReadException` (gate round 1 remediation below).
       `DlqCompletedListingQuery` peeks batches of 100 from sequence 0, looks each batch's
       `requestId`s up with `RequestListingRepository.requestStatuses`, keeps the `COMPLETED`
       ones, and stops once it holds 501 or the queue is exhausted; it shows 500 with `more`. A
@@ -1374,7 +1376,8 @@ observe a new request with the audit line and `origin=queue` outcomes.
       There was no production Service Bus sender in the service (the replay action's
       `ReplayEnqueuer` has no adapter yet, and carries no application properties), so the enqueue
       goes through a new send-only `CommandEnqueuer` port and its `adapter/servicebus/
-      ServiceBusCommandEnqueuer` (`contentType = application/json`; an `AmqpException`, or the
+      ServiceBusCommandEnqueuer` (`contentType = application/json`; an `AzureException` — the
+      sync sender's `ServiceBusException`, or an `AmqpException` — or the
       `IllegalStateException` of a disposed sender, is `CommandEnqueueException` →
       `broker-unavailable`). It reads no intake state and writes no store.
       GREEN: `SubmitHearingActionTest` 20/20 and `ServiceBusCommandEnqueuerIT` 2/2 PASSED.
@@ -1446,6 +1449,28 @@ observe a new request with the audit line and `origin=queue` outcomes.
       stopped afterwards (`docker compose down`).
 
 **Checkpoint**: all eight user stories are independently functional.
+
+**Phases 9–10 gate round 1 remediation (2026-10-28)** — reviewer findings against T059–T071, each
+fixed test-first in its own commit:
+
+- *Broker failures reach the bounded outcome* (T062, T068): the sync Service Bus clients report a
+  broker failure (unauthorised, entity not found, timeout, unreachable) as `ServiceBusException`,
+  an `AzureException` that is not an `AmqpException`, so it skipped `broker-unavailable` and fell
+  through to the runner's generic `store-or-broker-unavailable` line; a disposed dead-letter
+  receiver's `IllegalStateException` was not mapped at all. Test first:
+  `adapter/servicebus/ServiceBusCommandEnqueuerTest` (new, mocked sender), `inbound/
+  DeadLetterQueuePeekerTest` (new, mocked receiver) and `DeadLetterQueuePeekerIT` `throws
+  DeadLetterReadException when the receiver can no longer peek` (a closed receiver on the
+  emulator). RED (4 of 8): `a ServiceBusException from the send is CommandEnqueueException:
+  Expecting actual throwable to be an instance of: ...CommandEnqueueException ...
+  ServiceBusException: unauthorised`; `a ServiceBusException from the peek is
+  DeadLetterReadException: ... ServiceBusException: unreachable`; `an IllegalStateException from a
+  disposed receiver is DeadLetterReadException: ... IllegalStateException: disposed`; the IT case
+  `... IllegalStateException: Cannot perform operation 'peekBatchAt' on a disposed receiver.` The
+  two `AmqpException` cases passed (characterisation of the existing mapping). GREEN: both adapters
+  catch `AzureException | IllegalStateException` (`AzureException` covers `AmqpException` and
+  `ServiceBusException`); `ServiceBusCommandEnqueuerTest` 2/2, `ServiceBusCommandEnqueuerIT` 2/2,
+  `DeadLetterQueuePeekerTest` 3/3 and `DeadLetterQueuePeekerIT` 3/3 PASSED.
 
 ---
 

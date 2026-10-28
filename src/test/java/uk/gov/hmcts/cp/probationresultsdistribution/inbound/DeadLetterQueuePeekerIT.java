@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.inbound;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.azure.messaging.servicebus.ServiceBusClientBuilder;
 import com.azure.messaging.servicebus.ServiceBusReceiverClient;
@@ -11,6 +12,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DeadLetterReader.DeadLetterEntry;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.DeadLetterReader.DeadLetterReadException;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 
 /**
@@ -74,6 +76,17 @@ class DeadLetterQueuePeekerIT extends DeadLetterTestSupport {
             assertThat(peeker.peek(last + 1, 2)).allSatisfy(
                     entry -> assertThat(entry.sequenceNumber()).isGreaterThan(last));
         }
+    }
+
+    @Test
+    @DisplayName("throws DeadLetterReadException when the receiver can no longer peek")
+    void peek_closedReceiver_should_throw() {
+        final DeadLetterQueuePeeker peeker;
+        try (ServiceBusReceiverClient dlq = deadLetterReceiver()) {
+            peeker = new DeadLetterQueuePeeker(dlq);
+        }
+
+        assertThatThrownBy(() -> peeker.peek(0L, 2)).isInstanceOf(DeadLetterReadException.class);
     }
 
     private static List<DeadLetterEntry> peekAll(final DeadLetterQueuePeeker peeker) {
