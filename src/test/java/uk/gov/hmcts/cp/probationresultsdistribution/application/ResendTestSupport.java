@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
 import io.lettuce.core.api.StatefulRedisConnection;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -18,6 +19,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ResultsQuery
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
@@ -148,7 +150,8 @@ public class ResendTestSupport extends EndToEndTestSupport {
                         + "shared_time, event_type, request_fingerprint, status, attempts, command, "
                         + "failure_reason, exhausted_message_id, completion_reason, claim_owner, "
                         + "claim_token, claim_expires_at) VALUES (:source, :requestId, :hearingId, "
-                        + ":hearingDay, :sharedTime, 'Hearing_Resulted', 'fp', :status, 1, :command, "
+                        + ":hearingDay, :sharedTime, 'Hearing_Resulted', :fingerprint, :status, 1, "
+                        + ":command, "
                         + ":failureReason, :exhausted, :completionReason, " + claim + ")")
                 .param("source", SOURCE)
                 .param(REQUEST_ID, requestId)
@@ -157,11 +160,25 @@ public class ResendTestSupport extends EndToEndTestSupport {
                 .param("sharedTime", OffsetDateTime.parse(SHARED_TIME).withOffsetSameInstant(
                         ZoneOffset.UTC))
                 .param("status", status)
+                .param("fingerprint",
+                        new RequestFingerprint().compute(command(requestId, hearingId)))
                 .param("command", storedCommand(requestId, hearingId))
                 .param("failureReason", failureReason)
                 .param("exhausted", exhausted)
                 .param("completionReason", "COMPLETED".equals(status) ? "both-legs-terminal" : null)
                 .update();
+    }
+
+    /**
+     * The command a queue delivery of a seeded request carries, matching its stored fingerprint.
+     *
+     * @param requestId the request id
+     * @param hearingId the hearing id
+     * @return the command
+     */
+    protected static DistributionCommand command(final UUID requestId, final UUID hearingId) {
+        return new DistributionCommand(SOURCE, requestId, hearingId, HEARING_DAY,
+                Instant.parse(SHARED_TIME), "Hearing_Resulted", Optional.empty());
     }
 
     /**

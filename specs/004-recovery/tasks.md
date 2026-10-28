@@ -615,12 +615,28 @@ code, five report entries, refusal counters incremented.
       expected: "FAILED" but was: "PENDING"`. The ninth (`a SENT resend of a COMPLETED request's
       leg does not re-complete it`) asserts only an absence and passes against the seam too; it is
       kept as the FR-004-034 regression guard.
-- [ ] T041 [P] [US3] `ResendConcurrencyIT` (US3 half, extends T031's file): two resend runs and a
+- [X] T041 [P] [US3] `ResendConcurrencyIT` (US3 half, extends T031's file): two resend runs and a
       late queue delivery for one leg, or a replay and a resend racing in either order — exactly one
       runs the leg and exactly one POST results (FR-004-035); a late resend-runner completion by its
       rotated claim token changes nothing and counts as a stale-runner rejection — RollbackFencingIT's
       "late resend runner" case, pinned here (FR-004-028) — extends
       `src/test/java/.../application/ResendConcurrencyIT.java`
+      The class now extends `ResendTestSupport` (real PostgreSQL, Redis, WireMock); T031's three
+      Mockito pause cases are kept as they are. Five real-store cases in two nested classes: each
+      race is made deterministic by running the competitor from inside the first run's send, after
+      its attempt row is committed — a second resend run (`resend-in-progress`, one POST, two
+      rows), a late queue delivery through `IdempotencyGuard` (`ReplayDeferred`), a replay admitted
+      first (`request-claimed`, no row, no POST), a replay statement reached after the resend's claim
+      committed (not admitted, `replayed_at` NULL — the guard's read-then-update window), and a late
+      resend runner completing after `JdbcRollbackFencingRepository.closeInFlight` rotated its token
+      (nothing changes: the row stays `FAILED(rolled-back)` with no digest, the request `FAILED`, the
+      entry `not-run`, `probation_stale_runner_rejections_total` = 1). The last is RollbackFencingIT's
+      deferred "late resend runner" case, pinned here as T041 names.
+      RED: all 5 fail on assertions against the T038 seams — e.g. `Races > two resend runs ... :
+      Expecting Optional to contain: Ran[status=SENT, reason=Optional.empty] but was empty`,
+      `Races > a replay statement reached after a resend claimed the leg is not admitted : Expecting
+      actual: [] to contain exactly (and in same order): [false]`, `LateResendRunner > ... :
+      Expecting Optional to contain: NotRun[] but was empty`. The three pause cases stay green.
 - [X] T042 [US3] `PropertiesValidatorTest`/eligibility unit test for the confirmed FR-004-024
       resolution: an expired `PENDING` resend row is refused `resend-in-progress`, never reclaimed —
       **(confirmed 2026-10-26)**; assert unchanged attempt and claim, and no POST — add to `ResendByRequestIdsIT` (T038) as its own case, not a new file
