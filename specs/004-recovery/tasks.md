@@ -818,6 +818,68 @@ code, five report entries, refusal counters incremented.
       same run with `--force-resend-sent` exited 1, refused `unreadable-argument` until US5 (T058)
       builds the override; neither wrote a row or POSTed.
 
+**Phase 6 gate round 1 remediation (2026-10-28)** — reviewer findings against T038–T050, each
+fixed test-first in its own commit:
+
+- *Store failure during a resend run* (T043/T047; spec edge case, FR-004-039): the contract first
+  names `claimed-incomplete` and the failed-store exit (`contracts/cli-runners.md` §2, spec
+  FR-004-039, the OpenAPI `ResendRefusalCode` enum with `OperationsContractTest`). Test first:
+  `LegResenderTest` (new, 5 plain-mock cases), the fenced case of `ResendConcurrencyIT`
+  `LateResendRunner` and `ResendLegRunnerTest` `answers failed for a report whose run met a store
+  failure`, against seams (`ResendEntryOutcome.ClaimedIncomplete`, `ResendRunResult.storeFailed`
+  always `false`). RED: `a failed claim is not-run ... : Expecting value to be true but was false`;
+  `a store failure after the claim is claimed-incomplete ...` and `is claimed-incomplete, counts a
+  stale-runner rejection ...` failed on `Expecting actual: [... NotRun[] ...]` (`containsExactly`);
+  both pause-read cases errored, `DataAccessResourceFailureException: store down` propagating out
+  of `resend`; `ResendConcurrencyIT` `Expecting actual: Optional[NotRun[]] to contain:
+  ClaimedIncomplete[]`; `ResendLegRunnerTest` `expected: FAILED but was: DONE`. Implementation: a
+  claim that fails is `not-run`; a store failure after the claim, or a fenced completion, is
+  `claimed-incomplete`; any store failure sets `storeFailed`, so the report stands and the runner
+  exits `FAILED` (2); a first pause read the store cannot answer refuses the run whole
+  `store-unavailable`, and a later one stops claiming. Every ERROR line carries a bounded
+  `cause=<exception simple name>`, never the message. GREEN: `LegResenderTest` 5/5,
+  `ResendLegRunnerTest` 12/12, `ResendConcurrencyIT` 8/8, `ResendByRequestIdsIT` and
+  `OperationsContractTest` all PASSED.
+- *The gateway classes on a resend, end to end* (T045, FR-004-026): `ResendByRequestIdsIT`
+  `GatewayClasses` (6 cases over the real publisher and WireMock). A 503, a 408, a read timeout
+  after the write (1 s read, 3 s delay) and a connection reset are each one POST and
+  `FAILED(gateway-transient)` with the matching `http_status` (none for the two transport cases)
+  and no `PARKED` row. A 429 with `Retry-After: 1` is two POSTs and then `SENT`. A refused
+  connection, retried until a gateway started 150 ms later answers, is `SENT`. These are
+  characterisation pins: the no-park mapping landed with T045, so they were green the first time
+  they ran.
+- *The CLI composition root* (T047): test first, `PackagedResendLegCommandIT` (new, 3 cases, the
+  packaged jar against the shared store, Redis and WireMock) and `StartupValidationTest` `refuses a
+  blank gateway subscription key only when secrets are required`, against a no-op
+  `StartupValidator.validateGatewayKey` seam. RED: `refuses a send stage that does not fit its
+  budget` exited 0 (a 200 s gateway read timeout was not refused and the leg was SENT), `refuses a
+  blank gateway subscription key outside the local profile` exited 0 (the POST went to the https
+  stub port, unauthenticated, and recorded `FAILED(gateway-transient)`), `Expecting code to raise
+  a throwable`. The happy path, including the OTLP push assertion, passed already: the command
+  context's own `MeterRegistry` (OTLP and Prometheus) was used and is flushed on close. So the
+  "throwaway SimpleMeterRegistry" finding is answered by that pin plus the contract's telemetry
+  paragraph, not by a code change. Implementation: a lazy `commandDistributionProperties` bean
+  binds `distribution.*` and runs `StartupValidator.validate` and `validateNoForbiddenProperties`,
+  refuses a blank subscription key outside `local`/`test`, and logs the youth default, all before
+  any client is built. A failure exits 2 with `reason=invalid-configuration detail=<property: rule>`.
+  The four clients come from one `config/PipelineClients` factory, which `ServiceBusConsumerConfig`
+  now uses too. GREEN: `PackagedResendLegCommandIT` 3/3, `PackagedIntakeCommandsIT` 4/4 (the
+  intake commands still open no cache), `StartupValidationTest` 14/14.
+- *T048's red run, reproduced*: in a throwaway worktree of `9b9e16c` (removed afterwards),
+  `DistributionRunner.runResend` was changed to label its outcome `AttemptOrigin.QUEUE`. The three
+  resend cases of `OutcomeMetricsTest` then failed and the three replay cases passed. `a resend
+  outcome counts leg_outcomes_total with origin=resend` failed with `NullPointerException ...
+  Search.counter() is null` (no `origin=resend` counter). The two log-line cases failed with
+  `Expecting actual: "HMPPS leg outcome status=FAILED reason=gateway-transient httpStatus=503 ...
+  runOrigin=QUEUE youthSwitch=ACTIVE ..." to contain: ["status=FAILED", ... "runOrigin=RESEND"
+  ...]` and `... runOrigin=QUEUE youthSwitch=UNREADABLE_DEFAULTED_ACTIVE youthSwitchCause=TIMEOUT
+  ...`. The test therefore pins the labelling and goes red without it, although in history it
+  landed after T045.
+- *Lower-severity*: `DistributionRunnerTest` `RunResend` (5 plain-mock cases, characterisation of
+  T045/T046); T040's SENT-resend-of-`COMPLETED` case now also asserts that its own write landed
+  `SENT`; the `application` package-info says the forced-resend override is unbuilt (T058);
+  `SharedTimes` documents its deliberate difference from `SharedTimeCheck`.
+
 **Checkpoint**: Stories 1, 2, 3 and 7 all work independently — recovery via replay and resend is
 fully usable without forced resend, listings or submit-hearing.
 
