@@ -1478,6 +1478,11 @@ fixed test-first in its own commit:
   RED (1 of 12): `a cut that would split a surrogate pair drops the whole character: expected:
   "xxx…x" but was: "xxx…x?"`. GREEN: the cut steps back one when character 200 is a high
   surrogate; `SupportSubmissionTest` 12/12 PASSED.
+- *The `updated_at` bounds' offset rule* (T061): `RequestListingQueryTest` gains a local
+  date-time with no offset, as either bound, refused `unreadable-argument`, and an
+  `--updated-after` of `2026-08-19T01:00:00+01:00` read as the instant `2026-08-19T00:00:00Z`.
+  Characterisation of the existing parse, which could not go red: all three PASSED on first run;
+  `RequestListingQueryTest` 28/28 PASSED.
 
 ---
 

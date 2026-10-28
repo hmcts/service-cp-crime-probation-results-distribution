@@ -115,6 +115,19 @@ class RequestListingQueryTest {
         }
 
         @Test
+        @DisplayName("reads an updated_at bound with a non-Z offset as its instant")
+        void list_offsetBound_should_read_the_instant() {
+            when(repository.byLatestAttempt("FAILED", Optional.empty(),
+                    Optional.of(Instant.parse("2026-08-19T00:00:00Z")), Optional.empty(),
+                    ONE_MORE_THAN_A_PAGE)).thenReturn(rows(1));
+
+            final RequestListing listing = query().list(byLatest("FAILED", null,
+                    "2026-08-19T01:00:00+01:00", null));
+
+            assertThat(((RequestListing.Listed) listing).rows()).hasSize(1);
+        }
+
+        @Test
         @DisplayName("takes the status alone")
         void list_statusOnly_should_pass_no_other_filter() {
             when(repository.byLatestAttempt("PARKED", Optional.empty(), Optional.empty(),
@@ -168,7 +181,10 @@ class RequestListingQueryTest {
             "reason outside the closed set,null,null,FAILED,SECRET-reason,null,null,"
                     + "unreadable-argument",
             "after not an instant,null,null,FAILED,null,yesterday-SECRET,null,unreadable-argument",
-            "before not an instant,null,null,FAILED,null,null,2026-08-19,unreadable-argument"
+            "before not an instant,null,null,FAILED,null,null,2026-08-19,unreadable-argument",
+            "after with no offset,null,null,FAILED,null,2026-08-19T00:00:00,null,unreadable-argument",
+            "before with no offset,null,null,FAILED,null,null,2026-08-19T00:00:00,"
+                    + "unreadable-argument"
         })
         void list_badInput_should_refuse_whole(final String name, final String hearingId,
                                                final String hearingDay, final String status,
