@@ -990,9 +990,25 @@ labelled `forced`, without moving the request off `COMPLETED`.
       null`, `a forced resend that fails ... : expected: 1.0 but was: 0.0` (`forced=true`).
       `ResendByRequestIdsIT` 24/24, `ResendConcurrencyIT` 8/8, `LegResenderTest` 5/5 and
       `ResendLegRunnerTest` 12/12 still PASSED.
-- [ ] T056 [US5] Implement the forced-resend audit write: `operator`, `override=true`,
+- [X] T056 [US5] Implement the forced-resend audit write: `operator`, `override=true`,
       `override=force-resend` (+ `override=allow-changed-payload` when both used), sanitised reason
       line appended to `audit_note`, applied per-ID only (FR-004-037)
+      In the claim's own transaction, before any POST: a forced attempt row is inserted with
+      `operator`, `override = true` and note `override=force-resend`, and one timestamped
+      `FORCED_RESEND attempt=<n> operator=<operator> reason=<reason>` line is appended to the
+      request's `audit_note` (the reason sanitised to one line by `LegResender`, already ≤ 200
+      characters by the whole-run check) — so a claimed-incomplete forced attempt is audited too.
+      The request's status and reasons are not touched. The completion
+      (`OutboundMessageRepository.writeResendOutcome`) keeps the forced form: `note` is
+      `override=force-resend`, joined `;override=allow-changed-payload` when that override was used
+      as well, and `override` is true when either was used. A `FAILED` id under the override is
+      claimed unforced and writes none of this. No new note form or CHECK: both forms are already in
+      `NoteForm` and the V1 `note` CHECK.
+      GREEN (partial, as planned): `ForcedResendIT` 5 of 10 now PASS with T055's two; the four
+      `WithOverride` failures and `PerId`'s are T057's `forced` label — e.g. `a SENT leg is run again
+      ... : expected: 1.0 but was: 0.0`, `PerId > ... : expected: 1.0 but was: 2.0` (both outcomes
+      still labelled `forced=false`). `ResendSharedTimeCheckIT` 9/9, `RequestRecoveryTransitionTest`
+      12/12 and `ResendByRequestIdsIT` 24/24 still PASSED.
 - [ ] T057 [US5] Wire `forced=true`/`false` labelling into the outcome metric and log line from T048
       (FR-004-038) — extends `application/LegResender.java`'s outcome recording
 - [ ] T058 [US5] Add `--force-resend-sent` parsing to `cli/ResendLegRunner.java` (T047) per

@@ -14,6 +14,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.NoteForm;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
@@ -160,14 +161,15 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                                    final String operator, final RunClaim legClaim,
                                    final Optional<String> forcedResendReason) {
         return transactionTemplate.execute(status -> checkAndClaim(source, requestId, resendRunId,
-                operator, legClaim, forcedResendReason.isPresent()));
+                operator, legClaim, forcedResendReason));
     }
 
     // Each refusal exits as soon as its check decides, in the fixed FR-004-022 order.
     @SuppressWarnings("PMD.OnlyOneReturn")
     private ResendClaim checkAndClaim(final String source, final UUID requestId,
                                       final UUID resendRunId, final String operator,
-                                      final RunClaim legClaim, final boolean allowTerminalSuccess) {
+                                      final RunClaim legClaim,
+                                      final Optional<String> forcedResendReason) {
         // The request row is locked first (FOR UPDATE), so a concurrent resend of the same request
         // waits here and then, in its next statement, sees this run's committed attempt row.
         final Optional<ResendRequestRow> request = jdbc.sql("SELECT hearing_id, hearing_day, "
@@ -200,7 +202,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
             return new ResendClaim.Refused(ResendRefusal.RESEND_IN_PROGRESS);
         }
         // The override applies per ID: it is used only over a terminal-success latest row.
-        final boolean forced = allowTerminalSuccess && latest.isPresent()
+        final boolean forced = forcedResendReason.isPresent() && latest.isPresent()
                 && latest.get().terminalSuccess();
         if (latest.isEmpty() || !latest.get().resendEligible() && !forced) {
             return new ResendClaim.Refused(ResendRefusal.NOT_ELIGIBLE);
@@ -209,9 +211,10 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
         final int attempt = latest.get().attempt() + 1;
         jdbc.sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
                         + "attempt_origin, status, attempts, claim_owner, claim_token, "
-                        + "claim_expires_at, resend_run_id, operator) VALUES (:id, :source, "
-                        + ":requestId, 'HMPPS', :attempt, 'resend', 'PENDING', 0, :owner, :token, "
-                        + "now() + make_interval(secs => :lease), :resendRunId, :operator)")
+                        + "claim_expires_at, resend_run_id, operator, override, note) VALUES (:id, "
+                        + ":source, :requestId, 'HMPPS', :attempt, 'resend', 'PENDING', 0, :owner, "
+                        + ":token, now() + make_interval(secs => :lease), :resendRunId, :operator, "
+                        + ":override, :note)")
                 .param("id", attemptId)
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
@@ -221,12 +224,35 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                 .param(LEASE, (double) leaseSeconds)
                 .param("resendRunId", resendRunId)
                 .param("operator", operator)
+                .param("override", forced)
+                .param("note", forced ? NoteForm.OVERRIDE_FORCE_RESEND.wireValue() : null)
                 .update();
+        if (forced) {
+            appendForcedResendLine(source, requestId, attempt, operator, forcedResendReason.get());
+        }
         final ResendRequestRow row = request.get();
         return new ResendClaim.Claimed(
                 new ResendAttempt(attemptId, attempt, legClaim, resendRunId, forced),
                 new DistributionCommand(source, requestId, row.hearingId(), row.hearingDay(),
                         row.sharedTime(), row.eventType(), Optional.empty()));
+    }
+
+    private void appendForcedResendLine(final String source, final UUID requestId, final int attempt,
+                                        final String operator, final String reason) {
+        // The forced resend is audited on the request's append-only log in the claim's own
+        // transaction, so before any POST: one timestamped line with the operator and the reason,
+        // already sanitised to one line of at most 200 characters (FR-004-037). The request's
+        // status and reasons are not touched (FR-004-038).
+        jdbc.sql("UPDATE processed_request SET audit_note = coalesce(audit_note || E'\\n', '') "
+                        + "|| now()::text || ' FORCED_RESEND attempt=' || :attempt "
+                        + "|| ' operator=' || :operator || ' reason=' || :reason "
+                        + REQUEST_WHERE)
+                .param("attempt", attempt)
+                .param("operator", operator)
+                .param("reason", reason)
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
     }
 
     /** The request columns a resend rebuilds its command from, and whether a live claim holds it. */

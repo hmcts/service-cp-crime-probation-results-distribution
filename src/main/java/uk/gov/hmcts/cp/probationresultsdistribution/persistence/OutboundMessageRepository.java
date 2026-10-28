@@ -2,6 +2,8 @@ package uk.gov.hmcts.cp.probationresultsdistribution.persistence;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -361,8 +363,17 @@ public final class OutboundMessageRepository {
                 .optional();
         final String bodyDigest = outcome.bodyDigest().orElse(null);
         final String versionToWrite = bodyDigest == null ? null : serviceVersion;
-        final String note = overrideAllowChangedPayload
-                ? NoteForm.OVERRIDE_ALLOW_CHANGED_PAYLOAD.wireValue() : null;
+        // A forced attempt keeps its override=force-resend form, joined with
+        // override=allow-changed-payload when that override was used as well (FR-004-031,
+        // FR-004-037); override is true when either was used.
+        final List<String> forms = new ArrayList<>();
+        if (attempt.forced()) {
+            forms.add(NoteForm.OVERRIDE_FORCE_RESEND.wireValue());
+        }
+        if (overrideAllowChangedPayload) {
+            forms.add(NoteForm.OVERRIDE_ALLOW_CHANGED_PAYLOAD.wireValue());
+        }
+        final String note = forms.isEmpty() ? null : String.join(";", forms);
         // Guarded by the attempt's own leg-claim token: a token rotated by the rollback protocol, or
         // a row another runner already completed, matches nothing (FR-004-028). The claim and
         // resend_run_id stay on the row as the record of who ran it (FR-004-025).
@@ -390,7 +401,7 @@ public final class OutboundMessageRepository {
                 .param(BODY_DIGEST, bodyDigest)
                 .param(SERVICE_VERSION, versionToWrite)
                 .param(SENT, outcome.status() == LegStatus.SENT)
-                .param("override", overrideAllowChangedPayload)
+                .param("override", !forms.isEmpty())
                 .param("note", note)
                 .param("id", attempt.attemptId())
                 .param(TOKEN, attempt.legClaim().token())
