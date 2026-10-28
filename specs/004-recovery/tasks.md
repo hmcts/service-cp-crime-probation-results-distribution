@@ -933,7 +933,7 @@ completed replay until an operator removes it.
 
 ### Implementation for User Story 4
 
-- [ ] T052 [US4] Write the operator runbook `doc/runbooks/dead-letter-recovery.md`: resend
+- [X] T052 [US4] Write the operator runbook `doc/runbooks/dead-letter-recovery.md`: resend
       `leg-exhausted`/`exhausted`, never resend `validation`/`collision`, remove after completion,
       same-id one-admission-chance rule with no wait/no messageId edit needed, choosing IDs by the
       request listing or the documented `outbound_message_latest` query (incl. by
@@ -941,6 +941,27 @@ completed replay until an operator removes it.
       `gateway-transient` with HMPPS before any re-send, a forced resend as a genuine duplicate, the
       post-cache-expiry body-shape difference, and the `outbound_body` retention-window caveat
       (FR-004-046, FR-004-047)
+      Written after Phase 8, so it describes the forced resend as built (`--force-resend-sent`, the
+      `override=force-resend` note, the `FORCED_RESEND` `audit_note` line, `forced=true`, the
+      request left `COMPLETED`). Sections: the four reasons and their action; resending an entry
+      (same `messageId`, no wait or edit, one admission chance at delivery count 1, `COMPLETED`
+      copies are noise to remove, never-admitted messages are first deliveries, a row-less entry is
+      repaired by a resend or a re-share, never by replay); removing entries after completion;
+      replay or resend-leg; choosing IDs (by hearing and day, by the latest attempts' status, reason
+      and `updated_at`, and by `service_version`); running and reading `resend-leg` (exit codes,
+      every whole-run and per-ID code, each failure reason, outcome-unknown `gateway-transient`
+      confirmed with HMPPS, `receiver-rejected` rejected again); the `claimed-incomplete` outcome
+      and an expired `PENDING` resend row, closed by the guarded `rollback-close-in-flight`
+      procedure (pause, wait for every replica, close, resume, then resend the closed attempt-≥ 2
+      row once HMPPS has confirmed); the forced resend; the post-expiry body shape and the
+      `outbound_body` retention window (`distribution.body-retention`, 6–7 months). Read-only SQL
+      stands in for the runners this build does not package yet, each named as such: the
+      `list-requests` and `list-dlq-completed` listings (US6), the `replay` runner (registered in no
+      command line yet, T021's open point), and submit-hearing (US8). Placeholders only — no
+      hostnames, keys, connection strings or hearing data (the repository is public). Every rule
+      it states is pinned by `RunbookCrossReferenceIT` (T051), `DlqResubmissionReplayIT`,
+      `ResendByRequestIdsIT`, `ResendSharedTimeCheckIT` or `ForcedResendIT`. Documentation only:
+      no test task of its own (exempt), T053's walk-through still to come.
 - [ ] T053 Walk the runbook through with the owning team (SC-004-012) once T052 lands; record the
       outcome in the PR description, not in this repository
 
