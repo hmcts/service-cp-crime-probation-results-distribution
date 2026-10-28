@@ -896,12 +896,40 @@ completed replay until an operator removes it.
 
 ### Tests for User Story 4
 
-- [ ] T051 [P] [US4] `RunbookCrossReferenceIT`: for each of the four dead-letter reasons
+- [X] T051 [P] [US4] `RunbookCrossReferenceIT`: for each of the four dead-letter reasons
       (`leg-exhausted`, `exhausted`, `validation`, `collision`), assert the exact behaviour the
       runbook will state — reusing `DlqResubmissionReplayIT`'s fixtures rather than re-seeding —
       including "an `exhausted` entry whose request is already `COMPLETED` is a no-op" and "a
       `validation`/`collision` entry is dead-lettered again with no row written/untouched"
       (FR-004-046) — `src/test/java/.../inbound/RunbookCrossReferenceIT.java`
+      `DlqResubmissionReplayIT`'s private fixtures (seeded `FAILED` request and leg rows, real broker
+      sends with an `origin` marker, the dead-letter copy-back under the same `messageId`, the
+      counted production-listener run) move unchanged into a shared
+      `inbound/DeadLetterTestSupport`, which both suites extend; the copy-back is split into
+      `deadLetterDirectly` (a dead-letter entry with a given reason, as the broker left it) and
+      `resubmitFromDeadLetter` (copy back, then complete the entry), and the listener run now waits
+      2 s after closing its processor, as `EndToEndTestSupport.stopProcessorNow` does, so the next
+      send is not handed to the detaching link. `DlqResubmissionReplayIT`'s 23 cases are otherwise
+      untouched. Six runbook cases, against real deliveries: `Resend` — a `leg-exhausted` entry
+      resubmitted under its exhausted `messageId` replays at delivery count 1 to
+      `COMPLETED(recovered)` route `copy`, one POST, nothing dead-lettered again; an `exhausted`
+      entry whose request is `COMPLETED` changes no row, sends nothing and is not parked again; an
+      `exhausted` entry with no request row is a first delivery (`COMPLETED(both-legs-terminal)`,
+      attempt 1 `queue` `SENT`, no replay counted). `NeverResend` — a `validation` entry (made by
+      the listener) resubmitted is dead-lettered `validation` again with no row; a `collision`
+      entry resubmitted is dead-lettered `collision` again with the existing row unchanged.
+      `RemoveAfterCompletion` — after a service replay (fresh `messageId`, `origin=REPLAY`)
+      completes the request, the original `leg-exhausted` entry is still on the dead-letter queue.
+      RED not reproducible: the runbook states behaviour Stories 1–3 already built, so this is a
+      characterisation test, green the first time it ran (6/6, with `DlqResubmissionReplayIT`
+      23/23 over the shared fixtures). Shown falsifiable by two reverted mutations, run together and
+      undone with `git checkout` before the commit: `IdempotencyGuard`'s `firstDelivery` forced to
+      `false` failed `a leg-exhausted entry resubmitted under its own messageId is replayed :
+      expected: "COMPLETED" but was: "FAILED"` (re-dead-lettered `exhausted`), and the listener's
+      closed-schema dead letter relabelled `collision` failed `a validation entry resubmitted ... :
+      expected: "validation" but was: "collision"`; the other four stayed green, as each pins a
+      different rule.
+      GREEN: all 6 `RunbookCrossReferenceIT` cases and all 23 `DlqResubmissionReplayIT` cases PASSED.
 
 ### Implementation for User Story 4
 
