@@ -791,25 +791,32 @@ code, five report entries, refusal counters incremented.
       stays DV-27); this phase found no unregistered behaviour difference — the resend's
       `sharedTime` check, recovery and fencing are slice 004's own requirements, not departures
       from the legacy, which has no resend. `DeviationRegisterTest` still passes.
-- [ ] T050 Run `quickstart.md` steps 3–4 (resend, forced-resend precondition) locally
-      **Partially run (2026-10-28), left unchecked.** What ran: `docker compose up -d postgres redis
-      wiremock` (no Service Bus emulator); the built jar
-      (`build/libs/service-cp-crime-probation-results-distribution-0.0.999.jar`, JDK 25) with the
-      compose stack's `local`-profile environment. `resume-intake` migrated the store (exit 0). A
-      `FAILED(leg-exhausted)` request with an attempt-1 `FAILED(payload-unavailable)` row was seeded
-      directly in PostgreSQL (not through quickstart step 1's queue-and-500 path), its payload under
-      the dated `EXT_` key in Redis, WireMock stubbed for the users-groups read (`active: true`) and
-      the gateway (200). Step 4, `resend-leg --leg HMPPS --request-ids <id> --operator local-dev
-      --reason "manual smoke test"`, exited 0 and logged the one `resend-leg report ... ids=1 taken=1
-      sent=1 summary={SENT=1}` line, a `resend-leg id ... outcome=SENT` line and `resend-leg done`;
-      the store then held attempt 2 `resend`/`SENT` with `operator = local-dev` and a
-      `resend_run_id`, attempt 1 unchanged, and the request `COMPLETED(recovered)`. The forced-resend
-      precondition: a second run over the now-`SENT` leg exited 0 reporting `not-eligible`, and the
-      same run with `--force-resend-sent` exited 1 (refused `unreadable-argument` until US5 builds
-      the override). What did not run: quickstart step 3 (resubmitting the original dead-letter
-      entry with the emulator's tools and seeing a no-op once `COMPLETED`) — the emulator and a real
-      step-1 dead-letter entry were not set up; that path is covered by the automated
-      `DlqResubmissionReplayIT` (US2), not by this manual run.
+- [X] T050 Run `quickstart.md` steps 3–4 (resend, forced-resend precondition) locally
+      **Run end to end (2026-10-28).** Stack: `docker compose up -d postgres servicebus-emulator
+      redis wiremock` (emulator 1.1.2 with its SQL Server); the service started from the built jar
+      (`build/libs/service-cp-crime-probation-results-distribution-0.0.999.jar`, JDK 25, `local`
+      profile, the compose environment pointed at `localhost`). The broker side was driven by a
+      throwaway single-file client on the jar's own Azure SDK (send; peek; receive from the
+      dead-letter sub-queue, copy the body back under the same `messageId`, complete) — not
+      committed. Step 1 (its precondition): the legacy fixture
+      `hearing.prosection.case.with.laa.reference.json`, `sharedTime` set to the command's, under the
+      dated `EXT_` key; WireMock answering the users-groups read `active: true` and the gateway 500;
+      one command sent as `RESULTS:{requestId}`. Five POSTs, the request `FAILED(leg-exhausted)` with
+      `exhausted_message_id = RESULTS:{requestId}`, attempt 1 `queue`/`FAILED(gateway-transient)`
+      500, and the message on the dead-letter queue with reason `leg-exhausted`. Step 4 (gateway
+      stub then 200): `resend-leg --leg HMPPS --request-ids <id> --operator local-dev --reason
+      "manual smoke test"` exited 0 and logged `resend-leg report ... ids=1 taken=1 sent=1
+      summary={SENT=1}`, `resend-leg id ... outcome=SENT` and `resend-leg done ... notRun=0`; the
+      store held attempt 2 `resend`/`SENT` 200 with `operator = local-dev`, a `resend_run_id` and a
+      `body_digest`, attempt 1 unchanged, and the request `COMPLETED(recovered)` with the
+      `RECOVERED_BY_RESEND attempt=2 prior=leg-exhausted exhausted=RESULTS:{requestId}` audit line;
+      six POSTs in all. Step 3: the original dead-letter entry resubmitted under its exhausted
+      `messageId` was a no-op — consumed (queue and dead-letter queue both empty afterwards), no
+      seventh POST, no new `outbound_message` row, and `processed_request` unchanged (`updated_at`
+      and `audit_note` identical before and after). The forced-resend precondition: a second
+      `resend-leg` over the now-`SENT` leg exited 0 reporting `not-eligible` (`taken=0`), and the
+      same run with `--force-resend-sent` exited 1, refused `unreadable-argument` until US5 (T058)
+      builds the override; neither wrote a row or POSTed.
 
 **Checkpoint**: Stories 1, 2, 3 and 7 all work independently — recovery via replay and resend is
 fully usable without forced resend, listings or submit-hearing.
