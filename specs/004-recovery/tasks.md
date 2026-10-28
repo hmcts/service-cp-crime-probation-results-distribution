@@ -781,8 +781,16 @@ code, five report entries, refusal counters incremented.
       cause in lower case and failed — `Expecting actual: "... youthSwitchCause=TIMEOUT ..." to
       contain "youthSwitchCause=timeout"` — a test error, corrected to the wire value.)
       GREEN: all 6 `OutcomeMetricsTest` cases PASSED.
-- [ ] T049 Seed the `doc/DEVIATIONS.md` DV-07 and DV-17 rows' resend-half cross-reference, naming
+- [X] T049 Seed the `doc/DEVIATIONS.md` DV-07 and DV-17 rows' resend-half cross-reference, naming
       `ResendByRequestIdsIT` beside slice 002's queue-run tests (FR-004-050a) — `doc/DEVIATIONS.md`
+      Both rows' "resend half with slice 004" placeholder now names `ResendByRequestIdsIT` (slice
+      004), whose `RegisteredDeviations` cases pin DV-07's resend half (a closed Redis connection
+      falls back to the query API and ends `FAILED(payload-unavailable)`, never `PARKED`) and
+      DV-17's (the query-API read carries the system user although the stored command has a
+      `userId`). Cross-references only: no row's behaviour text changed, no DV id added (next free
+      stays DV-27); this phase found no unregistered behaviour difference — the resend's
+      `sharedTime` check, recovery and fencing are slice 004's own requirements, not departures
+      from the legacy, which has no resend. `DeviationRegisterTest` still passes.
 - [ ] T050 Run `quickstart.md` steps 3–4 (resend, forced-resend precondition) locally
 
 **Checkpoint**: Stories 1, 2, 3 and 7 all work independently — recovery via replay and resend is
