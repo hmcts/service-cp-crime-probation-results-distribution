@@ -1280,10 +1280,18 @@ observe a new request with the audit line and `origin=queue` outcomes.
 
 ### Tests for User Story 8
 
-- [ ] T065 [P] [US8] `RequestIdRecipeTest`: the pinned vector
+- [X] T065 [P] [US8] `RequestIdRecipeTest`: the pinned vector
       (`0aa5bf35-1e51-45e5-9e42-64bd57e15c11|2026-08-19|2026-08-19T16:42:07.512Z` →
       `e74ed270-0b62-36d9-bb10-12bd6baa5bea`) reproduces exactly (FR-004-055; DIGEST §14) —
       `src/test/java/.../application/RequestIdRecipeTest.java`
+      Test first: the pinned vector; a version-3, IETF-variant UUID; the raw `sharedTime` string,
+      so `2026-08-19T17:42:07.512+01:00` (the same instant) gives a different id; each of the
+      three parts changes the id. Seam: `RequestIdRecipe.requestId` answering the nil UUID. (The
+      vector was first checked to reproduce with `UUID.nameUUIDFromBytes` over the UTF-8 bytes of
+      the raw string, before any code was written.)
+      RED: 4 of 4 failed, e.g. `reproduces the producer's pinned vector exactly : expected:
+      e74ed270-0b62-36d9-bb10-12bd6baa5bea but was: 00000000-0000-0000-0000-000000000000`, `is a
+      version-3 name-based UUID : expected: 3 but was: 0`.
 - [ ] T066 [P] [US8] `SubmitHearingActionTest`: dated key, then undated key, never the query API;
       neither key present → `payload-unavailable`, nothing enqueued; enqueued command carries the
       raw `sharedTime` string, `eventType=Hearing_Resulted`, no `userId`,
