@@ -1378,9 +1378,24 @@ observe a new request with the audit line and `origin=queue` outcomes.
       `IllegalStateException` of a disposed sender, is `CommandEnqueueException` →
       `broker-unavailable`). It reads no intake state and writes no store.
       GREEN: `SubmitHearingActionTest` 20/20 and `ServiceBusCommandEnqueuerIT` 2/2 PASSED.
-- [ ] T069 [US8] Wire the `origin=SUPPORT` admission audit (operator, runId, reason →
+- [X] T069 [US8] Wire the `origin=SUPPORT` admission audit (operator, runId, reason →
       `audit_note`) and the `origin=queue`-unless-`FAILED` run-kind decision into the guard/runner
       from T011/T025 (FR-004-057)
+      The run-kind decision needed no change: T011/T025 already admit a `SUPPORT` delivery as a
+      first delivery (`origin = queue`, no `userId`, so any query read is the system user) or, over
+      a `FAILED` request, as a replay on route `support`. What is new is the audit: the listener
+      reads `operator`, `runId` and `reason` only from a delivery whose `origin` is `SUPPORT`, into
+      `domain/SupportSubmission` (each control-character-free, stripped, cut at 200 characters,
+      `-` when absent, not text or blank), and passes it to a new `IdempotencyGuard.admit`
+      overload; the guard hands it to new `ProcessedRequestRepository.insertClaim`/`admitReplay`
+      overloads, which append one timestamped `SUPPORT_SUBMISSION operator=<op> runId=<id>
+      reason=<reason>` line to `audit_note` in the admission's own transaction (after the replay's
+      two lines on a replay; rolled back with a lost insert race). Every other delivery takes the
+      unchanged path and overloads, so no existing caller or test changed. The markers are never
+      logged; a no-op, an abandon or a dead-letter writes no line.
+      GREEN: `IdempotencyGuardTest` 24/24 (all nested), `ProbationMessageListenerTest` 19/19,
+      `SupportSubmissionAuditIT` 5/5 and `SupportSubmissionAdmissionIT` 3/3 PASSED;
+      `DlqResubmissionReplayIT` 23/23 and `RequestReplayStatementTest` 4/4 still PASSED.
 - [ ] T070 [US8] [P] Implement `cli/SubmitHearingRunner.java` per `contracts/cli-runners.md` §5
 - [ ] T071 Run `quickstart.md` step 7 (submit-hearing) locally
 

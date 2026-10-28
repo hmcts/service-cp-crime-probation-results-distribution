@@ -99,7 +99,32 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     @Override
     public boolean admitReplay(final String source, final UUID requestId, final RunClaim claim,
                                final ReplayRoute route, final SupportSubmission support) {
-        return admitReplay(source, requestId, claim, route);
+        // The replay statement and the submit-hearing line commit together, under the request-row
+        // lock the replay statement takes (FR-004-057): the line follows the replay's own lines.
+        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+            final boolean admitted = lockedAdmitReplay(source, requestId, claim, route);
+            if (admitted) {
+                appendSupportLine(source, requestId, support);
+            }
+            return admitted;
+        }));
+    }
+
+    private void appendSupportLine(final String source, final UUID requestId,
+                                   final SupportSubmission support) {
+        // One timestamped line with the submit-hearing operator, run id and reason, each already
+        // sanitised to one line of at most 200 characters (FR-004-057). The markers are written
+        // here and nowhere else in the store, and never logged (FR-004-041).
+        jdbc.sql("UPDATE processed_request SET audit_note = coalesce(audit_note || E'\\n', '') "
+                        + "|| now()::text || ' SUPPORT_SUBMISSION operator=' || :operator "
+                        + "|| ' runId=' || :runId || ' reason=' || :reason "
+                        + REQUEST_WHERE)
+                .param("operator", support.operator())
+                .param("runId", support.runId())
+                .param(REASON, support.reason())
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
     }
 
     private boolean lockedAdmitReplay(final String source, final UUID requestId,
@@ -310,7 +335,19 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     public boolean insertClaim(final DistributionCommand command, final String commandBody,
                                final String fingerprint, final RunClaim claim,
                                final SupportSubmission support) {
-        return insertClaim(command, commandBody, fingerprint, claim);
+        boolean inserted;
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                insertRows(command, commandBody, fingerprint, claim);
+                appendSupportLine(command.source(), command.requestId(), support);
+            });
+            inserted = true;
+        } catch (final DuplicateKeyException duplicate) {
+            // Expected: a concurrent or duplicate first delivery lost the race. Handled as a
+            // no-admission, never swallowed silently; the line rolled back with the insert.
+            inserted = false;
+        }
+        return inserted;
     }
 
     private void insertRows(final DistributionCommand command, final String commandBody,

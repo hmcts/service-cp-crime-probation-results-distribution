@@ -61,21 +61,7 @@ public final class IdempotencyGuard {
     public GuardDecision admit(final DistributionCommand command, final String commandBody,
                                final String messageId, final long deliveryCount,
                                final ReplayRoute route) {
-        final String fp = fingerprint.compute(command);
-        final Optional<RequestRecord> existing =
-                repository.find(command.source(), command.requestId());
-        final GuardDecision decision;
-        if (existing.isEmpty()) {
-            decision = admitFresh(command, commandBody, fp);
-        } else {
-            final RequestRecord row = existing.get();
-            if (row.fingerprint().equals(fp)) {
-                decision = decideForKnownKey(command, row, messageId, deliveryCount, route);
-            } else {
-                decision = new GuardDecision.DeadLetter(DeadLetterReason.COLLISION);
-            }
-        }
-        return decision;
+        return admit(command, commandBody, messageId, deliveryCount, route, Optional.empty());
     }
 
     /**
@@ -93,15 +79,37 @@ public final class IdempotencyGuard {
     public GuardDecision admit(final DistributionCommand command, final String commandBody,
                                final String messageId, final long deliveryCount,
                                final ReplayRoute route, final SupportSubmission support) {
-        return admit(command, commandBody, messageId, deliveryCount, route);
+        return admit(command, commandBody, messageId, deliveryCount, route, Optional.of(support));
+    }
+
+    private GuardDecision admit(final DistributionCommand command, final String commandBody,
+                                final String messageId, final long deliveryCount,
+                                final ReplayRoute route, final Optional<SupportSubmission> support) {
+        final String fp = fingerprint.compute(command);
+        final Optional<RequestRecord> existing =
+                repository.find(command.source(), command.requestId());
+        final GuardDecision decision;
+        if (existing.isEmpty()) {
+            decision = admitFresh(command, commandBody, fp, support);
+        } else {
+            final RequestRecord row = existing.get();
+            if (row.fingerprint().equals(fp)) {
+                decision = decideForKnownKey(command, row, messageId, deliveryCount, route, support);
+            } else {
+                decision = new GuardDecision.DeadLetter(DeadLetterReason.COLLISION);
+            }
+        }
+        return decision;
     }
 
     private GuardDecision decideForKnownKey(final DistributionCommand command,
                                             final RequestRecord row, final String messageId,
-                                            final long deliveryCount, final ReplayRoute route) {
+                                            final long deliveryCount, final ReplayRoute route,
+                                            final Optional<SupportSubmission> support) {
         return switch (row.status()) {
             case COMPLETED -> new GuardDecision.DuplicateComplete();
-            case FAILED -> decideReplayAdmission(command, row, messageId, deliveryCount, route);
+            case FAILED -> decideReplayAdmission(command, row, messageId, deliveryCount, route,
+                    support);
             case RECEIVED, RETRYING -> reclaimOrAbandon(command, row);
             default -> throw new IllegalStateException(
                     "unknown request status: " + row.status());
@@ -119,11 +127,13 @@ public final class IdempotencyGuard {
      * @param messageId     the delivery's {@code messageId}
      * @param deliveryCount the broker delivery count
      * @param route         the replay route to record if admitted
+     * @param support       the submit-hearing markers to audit, for a {@code SUPPORT} delivery
      * @return the guard's decision: dead-letter, defer, admit as a replay, or abandon a lost race
      */
     private GuardDecision decideReplayAdmission(final DistributionCommand command,
                                                 final RequestRecord row, final String messageId,
-                                                final long deliveryCount, final ReplayRoute route) {
+                                                final long deliveryCount, final ReplayRoute route,
+                                                final Optional<SupportSubmission> support) {
         final boolean sameExhaustedId = row.exhaustedMessageId().filter(messageId::equals).isPresent();
         // This listener's convention is a zero-based delivery count (the first delivery carries 0),
         // so the design's "delivery count 1" (a one-based count) is this count's 0.
@@ -135,8 +145,10 @@ public final class IdempotencyGuard {
             decision = new GuardDecision.ReplayDeferred();
         } else {
             final RunClaim claim = RunClaim.fresh();
-            final boolean admitted = repository.admitReplay(command.source(), command.requestId(),
-                    claim, route);
+            final boolean admitted = support.isPresent()
+                    ? repository.admitReplay(command.source(), command.requestId(), claim, route,
+                            support.get())
+                    : repository.admitReplay(command.source(), command.requestId(), claim, route);
             decision = admitted ? new GuardDecision.Admitted(claim, false, false,
                     Optional.of(messageId), repository.hasTerminalSuccess(command.source(), command.requestId()))
                     : new GuardDecision.Abandon();
@@ -145,10 +157,13 @@ public final class IdempotencyGuard {
     }
 
     private GuardDecision admitFresh(final DistributionCommand command, final String commandBody,
-                                     final String fingerprintValue) {
+                                     final String fingerprintValue,
+                                     final Optional<SupportSubmission> support) {
         final RunClaim claim = RunClaim.fresh();
-        return repository.insertClaim(command, commandBody, fingerprintValue, claim)
-                ? new GuardDecision.Admitted(claim) : new GuardDecision.Abandon();
+        final boolean inserted = support.isPresent()
+                ? repository.insertClaim(command, commandBody, fingerprintValue, claim, support.get())
+                : repository.insertClaim(command, commandBody, fingerprintValue, claim);
+        return inserted ? new GuardDecision.Admitted(claim) : new GuardDecision.Abandon();
     }
 
     private GuardDecision reclaimOrAbandon(final DistributionCommand command,

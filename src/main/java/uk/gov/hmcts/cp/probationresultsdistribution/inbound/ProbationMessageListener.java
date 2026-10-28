@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.inbound;
 import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
 import com.azure.messaging.servicebus.ServiceBusReceivedMessageContext;
 import com.azure.messaging.servicebus.models.DeadLetterOptions;
+import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,6 +25,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.SupportSubmission;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
 /**
@@ -112,7 +114,7 @@ public final class ProbationMessageListener {
             storeAvailable = storeGate.storeAvailable();
             settlement = storeAvailable
                     ? decide(message.getBody().toString(), deliveryCount, message.getSequenceNumber(),
-                            message.getMessageId(), routeOf(message))
+                            message.getMessageId(), routeOf(message), supportOf(message))
                     : storeUnavailable(deliveryCount);
         } catch (final RuntimeException unexpected) {
             // Not swallowed: an unexpected failure is logged by type, counted and the delivery handed
@@ -185,12 +187,13 @@ public final class ProbationMessageListener {
                               final long sequenceNumber) {
         // This overload's messageId/route stand in for the real broker values the tests that call it
         // do not exercise: the guard is mocked in every such test, so neither value drives behaviour.
-        return decide(body, deliveryCount, sequenceNumber, DEFAULT_MESSAGE_ID, ReplayRoute.COPY);
+        return decide(body, deliveryCount, sequenceNumber, DEFAULT_MESSAGE_ID, ReplayRoute.COPY,
+                Optional.empty());
     }
 
     private Settlement decide(final String body, final long deliveryCount,
                               final long sequenceNumber, final String messageId,
-                              final ReplayRoute route) {
+                              final ReplayRoute route, final Optional<SupportSubmission> support) {
         final DistributionCommand command;
         try {
             command = parser.parse(body);
@@ -201,7 +204,11 @@ public final class ProbationMessageListener {
             return new DeadLetter(DeadLetterReason.VALIDATION);
         }
         setMdc(command, deliveryCount, sequenceNumber);
-        final GuardDecision decision = guard.admit(command, body, messageId, deliveryCount, route);
+        // A submit-hearing command (origin = SUPPORT) carries its operator markers to the admission,
+        // which appends them to audit_note (FR-004-057); no other delivery's properties are read.
+        final GuardDecision decision = support.isPresent()
+                ? guard.admit(command, body, messageId, deliveryCount, route, support.get())
+                : guard.admit(command, body, messageId, deliveryCount, route);
         return switch (decision) {
             case GuardDecision.DuplicateComplete ignored -> new Complete();
             case GuardDecision.Abandon ignored -> handBack(deliveryCount);
@@ -379,6 +386,27 @@ public final class ProbationMessageListener {
             case "SUPPORT" -> ReplayRoute.SUPPORT;
             case null, default -> ReplayRoute.COPY;
         };
+    }
+
+    /**
+     * The submit-hearing markers of a delivery marked {@code origin = SUPPORT} (FR-004-056,
+     * FR-004-057): its {@code operator}, {@code runId} and {@code reason} application properties,
+     * sanitised to one line each. They go to the admission's {@code audit_note} line only and are
+     * never logged (FR-004-041); any other delivery's properties are not read.
+     *
+     * @param message the delivery
+     * @return the markers, for a {@code SUPPORT} delivery only
+     */
+    private static Optional<SupportSubmission> supportOf(final ServiceBusReceivedMessage message) {
+        final Optional<SupportSubmission> support;
+        if (routeOf(message) == ReplayRoute.SUPPORT) {
+            final Map<String, Object> properties = message.getApplicationProperties();
+            support = Optional.of(SupportSubmission.fromProperties(properties.get("operator"),
+                    properties.get("runId"), properties.get("reason")));
+        } else {
+            support = Optional.empty();
+        }
+        return support;
     }
 
     private static void setDeliveryMdc(final long sequenceNumber, final long deliveryCount) {
