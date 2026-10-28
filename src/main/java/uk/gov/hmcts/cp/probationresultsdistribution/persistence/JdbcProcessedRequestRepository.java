@@ -34,6 +34,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     private static final String OWNER = "owner";
     private static final String TOKEN = "token";
     private static final String LEASE = "lease";
+    private static final String REASON = "reason";
     private static final String REQUEST_WHERE = "WHERE source = :source AND request_id = :requestId ";
     private static final String ACTIVE_REQUEST = "AND status IN ('RECEIVED', 'RETRYING') ";
 
@@ -196,7 +197,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                 .param(REQUEST_ID, requestId)
                 .query((rs, rowNum) -> new LatestLeg(rs.getInt("attempt"),
                         rs.getString("attempt_origin"), rs.getString("status"),
-                        rs.getString("reason")))
+                        rs.getString(REASON)))
                 .optional();
         if (latest.isPresent() && latest.get().pendingResend()) {
             return new ResendClaim.Refused(ResendRefusal.RESEND_IN_PROGRESS);
@@ -249,7 +250,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + REQUEST_WHERE)
                 .param("attempt", attempt)
                 .param("operator", operator)
-                .param("reason", reason)
+                .param(REASON, reason)
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
                 .update();
@@ -359,7 +360,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
                         + REQUEST_WHERE + ACTIVE_REQUEST
                         + "AND claim_owner = :owner AND claim_token = :token")
-                .param("reason", reason.wireValue())
+                .param(REASON, reason.wireValue())
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
                 .param(SOURCE, source)
@@ -392,7 +393,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
                         + REQUEST_WHERE + ACTIVE_REQUEST
                         + "AND claim_owner = :owner AND claim_token = :token")
-                .param("reason", reason.wireValue())
+                .param(REASON, reason.wireValue())
                 .param("exhaustedMessageId", exhaustedMessageId)
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())

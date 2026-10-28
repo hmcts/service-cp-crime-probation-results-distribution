@@ -42,21 +42,21 @@ class ForcedResendIT extends ResendTestSupport {
     private static final String STATUS = "status";
     private static final String OUTCOMES = "probation_leg_outcomes_total";
 
-    private final Logger runnerLogger = (Logger) LoggerFactory.getLogger(DistributionRunner.class);
-    private final Logger resenderLogger = (Logger) LoggerFactory.getLogger(LegResender.class);
+    // The runner writes the outcome line and the resender the report line; both are captured.
+    private final List<Logger> capturedLoggers = List.of(
+            (Logger) LoggerFactory.getLogger(DistributionRunner.class),
+            (Logger) LoggerFactory.getLogger(LegResender.class));
     private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
 
     @BeforeEach
     void attachAppender() {
         appender.start();
-        runnerLogger.addAppender(appender);
-        resenderLogger.addAppender(appender);
+        capturedLoggers.forEach(logger -> logger.addAppender(appender));
     }
 
     @AfterEach
     void detachAppender() {
-        runnerLogger.detachAppender(appender);
-        resenderLogger.detachAppender(appender);
+        capturedLoggers.forEach(logger -> logger.detachAppender(appender));
     }
 
     @Nested
