@@ -32,6 +32,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchUnreadableCause;
 
 /**
  * Resend-leg for an explicit list of {@code requestId}s (slice 004, US3; FR-004-018–FR-004-025,
@@ -461,6 +463,89 @@ class ResendByRequestIdsIT extends ResendTestSupport {
             return jdbc().sql("SELECT count(*) FROM outbound_message WHERE request_id = :requestId "
                             + "AND status = 'PARKED'")
                     .param("requestId", requestId).query(Integer.class).single();
+        }
+    }
+
+    @Nested
+    @DisplayName("the stored body and the youth switch on a resend (H20, FR-004-028, scenario 11)")
+    class StoredBodyAndYouthSwitch {
+
+        @Test
+        @DisplayName("a SENT resend stores the exact bytes it POSTed, digested")
+        void sent_resend_stores_the_exact_bytes_posted() {
+            final UUID failed = seedFailedPayloadUnavailable();
+            stubYouthSwitchActive();
+            stubGateway(200);
+
+            final ResendRunResult result = resender().resend(request(false, failed));
+
+            assertThat(entryFor(result, failed)).contains(new Ran(LegStatus.SENT, Optional.empty()));
+            assertStoredBodyIsThePost(failed);
+        }
+
+        @Test
+        @DisplayName("a 400 on a resend is one POST, FAILED(receiver-rejected), with the body stored")
+        void rejected_resend_is_one_post_and_stores_the_body() {
+            final UUID failed = seedFailedPayloadUnavailable();
+            stubYouthSwitchActive();
+            stubGateway(400);
+
+            final ResendRunResult result = resender().resend(request(false, failed));
+
+            assertThat(entryFor(result, failed)).contains(
+                    new Ran(LegStatus.FAILED, Optional.of(LegReason.RECEIVER_REJECTED)));
+            assertThat(gatewayPostCount()).isEqualTo(1);
+            assertThat(latestAttempt(failed).get("http_status")).isEqualTo(400);
+            assertStoredBodyIsThePost(failed);
+        }
+
+        @Test
+        @DisplayName("an unreadable switch on a resend records the default, counts it and sends its body")
+        void unreadable_switch_on_a_resend_applies_the_default_and_sends() {
+            final UUID readable = seedFailedPayloadUnavailable();
+            stubYouthSwitchActive();
+            stubGateway(200);
+            resender().resend(request(false, readable));
+            final UUID unreadable = seedFailedPayloadUnavailable();
+            stubYouthSwitch(200, "{\"permissions\":[]}", 0);
+            final double before = unreadableCount();
+
+            final ResendRunResult result = resender().resend(request(false, unreadable));
+
+            assertThat(entryFor(result, unreadable))
+                    .contains(new Ran(LegStatus.SENT, Optional.empty()));
+            final Map<String, Object> row = latestAttempt(unreadable);
+            assertThat(row.get("attempt_origin")).isEqualTo("resend");
+            assertThat(row.get("youth_switch"))
+                    .isEqualTo(YouthSwitchRecordedValue.UNREADABLE_DEFAULTED_ACTIVE.name());
+            assertThat(unreadableCount()).isEqualTo(before + 1.0d);
+            assertThat(storedBody(unreadable))
+                    .as("the defaulted body is the body the configured ACTIVE state sends")
+                    .isEqualTo(storedBody(readable));
+        }
+
+        private void assertStoredBodyIsThePost(final UUID requestId) {
+            final Map<String, Object> row = latestAttempt(requestId);
+            assertThat(row.get("attempt")).isEqualTo(2);
+            final String stored = storedBody(requestId);
+            assertThat(stored).as("outbound_body holds the exact bytes POSTed")
+                    .isEqualTo(gatewayPostBody());
+            assertThat(row.get("body_digest")).isEqualTo(sha256Hex(stored));
+        }
+
+        private String storedBody(final UUID requestId) {
+            return jdbc().sql("SELECT ob.body FROM outbound_body ob "
+                            + "JOIN outbound_message_latest oml ON oml.id = ob.outbound_message_id "
+                            + "WHERE oml.request_id = :requestId AND oml.leg = 'HMPPS'")
+                    .param("requestId", requestId).query(String.class).single();
+        }
+
+        private double unreadableCount() {
+            final io.micrometer.core.instrument.Counter counter = meterRegistry()
+                    .find("probation_youth_switch_unreadable_total")
+                    .tag("cause", YouthSwitchUnreadableCause.EMPTY_PERMISSIONS.wireValue())
+                    .tag("defaulted", YouthSwitchRecordedValue.ACTIVE.wireValue()).counter();
+            return counter == null ? 0.0d : counter.count();
         }
     }
 
