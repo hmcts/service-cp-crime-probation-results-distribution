@@ -596,12 +596,25 @@ code, five report entries, refusal counters incremented.
       Ran[status=FAILED, reason=Optional[PAYLOAD_CHANGED]] but was empty`, `Proceeds > a rendering
       that names a zone still proceeds : Expecting Optional to contain: Ran[status=SENT,
       reason=Optional.empty] but was empty`.
-- [ ] T040 [P] [US3] `RequestRecoveryTransitionTest` (US3 half, extends T015's file): a resend that
+- [X] T040 [P] [US3] `RequestRecoveryTransitionTest` (US3 half, extends T015's file): a resend that
       ends `SENT`/`NOT_APPLICABLE`/class-1-`FAILED` recovers a `FAILED` request to
       `COMPLETED(recovered)` in the outcome's transaction, clearing both columns and appending to
       `audit_note`; a class-2 `FAILED` outcome leaves the request untouched; no statement moves a
       `COMPLETED` request (FR-004-032–034) — extends
       `src/test/java/.../application/RequestRecoveryTransitionTest.java`
+      Added as the `ResendRecovery` nested class (9 cases), driving
+      `OutboundMessageRepository.writeResendOutcome` over a seeded `PENDING` resend row: `SENT`,
+      `NOT_APPLICABLE`, `FAILED(receiver-rejected)` and `FAILED(rules-exception)` recover a `FAILED`
+      request to `COMPLETED(recovered)`, clearing `failure_reason`/`exhausted_message_id` and
+      appending one `RECOVERED_BY_RESEND prior=<reason> exhausted=<id>` line; `gateway-transient`,
+      `payload-unavailable` and `payload-changed` leave it as it was; a failed or `SENT` resend of a
+      `COMPLETED` request's leg leaves it `COMPLETED(both-legs-terminal)`.
+      RED: 8 of the 9 fail on assertions against the `writeResendOutcome` seam (0 rows) — e.g.
+      `a SENT resend recovers ... : expected: 1 but was: 0`, `[1] reason = RECEIVER_REJECTED :
+      expected: "COMPLETED" but was: "FAILED"`, `a failed resend of a COMPLETED request's leg ... :
+      expected: "FAILED" but was: "PENDING"`. The ninth (`a SENT resend of a COMPLETED request's
+      leg does not re-complete it`) asserts only an absence and passes against the seam too; it is
+      kept as the FR-004-034 regression guard.
 - [ ] T041 [P] [US3] `ResendConcurrencyIT` (US3 half, extends T031's file): two resend runs and a
       late queue delivery for one leg, or a replay and a resend racing in either order — exactly one
       runs the leg and exactly one POST results (FR-004-035); a late resend-runner completion by its
