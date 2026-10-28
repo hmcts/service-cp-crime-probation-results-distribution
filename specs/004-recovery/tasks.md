@@ -1198,8 +1198,20 @@ failed and unknown requests; run both runners; compare output with seeded state.
       by latest attempt from `outbound_message_latest` (after inclusive, before exclusive, ordered
       by `updated_at` then request), plus the `request_id`/`status` lookup for `dlq-completed`.
       GREEN: `RequestListingQueryTest` 25/25 and `JdbcRequestListingRepositoryIT` 7/7 PASSED.
-- [ ] T062 [US6] Implement `application/DlqCompletedListingQuery.java`: peeks the DLQ via the
+- [X] T062 [US6] Implement `application/DlqCompletedListingQuery.java`: peeks the DLQ via the
       Service Bus management client, joins against `processed_request.status = 'COMPLETED'`
+      As built, the peek is a Service Bus **receiver** operation (`peekMessages`, sub-queue
+      `DEAD_LETTER_QUEUE`), not the management client, which cannot peek: `inbound/
+      DeadLetterQueuePeeker` implements the `DeadLetterReader` port (in `inbound` because it is
+      the one other class that handles a `ServiceBusReceivedMessage`), reading each entry's
+      `requestId` with the closed-contract parser and passing on only the sequence number,
+      `messageId`, reason and enqueued time; an `AmqpException` is `DeadLetterReadException`.
+      `DlqCompletedListingQuery` peeks batches of 100 from sequence 0, looks each batch's
+      `requestId`s up with `RequestListingRepository.requestStatuses`, keeps the `COMPLETED`
+      ones, and stops once it holds 501 or the queue is exhausted; it shows 500 with `more`. A
+      reason outside `DeadLetterReason` is `other` (absent: `none`) and a `messageId` that is not
+      `RESULTS:<uuid>` or `REPLAY:<uuid>` is `other`. Nothing is received, locked or removed.
+      GREEN: `DlqCompletedListingQueryTest` 8/8 and `DeadLetterQueuePeekerIT` 2/2 PASSED.
 - [ ] T063 [US6] [P] Implement `cli/RequestListingRunner.java` and
       `cli/DlqCompletedListingRunner.java` per `contracts/cli-runners.md` §7, §8
 - [ ] T064 [US6] `TelemetryPrivacyTest`/`LogStatementSweepTest` extension: sweep both listings'
