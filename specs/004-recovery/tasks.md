@@ -683,11 +683,25 @@ code, five report entries, refusal counters incremented.
       parses for itself rather than reusing `adapter.payload.SharedTimes` (offset only), so the
       queue run's `payload_shared_time` recording is unchanged. Wired into the run by T045; GREEN
       recorded with T046, when the attempt's completion is first written.
-- [ ] T045 [US3] Implement the resend run's stage sequence (fetch → `sharedTime` check → switch →
+- [X] T045 [US3] Implement the resend run's stage sequence (fetch → `sharedTime` check → switch →
       redaction → body digest → send), reusing slice 002's `HearingPayloadSource`,
       `YouthFilterSource`, `HmppsRedaction`, `HmppsSender` unchanged, with the resend-only rules: no
       park (`FAILED(payload-unavailable)`/`FAILED(gateway-transient)` at once), always the system
       user as `CJSCPPUID` (FR-004-026, FR-004-027, FR-004-050a)
+      `DistributionRunner.runResend(command, attempt, allowChangedPayload)`: the same fetch →
+      switch → `HmppsRedaction` → digest → send stages as the queue run, with the `sharedTime`
+      check (T044) directly after the fetch — `FAILED(payload-changed)` with `payload_source` and the
+      parsed instant only, no switch read and no send, unless `allow-changed-payload` lets it
+      through with the override recorded — and every transient end mapped as on a final delivery,
+      so a resend never parks (`FAILED(payload-unavailable)`/`FAILED(gateway-transient)` at once).
+      The system user comes from the command itself: `claimResend` rebuilds it from the request's
+      columns with no `userId`, so the unchanged results-query client always sends the system user
+      (DV-17). Each outcome is written through `OutboundLog.recordResend` under the attempt's own
+      leg claim, labelled `origin=resend`, `forced=false`. The runner's three write paths (queue,
+      replay, resend) now share one private `LegWriter` strategy in place of the
+      `Optional<String> replayMessageId` flag; `DistributionRunnerTest`, `OutcomeMetricsTest` and
+      `LegOutcomeLogLineTest` stay green unchanged (25 cases PASSED). GREEN for T038/T039 recorded
+      with T046, when the completion is first written.
 - [ ] T046 [US3] Implement the recovery transition inside the attempt's completion transaction
       (FR-004-032–034), reusing the request-row-lock discipline from T017 — satisfies T040. **The
       completion UPDATE itself is `WHERE id = ? AND claim_token = ?`: zero rows updated (the token
