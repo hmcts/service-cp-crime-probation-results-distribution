@@ -12,6 +12,13 @@ import tools.jackson.databind.JsonNode;
  * zone honoured; a value that is absent, not a string, or does not parse leaves
  * {@code payload_shared_time} empty, and the leg carries on. The payload is never failed for a
  * {@code sharedTime} that will not parse.
+ *
+ * <p>This parser takes an offset rendering only ({@link OffsetDateTime}), so a zone-named rendering
+ * such as {@code 2026-08-19T17:42:07.512+01:00[Europe/London]} leaves a queue run's
+ * {@code payload_shared_time} empty. The resend's own parse ({@code application.SharedTimeCheck},
+ * slice 004, FR-004-029, A3-57) deliberately honours a zone name too, because there the value
+ * decides whether the resend proceeds. The difference is known and left as is: widening this parser
+ * would change what slice 002's queue rows record.
  */
 public final class SharedTimes {
 
