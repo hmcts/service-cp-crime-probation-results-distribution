@@ -508,6 +508,17 @@ public class EndToEndTestSupport {
     }
 
     /**
+     * The number of users-groups permission reads (youth-switch reads) WireMock has received.
+     *
+     * @return the read count
+     */
+    protected final int usersGroupsReadCount() {
+        return wireMock.findAll(com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor(
+                urlPathEqualTo("/usersgroups-query-api/query/api/rest/usersgroups/permissions")))
+                .size();
+    }
+
+    /**
      * The {@code CJSCPPUID} header of every results query-API read made for a hearing.
      *
      * @param hearingId the hearing id in the path

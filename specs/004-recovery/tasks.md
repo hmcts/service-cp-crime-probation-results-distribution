@@ -578,12 +578,24 @@ code, five report entries, refusal counters incremented.
       Refused[reason=NOT_ELIGIBLE] but was empty`, `ClaimBeforePost > ... : Expected size: 1 but was:
       0`, `RegisteredDeviations > DV-07 ... : Expecting Optional to contain: Ran[status=FAILED,
       reason=Optional[PAYLOAD_UNAVAILABLE]] but was empty`.
-- [ ] T039 [P] [US3] `ResendSharedTimeCheckIT`: the `sharedTime` check runs directly after the fetch,
+- [X] T039 [P] [US3] `ResendSharedTimeCheckIT`: the `sharedTime` check runs directly after the fetch,
       before any leg stage, comparing as instants at stored precision; a cache-vs-query rendering
       difference still proceeds; a later/absent/unparseable `sharedTime` →
       `FAILED(payload-changed)` (no `youth_switch`/`body_digest`, nothing sent) unless
       `allow-changed-payload` (then `override=true`+note form) (FR-004-029–031) —
       `src/test/java/.../application/ResendSharedTimeCheckIT.java`
+      Nine cases over `ResendTestSupport`: the stored rendering, an offset rendering, a
+      zone-named rendering (`...+01:00[Europe/London]`) and a nanosecond rendering equal at the
+      stored microsecond precision all proceed; a later, absent or unparseable `sharedTime` is
+      `FAILED(payload-changed)` with `payload_source` kept, no `youth_switch`/`body_digest`/
+      `service_version`, no users-groups read, no POST, the request unchanged and an `audit_note`
+      line quoting no payload content; `allow-changed-payload` over a change records
+      `override = true` and `override=allow-changed-payload`, and over a match records neither.
+      RED: all 9 fail on assertions against the T038 seam (`runResend` records nothing) — e.g.
+      `Changed > a later sharedTime fails payload-changed ... : Expecting Optional to contain:
+      Ran[status=FAILED, reason=Optional[PAYLOAD_CHANGED]] but was empty`, `Proceeds > a rendering
+      that names a zone still proceeds : Expecting Optional to contain: Ran[status=SENT,
+      reason=Optional.empty] but was empty`.
 - [ ] T040 [P] [US3] `RequestRecoveryTransitionTest` (US3 half, extends T015's file): a resend that
       ends `SENT`/`NOT_APPLICABLE`/class-1-`FAILED` recovers a `FAILED` request to
       `COMPLETED(recovered)` in the outcome's transaction, clearing both columns and appending to
