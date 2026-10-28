@@ -1483,6 +1483,11 @@ fixed test-first in its own commit:
   `--updated-after` of `2026-08-19T01:00:00+01:00` read as the instant `2026-08-19T00:00:00Z`.
   Characterisation of the existing parse, which could not go red: all three PASSED on first run;
   `RequestListingQueryTest` 28/28 PASSED.
+- *Documentation kept true* (T068, T069): `ProcessedRequestRepository.admitReplay(...,
+  SupportSubmission)` now says the audit line is appended in the same transaction under the
+  request-row lock (it is a second statement, not the same one), and `application/package-info`
+  names the slice 004 broker ports and store interfaces and records `SubmitHearingAction`'s
+  one-off `ObjectNode` body as an accepted use of the `JsonNode` exception. No behaviour change.
 
 ---
 

@@ -22,11 +22,15 @@
  * deliberate duplicate on a new resend attempt labelled {@code forced}, leaving the request
  * {@code COMPLETED} (design H9); without it such a leg is {@code not-eligible}.
  * {@code SubmitHearingAction} and {@code RequestIdRecipe} are the submit-hearing repair (design
- * §4.8 action 5).
+ * §4.8 action 5). It builds the six-field command body as a Jackson {@code ObjectNode} and passes
+ * its text to the {@code CommandEnqueuer} port: an accepted, one-off use of the {@code JsonNode}
+ * exception, needing no {@code ObjectMapper}, pinned byte for byte by
+ * {@code PackagedSubmitHearingCommandIT}.
  *
  * <p>The outbound ports are declared here, as interfaces, by the side that uses them:
  * {@code HearingPayloadSource}, {@code YouthFilterSource}, {@code HmppsSender} and
- * {@code OutboundLog}. The processed-log store the guard claims through
+ * {@code OutboundLog}; slice 004 adds the broker ports {@code DeadLetterReader} (peek only) and
+ * {@code CommandEnqueuer} (send only). The processed-log store the guard claims through
  * ({@code persistence.ProcessedRequestRepository}) is an infra-free interface declared in
  * {@code persistence} with the rest of the store, per {@code design_rules.md}'s package tree, and
  * carries only {@code domain} types; the guard depends on it from here. The claim and outcome
@@ -38,10 +42,12 @@
  * {@code pipeline}, its own outbound port interfaces and the persistence-declared
  * {@code ProcessedRequestRepository} port the guard admits through. It never imports from
  * {@code inbound}, {@code api}, {@code adapter} or {@code config}, and from {@code persistence}
- * only that one store interface (never a JDBC adapter): an adapter is reached only through the port
+ * only its infra-free store interfaces ({@code ProcessedRequestRepository} and the slice 004
+ * {@code IntakeControlRepository}, {@code RollbackFencingRepository} and
+ * {@code RequestListingRepository}; never a JDBC adapter): an adapter is reached only through the port
  * it implements, and the concrete choice is made in {@code config}. That is what lets the stub
  * sources stand in for the live ones in the local and test profiles. The dependency is one
- * direction only: {@code application} → {@code persistence} (that one interface) and
+ * direction only: {@code application} → {@code persistence} (those interfaces) and
  * {@code application} → {@code domain}; nothing in {@code persistence} imports from
  * {@code application}.
  */

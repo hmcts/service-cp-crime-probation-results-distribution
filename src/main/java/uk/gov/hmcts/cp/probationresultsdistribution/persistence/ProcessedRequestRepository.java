@@ -131,8 +131,9 @@ public interface ProcessedRequestRepository {
 
     /**
      * {@link #admitReplay(String, UUID, RunClaim, ReplayRoute)} for a delivery marked
-     * {@code origin = SUPPORT}: the same one statement also appends the submit-hearing admission
-     * line — the operator, run id and reason — to {@code audit_note} (slice 004, FR-004-057).
+     * {@code origin = SUPPORT}: in the same transaction, under the request-row lock the replay
+     * statement takes, it also appends the submit-hearing admission line — the operator, run id
+     * and reason — to {@code audit_note} (slice 004, FR-004-057).
      *
      * @param source    the command source
      * @param requestId the request id
