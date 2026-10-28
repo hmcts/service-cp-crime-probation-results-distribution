@@ -1,4 +1,7 @@
 tasks.named('test') {
+  // T037 exercises the same executable jar operators invoke, in a separate JVM.
+  dependsOn tasks.named('bootJar')
+  systemProperty 'app.jar', tasks.named('bootJar').get().archiveFile.get().asFile.absolutePath
   useJUnitPlatform {
     // Nothing is excluded by default. A suite whose cases are wall-clock acceptance criteria is
     // tagged `timing`, and a developer building something else on the same machine can leave those

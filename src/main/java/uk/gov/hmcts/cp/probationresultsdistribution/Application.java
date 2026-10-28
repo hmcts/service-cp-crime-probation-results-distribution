@@ -5,6 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.ReplayController;
+import uk.gov.hmcts.cp.probationresultsdistribution.config.OperatorCommandLine;
 
 /**
  * Boot entry point for the probation results distribution service.
@@ -40,11 +41,15 @@ import uk.gov.hmcts.cp.probationresultsdistribution.api.ReplayController;
 public class Application {
 
     /**
-     * Starts the Spring container.
+     * Runs a command and exits, or starts the service when no action is supplied.
      *
-     * @param args the command line arguments, passed through to Boot untouched
+     * @param args the action or normal Boot options
      */
     public static void main(final String[] args) {
-        SpringApplication.run(Application.class, args);
+        if (args.length > 0 && !args[0].startsWith("-")) {
+            System.exit(OperatorCommandLine.run(args));
+        } else {
+            SpringApplication.run(Application.class, args);
+        }
     }
 }
