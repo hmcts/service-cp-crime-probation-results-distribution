@@ -8,10 +8,9 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunnerOutcome;
 
 /**
  * The {@code rollback-close-in-flight} command-line runner (design §9.4 step 4; slice 004,
- * provisional FR-004-049; {@code contracts/cli-runners.md} §6): no arguments. Refused
+ * confirmed FR-004-049; {@code contracts/cli-runners.md} §6): no arguments. Refused
  * {@code intake-not-paused} unless intake is paused; otherwise reports the number of rows closed
- * by prior status. <strong>Provisional</strong>: if the owning team assigns rollback step 4's
- * execution elsewhere (research.md Decision 2), this runner is removed.
+ * by prior status. This service owns the guarded CLI execution path (research.md Decision 2).
  */
 public final class RollbackCloseInFlightRunner {
 

@@ -7,7 +7,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.RollbackFencingR
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.RollbackFencingRepository.CloseInFlightResult;
 
 /**
- * {@code rollback-close-in-flight} (design §9.4 step 4; slice 004, provisional FR-004-049;
+ * {@code rollback-close-in-flight} (design §9.4 step 4; slice 004, confirmed FR-004-049;
  * research.md Decision 2): refused {@code intake-not-paused} unless intake is paused — the same
  * guard purge-queue already uses — otherwise runs {@link RollbackFencingRepository#closeInFlight()}
  * exactly as FR-004-049a states. Takes no argument beyond confirming intake is paused; it closes

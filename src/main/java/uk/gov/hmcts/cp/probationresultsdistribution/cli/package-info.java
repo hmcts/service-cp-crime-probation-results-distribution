@@ -7,7 +7,7 @@
  * is the one entry point: it reads the first command-line argument as the action name and routes to
  * the matching runner, so that a runner invocation never starts the ASB listener or the
  * body-maintenance scheduler (FR-004-045). The six actions (replay, resend-leg, pause/resume
- * intake, purge-queue, submit-hearing, and — provisionally, pending FR-004-049's answer — the
+ * intake, purge-queue, submit-hearing, and — confirmed by FR-004-049 — the
  * rollback close-in-flight statement) and the two read-only listings (the request listing,
  * {@code dlq-completed}) each get their own runner class here.
  *
