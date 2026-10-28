@@ -18,10 +18,13 @@ assumes `IdempotencyGuard`, `DistributionRunner`, the three tables/one view, and
 (`HearingPayloadSource`, `YouthFilterSource`, `HmppsSender`, `OutboundLog`) already exist on `main`
 at the time this branch is rebased/merged. No task in this file creates a new port.
 
-**Provisional decisions** (flagged for the design owner — `research.md`): FR-004-024 resolved as
-"refuse `resend-in-progress`", FR-004-049 resolved as "this slice owns the close-in-flight runner",
-FR-004-052 resolved as "a persisted `intake_control` row". Tasks implementing these are marked
-**(provisional)**.
+**Confirmed decision** (2026-10-26): FR-004-024 refuses `resend-in-progress` for live or expired
+resend leases, without automatic reclaim. FR-004-049 confirms this service owns the guarded
+`rollback-close-in-flight` CLI runner, with no HTTP exposure.
+
+**Confirmed pause decision** (2026-10-26): FR-004-052 uses the persisted `intake_control` row,
+read before consumption starts and reconciled on the store-probe interval. Earlier task history
+labelled this provisional; the user has now confirmed it.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -60,10 +63,10 @@ container (plan.md "Technical Context").
 **Purpose**: shared schema, vocabulary and property-validation changes every later story needs.
 **⚠️ CRITICAL**: no user-story phase starts before this one is complete.
 
-- [X] T004 Add the provisional `intake_control` single-row table migration
+- [X] T004 Add the confirmed `intake_control` single-row table migration
       `src/main/resources/db/migration/V{next}__add_intake_control.sql` exactly as specified in
       data-model.md (columns `id`, `paused_by_operator`, `paused_at`, `updated_at`; CHECK
-      `id = 1`; seed row) — **(provisional, FR-004-052)**. `{next}` is the first unused Flyway
+      `id = 1`; seed row) — **(confirmed 2026-10-26, FR-004-052)**. `{next}` is the first unused Flyway
       version once this branch is rebased onto 002's (and, if landed first, 003's) migrations —
       never renumber an already-applied migration. Landed as `V3__add_intake_control.sql` (V1, V2
       already taken by slices 002/003 on this branch).
@@ -117,7 +120,7 @@ container (plan.md "Technical Context").
 - [X] T010 Extend `ConsumerLifecycleController` (`inbound/`) with a `paused_by_operator` read path
       against the `intake_control` row: on startup and every `distribution.store.probe-interval`,
       reconcile the in-memory pause flag and `probation_intake_suspended{cause="operator"}` to the
-      persisted row, making T009 pass — **(provisional, FR-004-052)** —
+      persisted row, making T009 pass — **(confirmed 2026-10-26, FR-004-052)** —
       `inbound/ConsumerLifecycleController.java`
 - [X] T010a [P] `ReplayAdmissionPredicateTest` (plain unit test, no Spring context): the DV-26
       predicate decides admit-as-replay vs dead-letter-`exhausted` for a `FAILED` request's delivery
@@ -236,7 +239,7 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
 - [X] T016 [P] [US1] `ReplayActionTest`: `replay --request-id` decides under the request-row lock —
       no row → `unknown-request`; `COMPLETED` → `no-op`, nothing enqueued; `RECEIVED`/`RETRYING` →
       `not-eligible`; leg's latest row a `PENDING` resend row (live or expired) → `resend-in-progress`
-      (provisional, FR-004-024); otherwise enqueue `processed_request.command` byte-for-byte under a
+      (confirmed 2026-10-26, FR-004-024); otherwise enqueue `processed_request.command` byte-for-byte under a
       fresh `messageId` (never equal to `RESULTS:{requestId}` or any earlier replay message's id),
       `correlationId = hearingId`, `origin = REPLAY`; the action itself writes nothing to the store;
       **and proceeds unchanged while `intake_control.paused_by_operator = true`** — replay is
@@ -346,27 +349,30 @@ X; deliver a copy under X at count 1 (admitted, route `copy`), a delivery of X a
 
 ### Tests for User Story 2 (write first, confirm red, then implement) ⚠️
 
-- [ ] T024 [P] [US2] `DlqResubmissionReplayIT` (Testcontainers Service Bus emulator): the three-case
+- [X] T024 [P] [US2] `DlqResubmissionReplayIT` (Testcontainers Service Bus emulator): the three-case
       matrix above, plus a copy carrying `origin=SUPPORT` under X at count 1 → route `support`; a
       dead-lettered copy of a service-replay message (keeps `origin=REPLAY`) → route `service`; a
       producer republish (same X, count 1) → route `copy`, no `SENT`/`NOT_APPLICABLE` leg re-sent; a
       `COMPLETED` request meeting any copy → no-op; a `FAILED(rolled-back)` request (NULL
       `exhausted_message_id`) admitted at any count (FR-004-001, FR-004-002, FR-004-005, FR-004-006,
       FR-004-048, FR-004-050; DV-26) — `src/test/java/.../inbound/DlqResubmissionReplayIT.java`
+      Red→green evidence: `/private/tmp/recovery-us2-red.xml` captured assertion failures for the
+      actual replay message identity and terminal-success re-send; final green: 23 broker cases and
+      `./gradlew build` (873 tests, 0 failures/errors/skips; PMD and Checkstyle clean).
 
 ### Implementation for User Story 2
 
-- [ ] T025 [US2] Implement route derivation at admission (`service`/`support`/`copy` from
+- [X] T025 [US2] Implement route derivation at admission (`service`/`support`/`copy` from
       `origin`/absence) as an audit-only label: append to `audit_note`, log field, increment
       `probation_replays_total{route}` — no eligibility/settlement/sending rule reads `origin`
       itself (FR-004-005) — `application/` (alongside T011's predicate class)
-- [ ] T026 [US2] Confirm (and extend if needed) the inherited redelivery/final-delivery
+- [X] T026 [US2] Confirm (and extend if needed) the inherited redelivery/final-delivery
       `exhausted`/`collision`/`validation` dead-letter paths still hold under T011's replaced
       predicate (FR-004-001's parenthetical: "every delivery of a `FAILED` request is judged by this
       predicate from this slice on") — `inbound/`
-- [ ] T027 [US2] Seed the `doc/DEVIATIONS.md` DV-26 row (create the file if slice 002 has not yet;
+- [X] T027 [US2] Seed the `doc/DEVIATIONS.md` DV-26 row (create the file if slice 002 has not yet;
       constitution Principle I) naming `DlqResubmissionReplayIT` as its pinning test (FR-004-050) —
-      `doc/DEVIATIONS.md`
+      `doc/DEVIATIONS.md` (existing DV-26 row confirmed; the named pinning test now passes).
 
 **Checkpoint**: User Stories 1 and 2 both work independently — the go-live precondition for SIT
 negative testing (SC-004-011) is now testable.
@@ -416,7 +422,7 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       `note`/`updated_at` (+ a fresh `claim_token` on the resend row), and maps each request
       correctly (`RECEIVED`/`RETRYING` → `FAILED(rolled-back)`, `FAILED` keeps its reason/id,
       `COMPLETED` untouched); a late runner's write after the close changes nothing and counts as a
-      stale-runner rejection — **(provisional runner ownership, FR-004-049)** —
+      stale-runner rejection — **(confirmed runner ownership 2026-10-26, FR-004-049)** —
       `src/test/java/.../persistence/RollbackFencingIT.java` (this file also carries US1's and US3's
       late-runner cases, T015/T037, assembled together once this task lands).
       All four acceptance-scenario rows and **US1's late-runner case (T015's second bullet — a late
@@ -448,7 +454,7 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
 - [X] T032 [US7] Implement `application/IntakePauseAction.java` / the resume counterpart: write
       `intake_control.paused_by_operator` (+ `paused_at`) first, then the in-memory flag and gauge,
       inside the existing JDBC transaction template; `no-op` when already in the requested state
-      (FR-004-051) — **(provisional, FR-004-052)**.
+      (FR-004-051) — **(confirmed 2026-10-26, FR-004-052)**.
       `IntakePauseAction.pause()`/`.resume()` call `IntakeControlRepository.pause()`/`.resume()`
       (a single guarded `UPDATE ... WHERE paused_by_operator = <opposite>`, atomic, no explicit
       transaction template needed for one statement) and map the changed/unchanged row count to
@@ -473,7 +479,7 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       classify-by-enqueued-time loop over the live queue that no test in this phase exercises;
       flagged in open_points, same boundary as T021's unwired `ReplayEnqueuer`.
 - [X] T034 [US7] Implement `application/RollbackCloseInFlightAction.java`: one transaction per
-      `PENDING`/`PARKED` row exactly as FR-004-049a states — **(provisional, FR-004-049)**.
+      `PENDING`/`PARKED` row exactly as FR-004-049a states — **(confirmed 2026-10-26, FR-004-049)**.
       The per-row transaction statement itself (FR-004-049a) lives in
       `persistence/JdbcRollbackFencingRepository` (T030), per `design_rules.md`'s ports-and-adapters
       rule (`application/` must not import a JDBC type); `RollbackCloseInFlightAction` is the thin
@@ -489,14 +495,16 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       `cli/PurgeQueueRunner.java`, `cli/RollbackCloseInFlightRunner.java` per
       `contracts/cli-runners.md` §3, §4, §6 — each refuses per its own guard before any store read.
       Each is the `ReplayRunner` shape: a thin switch mapping its action's sealed outcome to
-      `RunnerOutcome`, with its own `*RunnerTest`. **Not wired into `RunnerDispatcher`/Spring
-      config** — same stub boundary as T021's `ReplayRunner` (open_points); all four refuse before
-      any store read by construction (the guard is inside the application-layer action they call,
-      not duplicated in the runner).
+      `RunnerOutcome`, with its own `*RunnerTest`. Initially left unwired like T021's `ReplayRunner`;
+      these four are now registered by T037. Each delegates its guard to the application action,
+      rather than duplicating it in the runner.
       RED (all four, a single run): 5 `AssertionFailedError`s — each store-unavailable/
       broker-unavailable/refused case answered `DONE` against a stub body that always returned
       `RunnerOutcome.DONE` without inspecting the action's outcome.
       GREEN: all 11 cases across the four `*RunnerTest` classes pass.
+      T037 now registers these four runners in `OperatorCommandLine`'s separate CLI composition
+      root; pause/resume and close-in-flight are executable. Purge has an explicit unavailable
+      adapter until broker-native cutoff deletion can be integrated safely.
 - [X] T036 [US7] Wire `LegResender`'s and `PurgeQueueAction`'s pause checks to the reconciled
       in-memory flag from T010 (read-before-claim for resend-leg, FR-004-021; read-before-remove for
       purge-queue) — `application/LegResender.java` stub wiring only; full `LegResender` lands in
@@ -508,19 +516,26 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       hand-off point for Phase 6 (`LegResender`) — nothing in this stub's shape should need to
       change when the real eligibility/claim/send pipeline replaces its loop body.
 - [ ] T037 Run `quickstart.md` step 6 (pause/purge/resume) and the close-in-flight smoke test locally.
-      **Not run against the built jar this pass** — step 6 is `java -jar build/libs/app.jar
-      pause-intake` / `purge-queue` / `resume-intake`, which needs the composition-root wiring this
-      phase deliberately left open (T021's precedent, carried forward by T029/T033/T035): no
-      `RunnerDispatcher` registration, no Spring beans for the four new runners or
-      `RollbackCloseInFlightAction`, and no production `QueuePurger` adapter exists yet, so the
-      packaged jar cannot actually take any of these actions. Every behaviour the smoke test would
-      observe is covered by the automated suite instead: `IntakeControlReconciliationIT` (pause
-      survives a restart), `IntakePauseResumeTest` (pause/resume/no-op), `PurgeQueueActionTest`
-      (refusal and purge), `RollbackFencingIT` (the close-in-flight statement and its fencing). Left
-      open for the pass that wires the composition root.
+      **Partially implemented**: `Application` selects a separate non-web CLI composition root,
+      registers the four runners with `RunnerDispatcher`, validates input before startup, closes
+      resources and returns the contracted exit code. `PackagedIntakeCommandsIT` executes the built
+      jar against PostgreSQL and the Service Bus emulator: durable pause, a live controller holding
+      messages while paused, resume releasing them, guard refusals, and closing pending/parked rows.
+      RED: `/private/tmp/t037-cli-red.xml` records the assertion failure when `pause-intake` started
+      the normal service and attempted a Redis connection; the isolated bootstrap removes that path.
+      GREEN (2026-10-27): `./gradlew build` completed successfully; 877 tests, zero failures/errors/
+      skips, including all four `PackagedIntakeCommandsIT` cases; PMD and Checkstyle clean.
+      Code review and QA PASS, spec validation COMPLIANT for this partial implementation.
+      **Outstanding**: successful purge. Java SDK 7.17.19 has no public native cutoff-delete
+      operation. A receive/abandon implementation was rejected in review because it can exhaust
+      later messages' delivery budgets and dead-letter them. The current paused purge fails with
+      exit 2 (`unsupported-broker-operation` / `broker-unavailable`), receiving/removing nothing;
+      unpaused purge refuses with exit 1. Microsoft's [native batch-delete feature](https://learn.microsoft.com/en-us/azure/service-bus-messaging/batch-delete)
+      performs cutoff selection on the broker. A supported integration and a successful purge
+      smoke test are required before this task can be checked off.
 
-**Checkpoint**: intake pause is durable and testable in isolation from resend-leg's full
-implementation; purge-queue and the rollback close statement are usable by 006's runbook inputs.
+**Checkpoint**: intake pause is durable and the pause/resume/rollback commands are executable.
+Purge remains unavailable; 006's rollback runbook cannot treat the purge step as implemented.
 
 ---
 
@@ -563,9 +578,9 @@ code, five report entries, refusal counters incremented.
       rotated claim token changes nothing and counts as a stale-runner rejection — RollbackFencingIT's
       "late resend runner" case, pinned here (FR-004-028) — extends
       `src/test/java/.../application/ResendConcurrencyIT.java`
-- [ ] T042 [US3] `PropertiesValidatorTest`/eligibility unit test for the provisional FR-004-024
+- [ ] T042 [US3] `PropertiesValidatorTest`/eligibility unit test for the confirmed FR-004-024
       resolution: an expired `PENDING` resend row is refused `resend-in-progress`, never reclaimed —
-      **(provisional)** — add to `ResendByRequestIdsIT` (T038) as its own case, not a new file
+      **(confirmed 2026-10-26)**; assert unchanged attempt and claim, and no POST — add to `ResendByRequestIdsIT` (T038) as its own case, not a new file
 
 ### Implementation for User Story 3
 
@@ -767,8 +782,8 @@ observe a new request with the audit line and `origin=queue` outcomes.
 - [ ] T074 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
       are unchanged (SC-004-013)
 - [ ] T075 Run every `quickstart.md` step end to end in one sitting against a fresh local stack
-- [ ] T076 [P] Re-read `research.md`'s three provisional decisions against anything the owning team
-      (H31) has since confirmed; if any decision is overturned, apply the isolated change
+- [ ] T076 [P] Re-read `research.md`'s confirmed decisions against any subsequent owning-team
+      (H31) changes; if any decision is overturned, apply the isolated change
       `research.md` names and re-run the affected story's tests only
 - [ ] T077 Update `CLAUDE.md`'s Setup section once this slice merges to `main`, and hand the
       Dependencies → "005-operations-api" and "006-production-readiness" sections (plan.md,

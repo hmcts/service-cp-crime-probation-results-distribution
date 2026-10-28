@@ -25,7 +25,7 @@ slice 002's ports (`HearingPayloadSource`, `YouthFilterSource`, `HmppsSender`, `
 request store) with **no new port and no new adapter**. The only schema change this slice may need
 is a persisted intake-pause flag (FR-004-052; see Research, Decision 3) — everything else reuses
 002's three tables and one view unchanged. A new driving-adapter package, `cli`, hosts the six
-runners and the two listings as thin Spring Boot `CommandLineRunner`s that parse arguments, call one
+runners and the two listings as thin classes registered with `RunnerDispatcher` that parse arguments, call one
 application service, and print its bounded outcome — mirroring how `inbound` and `api` already sit
 beside `application` without it depending on either.
 
@@ -36,12 +36,14 @@ beside `application` without it depending on either.
 `spring-boot-starter-actuator`); `com.azure:azure-messaging-servicebus` + `azure-identity` (already
 depended on for slice 002's listener; this slice's replay action and submit-hearing runner reuse the
 same `ServiceBusSenderClient` on `probation.requests` rather than adding a dependency); no new
-library — the runners are plain `CommandLineRunner` beans, gated by a Spring profile/argument switch
-so a runner invocation does not start the message listener (FR-004-045)
+library — an action argument selects a separate, explicit non-web Boot composition root before
+context creation, so a runner invocation constructs neither the message listener nor maintenance
+scheduler (FR-004-045; Research Decision 6). Native cutoff purge integration remains outstanding
+under T037; the installed Java SDK has no public operation for it.
 **Storage**: PostgreSQL 15, the same three tables and one view from slice 002
 (`processed_request.command`/`replayed_at`, `outbound_message` with `attempt_origin`/the leg
 claim/`resend_run_id`/`operator`/`override`/`note`, `outbound_message_latest`, `outbound_body`) —
-unchanged by this slice; one additional single-row control table is the provisional answer to
+unchanged by this slice; one additional single-row control table is the confirmed answer to
 FR-004-052 (Research, Decision 3), added by a new Flyway migration at this slice's own version
 number, following the precedent of slice 003's `V2__…body_maintenance_state` addition
 **Testing**: JUnit 5 + Mockito + AssertJ for the application layer (plain mocks, no Spring context);
@@ -78,7 +80,7 @@ migration (the pause-state table); no new external integration
 | VI. Explicit Failure | Every action ends in one of `enqueued`/`no-op`/a bounded refusal code, or a declared failure (`store-unavailable`, `broker-unavailable`); no action may return "success" from a catch block. A resend never parks (FR-004-027) — it is `FAILED` at once, which is itself an explicit-failure discipline applied to a run kind with no delivery to park against. | PASS |
 | VII. Privacy in Telemetry | FR-004-041 is the slice's own restatement of this principle: no stored/sent body, command, payload value, `userId`, operator name or reason text in any log line, metric label, report, listing or refusal, with the four places an operator's text *is* allowed enumerated exhaustively. The privacy sweeps (`TelemetryPrivacyTest`, `LogStatementSweepTest`) extend to this slice's new log lines and reports. | PASS |
 | VIII. Estate Conventions | Gradle, the existing package root, Conventional Commits, no AI attribution — unchanged. The new `cli` package gets its own `package-info.java` stating its responsibility and dependency direction, as every existing package already does. | PASS |
-| IX. Scope — the HMPPS Leg Only | No VEP code path of any kind (every runner and listing is `--leg HMPPS` only, the leg's only value). No App Configuration read is added — the operator pause is a service-internal control, not a second cutover lever (constitution IX; FR-004-052's provisional store does not touch `ProbationResultsDistributionService`). | PASS |
+| IX. Scope — the HMPPS Leg Only | No VEP code path of any kind (every runner and listing is `--leg HMPPS` only, the leg's only value). No App Configuration read is added — the operator pause is a service-internal control, not a second cutover lever (constitution IX; FR-004-052's confirmed store does not touch `ProbationResultsDistributionService`). | PASS |
 
 No violation requires an entry in Complexity Tracking.
 
@@ -119,7 +121,7 @@ src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/
 │   ├── PurgeQueueAction.java           # FR-004-053
 │   ├── RequestListingQuery.java        # FR-004-043 (action 1)
 │   ├── DlqCompletedListingQuery.java   # FR-004-043 (dlq-completed)
-│   └── RollbackCloseInFlightAction.java# FR-004-049/049a (provisional owner; Research Decision 1)
+│   └── RollbackCloseInFlightAction.java# FR-004-049/049a (confirmed owner; Research Decision 2)
 ├── inbound/                            # unchanged package, DV-26 predicate replaces 002's interim rule
 │   └── (guard changes only — FR-004-001–013; no new class, ReplayAdmission logic inside the
 │        existing admission statement)
@@ -129,11 +131,11 @@ src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/
 │   ├── PauseIntakeRunner.java / ResumeIntakeRunner.java
 │   ├── PurgeQueueRunner.java
 │   ├── SubmitHearingRunner.java
-│   ├── RollbackCloseInFlightRunner.java (provisional; Research Decision 1)
+│   ├── RollbackCloseInFlightRunner.java (confirmed; Research Decision 2)
 │   ├── RequestListingRunner.java / DlqCompletedListingRunner.java
 │   └── package-info.java               # new; dependency direction = inbound/api's
 ├── persistence/                        # unchanged package, no schema change except Decision 3's table
-│   └── db/migration/V<n>__add_intake_control.sql   # provisional; Research Decision 3
+│   └── db/migration/V<n>__add_intake_control.sql   # confirmed; Research Decision 3
 └── domain/                             # unchanged package, new closed value sets only
     └── (ReplayRoute, ResendRefusalReason, RunOrigin additions if not already in 002's enums)
 

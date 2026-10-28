@@ -1,14 +1,8 @@
 # Phase 0 Research: Operator recovery
 
-This slice's spec is unusually prescriptive — almost every rule already cites a design row id and a
-pinning test name. Research here is therefore concentrated on the three points the spec itself
-marks `[NEEDS CLARIFICATION]` (FR-004-024, FR-004-049, FR-004-052), each of which the spec also
-flags as "answered by the owning team" (H31), not as a gap in this repository's reading of the
-design. Per this repository's practice for an external, not-yet-answered dependency (see
-`001-parity-kernel`'s corpus-status handling), each is resolved here with a **provisional decision**
-scoped tightly enough that the owning team's eventual answer is a small, isolated change — never a
-rewrite — plus the handful of implementation-technology choices the spec leaves to this plan
-(Assumption 12's run-order, the listings' paging, the runner invocation mechanism).
+FR-004-024 is confirmed by the 2026-10-26 clarification (option B: refuse expired resend
+claims without automatic reclaim). FR-004-049 is confirmed as option A: this service owns the
+guarded rollback CLI runner. FR-004-052 is confirmed as option A: persist the pause in the shared store. The remaining sections record implementation choices and their constraints.
 
 ---
 
@@ -21,7 +15,7 @@ say resend-leg refuses it `resend-in-progress`, "live or expired" — no reclaim
 procedure for a deferred replay ("run resend-leg, then replay") depends on the reclaim reading,
 because otherwise a dead resend runner's `PENDING` row is never closed by resend-leg at all.
 
-**Decision**: resend-leg refuses an expired `PENDING` resend row `resend-in-progress`, exactly as it
+**Decision — confirmed 2026-10-26 (option B)**: resend-leg refuses an expired `PENDING` resend row `resend-in-progress`, exactly as it
 refuses a live one. It does **not** reclaim the row in place.
 
 **Rationale**:
@@ -29,33 +23,26 @@ refuses a live one. It does **not** reclaim the row in place.
    It requires a *replay* to defer (never admit) over a `PENDING` resend row "whether its lease is
    live or expired". If replay treats live and expired alike, a resend-leg rule that instead
    reclaims an expired row would be the one place in the whole eligibility table where "expired"
-   silently means "free to take" — an inconsistency the spec's own acceptance scenarios never
-   exercise (story 3, scenario 16 states `resend-in-progress` only for "a `PENDING` resend row whose
-   lease is live"; it is conspicuously silent on the expired case, which is exactly the open
-   question).
+   silently means "free to take". US3 scenario 16 now explicitly covers both live and expired
+   resend claims with the same refusal.
 2. **The risk the Edge Cases section itself names**: "a reclaim may send again a body the dead
    runner had already sent" — a duplicate the design does not count (A3-115). Refusing is the
-   strictly safer default; nothing is lost by refusing, because the row is still closable by the
-   rollback's close-in-flight statement (FR-004-049a) or by an operator-driven fix once the owning
-   team answers.
+   chosen behaviour. The row stays blocked until operator recovery through the guarded rollback
+   close-in-flight procedure (FR-004-049/FR-004-049a).
 3. **It needs no new mechanism.** `resend-in-progress` is already a defined refusal code
    (FR-004-022); treating "expired" the same as "live" for this one check is a one-line predicate
    (`claim_owner IS NOT NULL` regardless of `claim_expires_at`), not a reclaim statement with its own
    fencing.
 
-**Consequence for A2-72's procedure**: until the owning team answers, a `PENDING` resend row left by
+**Consequence for A2-72's procedure**: a `PENDING` resend row left by
 a dead runner is closed only by the rollback's close-in-flight statement (FR-004-049a) — which this
-slice ships as a runner precisely because no other action does (Decision 1 below is about a
-*different* open question, FR-004-049, but the two are linked: a stuck resend row outside a rollback
-has no closer in this slice). This is called out explicitly in `quickstart.md`'s operator-facing
+slice ships as a runner precisely because no other action does (Decision 2 confirms this service owns that guarded runner; recovery requires the
+operator pause and rollback procedure). This is called out explicitly in `quickstart.md`'s operator-facing
 notes and in the runbook text (FR-004-047) as a known gap, not hidden behind a reclaim that might
 duplicate a send.
 
-**Flagged for the design owner** (per Dependencies, "owning team (H31)"): if the owning team instead
-confirms the reclaim reading, the change is isolated to `LegResender`'s eligibility check for this
-one row shape, re-using the resend row's existing claim-rewrite statement (already written for the
-normal resend-insert path) rather than the refusal path — a small, test-covered change, not a
-redesign.
+**Status**: confirmed for this feature by the user on 2026-10-26. The conflicting reclaim
+reading is not implemented; changing it requires an explicit new decision and acceptance tests.
 
 **Alternatives considered**:
 - *Reclaim in place, as (c)/A2-72 read.* Rejected for the duplicate-send risk above and because it
@@ -74,7 +61,7 @@ whether it is (a) a runner this slice delivers, refused unless intake is paused;
 another slice owns; or (c) a step of the rollback runbook run outside the service entirely (e.g. a
 hand-run SQL script by an operator with DBA access).
 
-**Decision**: (a) — this slice ships it as a command-line runner, `rollback-close-in-flight`,
+**Decision — confirmed 2026-10-26 (option A)**: this slice ships it as a command-line runner, `rollback-close-in-flight`,
 refused `intake-not-paused` unless intake is paused (the same guard purge-queue already uses,
 FR-004-053), with no HTTP exposure (consistent with slice 005 "keeping the rollback's close-in-flight
 step off HTTP" per Dependencies).
@@ -99,11 +86,8 @@ protocol itself (out of scope, per spec "Out of Scope"). The runner takes no arg
 confirming intake is paused — it closes every `PENDING`/`PARKED` row in the database, which is what
 FR-004-049a already specifies; it does not select a subset.
 
-**Flagged for the design owner**: if the owning team answers (b) or (c) instead, the change is to
-delete `RollbackCloseInFlightAction`/`RollbackCloseInFlightRunner` and leave `RollbackFencingIT`
-exercising the statement directly (it already does, since the statement's three pinned cases are
-about late-runner rejection, not about the runner that triggers the close) — again an isolated
-change.
+**Status**: confirmed for this feature by the user on 2026-10-26. This slice owns the guarded
+CLI execution path; the operations API does not expose it.
 
 **Alternatives considered**:
 - *Another slice (006) owns it.* Rejected as the default: 006 is explicitly "production readiness"
@@ -120,15 +104,15 @@ change.
 memory. The operator pause must hold "for the whole rolled-back period" (A2-52) — potentially days —
 across 1–2 replicas (O-2) and across a pod restart. In-memory, per-pod state cannot do that alone.
 
-**Decision**: persist a one-row control table, `intake_control` (columns: a single fixed-id row,
+**Decision — confirmed 2026-10-26 (option A)**: persist a one-row control table, `intake_control` (columns: a single fixed-id row,
 `paused_by_operator boolean NOT NULL DEFAULT false`, `paused_at timestamptz`, `updated_at
 timestamptz NOT NULL DEFAULT now()`), added by a new Flyway migration at this slice's own version
 number. `ConsumerLifecycleController` keeps its existing in-memory flag as the **fast path** for the
 per-pod decision on every delivery, but on startup — and on a short interval thereafter (same cadence
 as the existing store-probe, `distribution.store.probe-interval`, default 10 s) — each pod reads this
 row and reconciles its in-memory flag to it. The pause and resume actions write the row first, inside
-the same transactional discipline as every other write in this service, and then update the local
-flag; `probation_intake_suspended{cause="operator"}` reflects the reconciled, not the requested,
+the same transactional discipline as every other write in this service, and the lifecycle controller reconciles the local
+flag on its next probe; `probation_intake_suspended{cause="operator"}` reflects the reconciled, not the requested,
 state.
 
 **Rationale**:
@@ -145,17 +129,12 @@ state.
    the operator-pause bit, is read by nothing outside this service, and is never compared against
    `ProbationResultsDistributionService` or any App Configuration value. It is scoped exactly to
    "the service's only stop" language the spec's Context section already uses.
-4. **The reconciliation interval bounds the exposure window.** A pod that restarts mid-rollback
-   starts with intake enabled only until its first reconciliation read (bounded by
-   `distribution.store.probe-interval`, already a validated property) — an acceptable gap given the
-   alternative (an unbounded gap with no persistence at all) and because `probation_intake_suspended`
-   makes the gap observable rather than silent.
+4. **Reconciliation bounds propagation.** Existing pods honour pause changes by their next
+   successful store probe. A restarted pod reads the persisted state before starting consumption;
+   read failure keeps intake suspended. A database recovery does not clear the operator hold.
 
-**Flagged for the design owner**: if the owning team instead confirms the deployment-switch reading
-(`distribution.consumer.enabled` toggled per rollback via Helm), this decision's table and
-reconciliation loop are removed and `IntakePauseAction`/`IntakeResumeAction` become no-ops that
-report the property's current value — again an isolated change, because `ConsumerLifecycleController`
-already owns the single point every consumer-side check goes through.
+**Status**: confirmed for this feature by the user on 2026-10-26. The shared database row is the
+operator control; deployment configuration is not the pause/resume mechanism.
 
 **Alternatives considered**:
 - *In-memory only, as slice 002 left it.* Rejected: does not meet A2-52 ("the whole rolled-back
@@ -210,24 +189,23 @@ and in a log line.
 
 ## Decision 6 — runner invocation mechanism
 
-**Decision**: each runner is a `CommandLineRunner` (or `ApplicationRunner`) Spring bean in the new
-`cli` package, each gated by inspecting the first command-line argument (the action name, e.g.
-`replay`, `resend-leg`) against a dispatch table, rather than one bean per Spring profile. The
-`Application` entry point remains unchanged; invoking the image with an action argument runs that
-one action's runner and exits (`SpringApplication.exit(...)` with the action's exit code reflecting
-done/refused/failed), **never** starting the ASB listener or the body-maintenance scheduler
-(FR-004-045). Invoking the image with no action argument behaves exactly as it does today (the
-service, listener and scheduler start normally).
+**Decision**: the same executable's `Application` entry point inspects the first argument before
+starting Spring. An action selects `OperatorCommandLine`'s explicit non-web composition root and
+`RunnerDispatcher` registry. That root scans no components, so the server, ASB listener and
+body-maintenance scheduler are never constructed (FR-004-045). Each invocation runs one action,
+closes its context and exits with the done/refused/failed code. Without an action, the normal
+service starts. T037 registers pause/resume, purge and rollback; other actions await their wiring.
 
 **Rationale**: this is the shape YOT's and the informant register's own command-line runners already
 take (named as the pattern to copy in design_rules.md and the spec's own "names the design marks as
 proposals" convention for runner names); a single dispatch table is simpler to keep in sync with
 `FR-004-042`'s "same inputs ... same rules ... same outcomes" guarantee than N separate
 profile-conditional bean definitions, because the dispatch table is the one place a new action is
-registered. Disabling the listener and scheduler is done the same way slice 002 already disables the
-consumer in the `test` profile (`distribution.consumer.enabled=false`): a runner invocation sets
-this flag (and the equivalent for the body-maintenance scheduler) programmatically before the
-context's listener/scheduler beans would otherwise start, rather than by a new property.
+registered. Selecting a separate explicit configuration before context creation prevents both
+background consumers and scheduled maintenance from starting, without adding a configuration
+property or requiring operators to remember flags. A standalone command reads the persisted pause
+state before a guarded action; live service replicas continue reconciling their in-memory flag on
+the store-probe interval.
 
 **Alternatives considered**: a `@ConditionalOnProperty`-gated bean per action — rejected as six near
 copies of the same conditional wiring for no behavioural difference; a separate `main()` per runner
@@ -236,6 +214,16 @@ contradicts "the pod's own workload identity and network path, with no role issu
 (FR-004-044), which reads most naturally as "the same deployed artifact, invoked differently."
 
 ---
+
+## T037 native purge capability check (2026-10-27)
+
+The installed Java SDK 7.17.19 has no public native cutoff-delete operation. Published source
+artifacts show that [7.18.0-beta.1](https://github.com/Azure/azure-sdk-for-java/blob/azure-messaging-servicebus_7.18.0-beta.1/sdk/servicebus/azure-messaging-servicebus/src/main/java/com/azure/messaging/servicebus/ServiceBusReceiverClient.java)
+exposed `deleteMessages`/`purgeMessages`, but those APIs were removed from beta.2, beta.3 and stable
+7.18.1. The old beta predates emulator connection-string support. A current BOM/SDK upgrade therefore
+does not provide a compatible native purge client. No dependency override was introduced. Emulator
+1.1.2's support for the native batch-delete operation remains unverified; it is not asserted to be
+unsupported. T037 remains open for a supported integration and successful cutoff/DLQ smoke proof.
 
 ## Standing findings carried from the spec (not re-researched)
 

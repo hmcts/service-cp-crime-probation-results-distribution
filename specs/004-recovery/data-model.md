@@ -4,8 +4,8 @@ This slice adds **no new business entity** to the two tables slice 002 owns
 (`processed_request`, `outbound_message`) or to the `outbound_message_latest` view — it only
 exercises existing columns (`command`, `replayed_at`, `attempt_origin`, the leg claim,
 `resend_run_id`, `operator`, `override`, `note`) through new write paths. The one schema change is
-the provisional `intake_control` table from `research.md` Decision 3, pending the design owner's
-confirmation of FR-004-052.
+the confirmed `intake_control` table from `research.md` Decision 3 (FR-004-052 option A,
+2026-10-26).
 
 ## Entities already defined by slice 002 (read or written by this slice, unchanged shape)
 
@@ -61,7 +61,7 @@ row already triggers through slice 002's `OutboundLog` port (delete-and-replace 
 re-run; a fresh insert for a new attempt). No change to the digest trigger, the partitioning, or the
 retention job (slice 003).
 
-## New entity: `intake_control` (provisional — Research Decision 3, pending FR-004-052's answer)
+## New entity: `intake_control` (confirmed 2026-10-26 — Research Decision 3)
 
 ```sql
 CREATE TABLE intake_control (
@@ -89,10 +89,9 @@ INSERT INTO intake_control (id) VALUES (1);
 - Written only by `IntakePauseAction` / resume, inside the same transactional JDBC template the rest
   of this service's writes use; never written by a queue run, a replay or a resend.
 - Never purged, never partitioned — a control row, not an event log.
-- **If the design owner answers FR-004-052 with the deployment-switch reading instead**: this table
-  and its migration are dropped before merge; `IntakePauseAction`/`IntakeResumeAction` become reads
-  (and, for resume, a refusal) against `distribution.consumer.enabled`'s current value. No other part
-  of this data model changes.
+- Confirmed on 2026-10-26: this shared row is the operator pause mechanism. A pod must read it
+  successfully before starting consumption, then reconcile on the store-probe interval.
+  Read failure keeps consumption suspended.
 
 ## Closed value sets this slice introduces or completes (Java enums / records, no new table)
 

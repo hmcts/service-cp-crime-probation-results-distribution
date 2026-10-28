@@ -91,6 +91,15 @@ purge-queue
 
 No arguments. Refused `intake-not-paused` unless intake is paused. On success, reports the number of
 messages removed and the cut-off instant (the run's start time); the dead-letter queue is untouched.
+Messages at the cut-off are retained. Wait for every running replica to reconcile its operator-pause
+gauge before invoking purge or close-in-flight. A standalone runner reads the persisted pause state
+before its guard; it starts no consumer or maintenance scheduler.
+
+**T037 capability gap**: the installed Java SDK 7.17.19 exposes no broker-native cutoff-delete
+operation. The runner currently returns `FAILED`/`broker-unavailable` when paused, logging the bounded
+diagnostic `unsupported-broker-operation`. It receives and removes nothing. A receive/abandon fallback
+is forbidden: it can spend later messages' delivery budgets and move them to the DLQ. Successful
+purge remains outstanding until a supported native deletion integration is selected and verified.
 
 ## 5. `submit-hearing` (FR-004-054–058; §4.8 action 5)
 
@@ -109,7 +118,7 @@ Outcome: `enqueued` with the `requestId` (from `RequestIdRecipe`) and a fresh ru
 `sharedTime`. Writes nothing to the store itself; the admission effects happen once the message is
 delivered (a first delivery, a no-op, an abandon, or a replay with route `support` — FR-004-057).
 
-## 6. `rollback-close-in-flight` (FR-004-049/049a — provisional; Research Decision 2)
+## 6. `rollback-close-in-flight` (FR-004-049/049a — confirmed 2026-10-26; Research Decision 2)
 
 ```
 rollback-close-in-flight
@@ -117,9 +126,8 @@ rollback-close-in-flight
 
 No arguments. Refused `intake-not-paused` unless intake is paused. Closes every `PENDING`/`PARKED`
 leg row exactly as FR-004-049a states, one transaction per row; reports the number of rows closed by
-prior status. **This runner's existence and name are provisional** pending the design owner's answer
-to FR-004-049 (see `research.md` Decision 2); if the owning team assigns this step elsewhere, this
-runner is removed and `RollbackFencingIT` keeps pinning the statement directly.
+prior status. **This runner is owned by this service**, confirmed 2026-10-26 (option A, FR-004-049).
+It remains off HTTP.
 
 ## 7. `list-requests` (read-only; FR-004-043; §4.8 action 1)
 

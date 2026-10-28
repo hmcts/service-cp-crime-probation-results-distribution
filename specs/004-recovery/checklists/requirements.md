@@ -13,8 +13,7 @@
       It also names, on purpose, the design's own component and vocabulary names where the design's
       rule is stated through them — `RequestIdRecipe` (proposed by the design; FR-004-055 and the
       submit-hearing rules), `ConsumerLifecycleController` and `distribution.consumer.enabled` inside
-      FR-004-052's open question, which names candidate mechanisms only to frame the choice it asks
-      for, `NoteForms` in Dependencies, and the proposed test and runner names — and the deployment
+      FR-004-052's confirmed pause contract, `NoteForms` in Dependencies, and the proposed test and runner names — and the deployment
       terms the design fixes: Redis as the payload cache (H2), and the image and the pod in which
       the runners run (§4.4 Exposure row). It keeps as behaviour the guarantees that read like
       mechanism, because they are the design's: replay admission in one statement (A2-62) and an
@@ -25,29 +24,18 @@
 - [x] Focused on user value and business needs — operators get a failed send to HMPPS without
       re-sending what was delivered, stop and resume intake safely around a rollback, and repair a
       share that was never admitted; a deliberate duplicate is recorded as deliberate
-- [ ] Written for non-technical stakeholders — **partly, by design of the brief**. The Context, the
-      user stories and the success criteria are in operator terms; the functional requirements name
-      the design's frozen vocabulary, as the slice brief requires for a message-driven service with
-      fixed contracts. Accepted; not a blocker for planning
+- [x] Written for non-technical stakeholders — the operator overview, user stories and success
+      criteria explain recovery and rollback in plain language. Functional requirements retain
+      the fixed vocabulary needed for precise acceptance tests.
 - [x] All mandatory sections completed — plus Context, Clarifications, Dependencies, Out of Scope and
       Design traceability, which the slice brief asks for
 
 ## Requirement Completeness
 
-- [ ] No clarification markers remain — **three remain** in the spec, the maximum, each a genuine
-      design gap:
-      FR-004-024 — an expired `PENDING` resend row is reclaimed in place by §4.4 claim contract (c),
-      the §4.5 resend column and A2-72, but refused `resend-in-progress` "live or expired" by A3-56
-      and the §4.4 Selects row (DIGEST §16 lists it as blocking this slice);
-      FR-004-049 — the rollback's close-in-flight transition (§9.4 step 4) is specified and pinned,
-      but no action or runner executes it (DIGEST §16);
-      FR-004-052 — the design makes the operator pause a front for a per-pod, in-memory control, yet
-      requires it to hold for the whole rolled-back period, so how it reaches every replica and
-      survives a restart is undecided (A2-52; O-2).
-      Everything else was resolved from the design (32 Clarifications bullets) or carried as a
-      documented assumption or an explicit out-of-scope item. The three questions and their
-      options are at the end of this checklist, in the form every slice uses
-- [x] Requirements are testable and unambiguous — except the three marked requirements. Where the
+- [x] No clarification markers remain — all three decisions were confirmed on 2026-10-26:
+      FR-004-024 option B (no automatic resend reclaim), FR-004-049 option A (guarded CLI runner),
+      and FR-004-052 option A (persisted pause shared by every replica and honoured on restart).
+- [x] Requirements are testable and unambiguous. Where the
       design is silent the spec takes a stated default instead of leaving room: the replay action's
       codes for a missing or in-flight request (Assumption 2), the whole-run codes (3), the unforced
       resend's reason (4), the 200-character bound on operator and reason (5), the pause re-check
@@ -73,11 +61,11 @@
 
 ## Feature Readiness
 
-- [ ] All functional requirements have clear acceptance criteria — 57 of 60 do; FR-004-024,
-      FR-004-049 and FR-004-052 cannot until their questions are answered (FR-004-052 is testable
-      within one pod today: US7 scenarios 1–3). FR-004-049a, the close-in-flight statement, is
-      tested without its executor (US7 scenario 7; `RollbackFencingIT`), and FR-004-050a by US3
-      scenarios 9 and 12
+- [x] All functional requirements have clear acceptance criteria — all 60 do. FR-004-024
+      requires unchanged rows and zero POSTs on expired resend refusal; FR-004-049 requires
+      pause-guarded CLI execution; FR-004-052 requires shared persistence, startup read before
+      consumption and reconciliation by the next successful store probe. These are specification
+      checks, not claims that every implementation or smoke test is complete.
 - [x] User scenarios cover primary flows — service replay, dead-letter resubmission, resend-leg with
       its `sharedTime` check and recovery, the dead-letter runbook, the forced resend, the read-only
       listings, intake pause and resume with purge-queue, and submit-hearing
@@ -173,67 +161,33 @@
 - **Public-repository hygiene.** No personal names, hosts, URLs, resource names, environment values
   or payload content in the spec; checked by search.
 
-### Question 1: What does resend-leg do with an expired `PENDING` resend row? (FR-004-024)
+### Question 1: Expired `PENDING` resend row (FR-004-024) — resolved
 
-**Context**: FR-004-024: "When the leg's latest row is a `PENDING` resend row whose lease has
-expired (its runner died or overran), resend-leg MUST [NEEDS CLARIFICATION …]". Claim contract (c),
-the §4.5 resend column and A2-72 reclaim the row in place — owner, token and expiry rewritten, the
-attempt number kept, then run — and A2-72's procedure for a deferred replay ("run resend-leg, then
-replay") depends on it. A3-56 and the §4.4 Selects row refuse it `resend-in-progress`, "live or
-expired" (DIGEST §16 lists the conflict as blocking this slice).
+**Decision (2026-10-26)**: option B. Refuse `resend-in-progress` for a live or expired lease;
+never reclaim automatically. Expiry changes no row and causes no POST. Operator recovery uses
+FR-004-049/FR-004-049a; replay remains refused or deferred until the row is closed.
 
-**What we need to know**: whether an expired `PENDING` resend row is reclaimed or refused.
+**Acceptance coverage**: US3 scenario 16 and T042 (`ResendByRequestIdsIT`) must cover an expired
+lease, unchanged attempt and claim, and zero POSTs. T042 remains incomplete until implemented.
 
-**Suggested Answers**:
+### Question 2: Rollback close-in-flight executor (FR-004-049) — resolved
 
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A | Reclaim in place, as claim contract (c), the §4.5 resend column and A2-72 say | A dead runner's row is finished by the next resend, and A2-72's "run resend-leg, then replay" works. A reclaim may send again a body the dead runner had already sent: a genuine duplicate at HMPPS that the design does not count (A3-115) |
-| B | Refuse `resend-in-progress`, live or expired, as A3-56 and the §4.4 Selects row say | No duplicate from a reclaim. But nothing closes the row except rollback step 4's statement (FR-004-049a), whose executor is open (FR-004-049), and every replay of the request is deferred meanwhile (FR-004-003): the request stays stuck |
-| C | Reclaim in place as in A, and count each reclaim as a possible duplicate, for example on `probation_crash_reruns_total` | As A, and the possible duplicate is visible. The metric's definition in §10.1, and so the meaning of the crash re-run alert, widen: a design change |
-| Custom | Provide your own answer | Say what happens to the row, and whether a reclaim is counted |
+**Decision (2026-10-26)**: option A. This service owns the `rollback-close-in-flight` CLI runner.
+It refuses `intake-not-paused` without changing rows unless intake is paused by an operator.
+It calls the application action implementing FR-004-049a and remains off HTTP.
 
-**Your choice**: _for the owning team (H31), with the design owner_
+**Acceptance coverage**: US7's independent test, `RollbackCloseInFlightActionTest`,
+`RollbackCloseInFlightRunnerTest` and `RollbackFencingIT` cover the guard, result and statement.
+T037 now supplies production CLI registration and `PackagedIntakeCommandsIT` for pause/resume and
+close-in-flight. T037 remains open because successful broker-native cutoff purge is not integrated.
 
-### Question 2: Who runs rollback step 4's close-in-flight statement? (FR-004-049)
+### Question 3: Persistent operator pause (FR-004-052) — resolved
 
-**Context**: FR-004-049: "The rollback's close-in-flight transition … MUST be executable by an
-operator through [NEEDS CLARIFICATION …]". The statement is specified (FR-004-049a) and pinned
-(`RollbackFencingIT`), but no §4.8 action or runner executes it (§9.4 step 4; DIGEST §16). Slice 005
-keeps it off HTTP (FR-005-002), and slice 006's rollback inputs record the gap until a path is
-placed, describing no statement to run by hand (FR-006-040).
+**Decision (2026-10-26)**: option A. Persist the pause in `intake_control`; every pod reads it
+before starting consumption and reconciles on the store-probe interval (default 10 seconds).
+Read failure suspends consumption. Only operator resume clears the pause; restart and database
+recovery do not. Existing pods honour changes by their next successful reconciliation.
 
-**What we need to know**: which supported path runs the statement in a rollback.
-
-**Suggested Answers**:
-
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A | A command-line runner this slice delivers, refused unless intake is paused by an operator | The pinned statement gets a tested executor, run like the other rollback runners. It is an operator action §4.8 does not list: a design addition. It stays off HTTP (O-1) |
-| B | An action another slice owns, for example on the operations API | Attribution and audit as for the other API calls. It needs O-1 decided and a constitution amendment, because 005 keeps it off HTTP today |
-| C | A step of the rollback runbook, run outside the service against the store by the security-cleared operations team | No new action in the service. The runbook carries its own copy of the statement, which the service's tests do not pin, so two definitions must be kept in step; 006's inputs describe it only once this is the answer |
-| Custom | Provide your own answer | Name the path, who runs it, and what refuses it outside a rollback |
-
-**Your choice**: _for the owning team (H31), with the design owner_
-
-### Question 3: How does an operator pause reach every replica and survive a restart? (FR-004-052)
-
-**Context**: FR-004-052: "An operator pause MUST stay in force until an operator resumes intake … and
-it MUST hold on every replica and across a pod restart, by [NEEDS CLARIFICATION …]". The design makes
-pause "the ops front for `ConsumerLifecycleController`", which holds its state per pod and in
-memory, yet requires intake to stay paused for the whole rolled-back period (A2-52), with one or two
-replicas (O-2). A runner runs in the pod as a process of its own.
-
-**What we need to know**: the mechanism that makes one pause hold on every replica and across a
-restart.
-
-**Suggested Answers**:
-
-| Option | Answer | Implications |
-|--------|--------|--------------|
-| A | A pause recorded in the store, which every pod reads before it takes deliveries | Holds on every replica and across restarts, and the runner's pause reaches every pod. It needs a table or row beyond V1's three tables and one view: a V2 migration and a design addition |
-| B | The deployment's intake switch (`distribution.consumer.enabled`) set off for the rolled-back period | No schema change, and it survives restarts. But it is a deployment change per environment, not an operator runner: the pause and resume actions become advisory or give way to the deployment step, and the `cause="operator"` read-back must follow the switch |
-| C | A pause applied to each pod, with a restart accepted as resuming intake | The simplest. But a pod restart during the rolled-back period resumes intake while the legacy is sending again: a "both", and duplicates at HMPPS, against A2-52, unless every restart is watched for and the pause re-applied |
-| Custom | Provide your own answer | Name the mechanism, and how the pause is read back |
-
-**Your choice**: _for the owning team (H31), with the design owner_
+**Acceptance coverage**: US7 scenarios 1–3, `IntakeControlReconciliationIT` and the lifecycle
+controller tests must establish shared state, startup ordering, restart persistence and independent
+database/operator holds. Completing the checklist does not mark implementation tasks complete.

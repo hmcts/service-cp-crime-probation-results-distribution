@@ -54,12 +54,28 @@ With the local stack running and the service started normally (`./gradlew bootRu
 
 6. **Pause, purge, resume**:
    ```bash
-   java -jar build/libs/app.jar pause-intake
-   # enqueue a message — confirm it is not taken
-   java -jar build/libs/app.jar purge-queue
-   java -jar build/libs/app.jar resume-intake
-   # confirm deliveries resume
+   # Default local artefact version; use the corresponding jar if ARTEFACT_VERSION was overridden.
+   operator_jar=build/libs/service-cp-crime-probation-results-distribution-0.0.999.jar
+   java -jar "$operator_jar" pause-intake
+   # Wait for probation_intake_suspended{cause="operator"}=1 on every running replica.
+   # Enqueue a message — confirm it is not taken.
+   # Each following command runs only if the previous one succeeded.
+   java -jar "$operator_jar" purge-queue &&
+       java -jar "$operator_jar" rollback-close-in-flight &&
+       java -jar "$operator_jar" resume-intake
+   # Confirm deliveries resume only when the whole sequence succeeded.
    ```
+   These separate processes inherit the same datasource configuration as the running service.
+   Each command exits without starting HTTP, the consumer or body maintenance. `pause-intake` and
+   `resume-intake` persist the requested state; running replicas reconcile it by their next
+   successful store probe (default 10 seconds). Rollback is refused with exit 1 unless paused;
+   when paused it reports the pending/parked rows closed and exits 0.
+
+   **T037 is still open for successful purge**: the installed Java SDK exposes no native
+   cutoff-delete operation. While paused, `purge-queue` currently exits 2 with
+   `unsupported-broker-operation`/`broker-unavailable` and leaves the queues untouched. It refuses
+   with exit 1 while unpaused. Do not treat that failure as a completed purge or resume a rollback
+   before the required purge and reconciliation have actually completed.
 
 7. **Submit a hearing never admitted**: seed only a Redis `EXT_` key (no corresponding queue
    message, no request row), then:
@@ -85,6 +101,6 @@ With the local stack running and the service started normally (`./gradlew bootRu
 - The privacy sweeps (`TelemetryPrivacyTest`, `LogStatementSweepTest`) extend cleanly to every new log
   line, report and listing this slice adds, with zero findings.
 - `./gradlew build` is green with the coverage thresholds unchanged (SC-004-013).
-- If `research.md`'s provisional decisions (1, 2, 3) are later overturned by the design owner, each
-  is isolated to the single component `research.md` names — confirmed by re-running this quickstart
-  after making that change.
+- Decisions 1–3 in `research.md` were confirmed on 2026-10-26: refuse expired resend claims,
+  use the guarded rollback CLI, and persist operator pause. Any subsequent change requires an
+  explicit decision, updated acceptance criteria and the affected quickstart checks.

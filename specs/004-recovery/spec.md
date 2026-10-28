@@ -48,10 +48,25 @@ The pipeline the replayed, resent and submitted runs reuse — the guard's other
 source, the youth switch, the redaction, the send, the stored body and the settlement statements —
 is slice 002's, the redaction coming from 001. This slice adds no deviation: it pins DV-26, already
 in the design's register, and the resend halves of DV-07 and DV-17 (FR-004-050a). It also states
-the rules of rollback step 4's close-in-flight statement (FR-004-049a), whose executor is still
-open (FR-004-049).
+the rules of rollback step 4's close-in-flight statement (FR-004-049a), executed by the guarded
+command-line runner (FR-004-049).
+
+Operators use replay to retry a failed request without sending a successful leg again. If a
+resend worker stops unexpectedly, the service leaves its work blocked for operator recovery
+rather than risking an automatic duplicate. During rollback, operators pause intake, run the
+guarded close-in-flight command, and resume only when the rollback procedure permits it. The
+pause is shared by all replicas and remains active after restart. The requirement codes below
+provide the precise, testable contract for these operator behaviours.
 
 ## Clarifications
+
+### Session 2026-10-26
+
+- Q: How does operator pause reach every replica and survive restart? → A: Persist it in `intake_control`; each pod reads it before starting consumption and reconciles on the store-probe interval. Only operator resume clears it; database recovery does not (option A, FR-004-052).
+
+- Q: Who executes rollback close-in-flight? → A: This service owns the `rollback-close-in-flight` CLI runner, refused `intake-not-paused` unless intake is paused by an operator; no HTTP exposure (option A, FR-004-049).
+
+- Q: Should resend-leg reclaim an expired `PENDING` resend row? → A: No. Refuse `resend-in-progress` for live or expired leases; never reclaim automatically (option B, FR-004-024). Recovery requires the guarded rollback close-in-flight procedure.
 
 ### Session 2026-10-21
 
@@ -370,7 +385,8 @@ counter by code.
 16. **Given** the latest row is `PARKED`, or a `PENDING` attempt 1 or a `PENDING` replay row under an
     expired request claim, **Then** the ID is `not-eligible`; **Given** either `PENDING` row under a
     live request claim, **Then** the ID is `request-claimed`; **Given** it is a `PENDING` resend row
-    whose lease is live, **Then** it is `resend-in-progress`.
+    whose lease is live or expired, **Then** it is `resend-in-progress`, with the row unchanged
+    and no POST or claim rotation.
 17. **Given** two resend runs and a late queue delivery competing for one leg, or a replay and a
     resend racing in either order, **When** they run, **Then** exactly one of them runs the leg and
     there is exactly one POST for it.
@@ -498,13 +514,16 @@ delivery is taken, `probation_intake_suspended{cause="operator"}` reads 1, resen
 `intake-paused` and purge-queue is allowed; purge; observe the count and the cut-off reported and
 the messages from before the cut-off gone; resume; observe intake taking deliveries again.
 Separately, run the close-in-flight statement of FR-004-049a over seeded in-flight rows and check
-its outcome; who runs it in a rollback is open (FR-004-049).
+its outcome; run it through the guarded CLI runner (FR-004-049), verifying that an unpaused
+intake refuses the operation without changing rows.
 
 **Acceptance Scenarios**:
 
-1. **Given** intake running, **When** the operator pauses it, **Then** no further delivery is taken
-   from `probation.requests`, `probation_intake_suspended{cause="operator"}` reads 1, and the outcome
-   says intake is paused.
+1. **Given** intake running, **When** the operator requests a pause, **Then** the desired pause
+   is persisted. By each pod's next successful store-probe reconciliation, that pod stops taking
+   deliveries and `probation_intake_suspended{cause="operator"}` reads 1. Operators confirm that
+   read-back on every pod before proceeding with rollback; a restarted pod reads the persisted
+   pause before starting consumption.
 2. **Given** an operator pause, **When** the store becomes unavailable and then answers again,
    **Then** intake stays paused.
 3. **Given** an operator pause, **When** the operator resumes intake, **Then** the gauge reads 0 and
@@ -601,8 +620,9 @@ and its outcomes labelled `origin = queue`.
   at-least-once window as a first delivery (A2-42). It is not told apart from a normal re-run or
   counted; how to count it is open (A3-115).
 - **A resend runner that dies after committing its claim.** The `PENDING` resend row's lease
-  expires. Until the row is closed, replays of the request are refused or deferred. What closes it is
-  the open question of FR-004-024; a reclaim may send again a body the dead runner had already sent.
+  expires. Resend-leg refuses `resend-in-progress` without reclaiming or sending; replays remain
+  refused or deferred until the guarded rollback close-in-flight procedure closes the row
+  (FR-004-024, FR-004-049/FR-004-049a).
 - **The store fails during a resend run.** The IDs already completed keep their outcomes; the IDs
   not reached are reported `not-run`; an ID claimed but not completed is left as a `PENDING` resend
   row, as above; the run's result is failed. A store that is down before the run starts fails it
@@ -712,8 +732,7 @@ Assumptions.
   replay row) MUST get a new appended row — attempt `max(attempt) + 1`, `attempt_origin = replay`,
   no leg claim, `PENDING` until its outcome is written — which is then run under the request claim.
   A replayed run MUST never re-run a resend row in place, and MUST NOT append over a `PENDING` latest
-  row. Whether resend-leg reclaims an expired `PENDING` resend row in place is FR-004-024's open
-  question. *(A2-46; A2-59; A2-63)*
+  row. Resend-leg MUST NOT reclaim an expired `PENDING` resend row (FR-004-024). *(A2-46; A2-59; A2-63)*
 - **FR-004-010**: On a redelivery of a replay message, a leg whose latest row is `FAILED` and whose
   `note` names that message in `rerun-by` MUST be skipped, so that a `FAILED` row is re-run at most
   once per replay message, except across a crash between a 2xx and the write. A `PARKED` row MUST be
@@ -795,7 +814,7 @@ Assumptions.
   refusal or failure never stops or changes another's. The check MUST lock the request before its
   leg and refuse in this order: `unknown-request` (no request row); `request-claimed` (the request
   holds a live claim — a queue run or a replay is in progress); `resend-in-progress` (the leg's
-  latest row is a `PENDING` resend row whose lease is live, or another resend is claiming the leg at
+  latest row is a `PENDING` resend row whose lease is live or expired, or another resend is claiming the leg at
   that moment); `not-eligible` (FR-004-023). *(H16; A3-56; A2-65; §4.4 claim contract (d))*
 - **FR-004-023**: An ID MUST be eligible only if its leg's latest row is `FAILED` with any reason —
   except an attempt-1 `FAILED(rolled-back)` row, which a replay re-runs instead — or, with
@@ -803,15 +822,13 @@ Assumptions.
   `PENDING` attempt 1 or a `PENDING` replay row under an expired request claim — MUST be refused
   `not-eligible`; under a live request claim FR-004-022 refuses the ID `request-claimed` first.
   *(§4.5 table; A3-56; R1-28b; A2-40; A3-36)*
-- **FR-004-024**: When the leg's latest row is a `PENDING` resend row whose lease has expired (its
-  runner died or overran), resend-leg MUST [NEEDS CLARIFICATION: the design conflicts. Claim
-  contract (c), the §4.5 resend column and A2-72 reclaim the row in place — owner, token and expiry
-  rewritten, the attempt number kept, then run — and A2-72's procedure for a deferred replay ("run
-  resend-leg, then replay") depends on it; A3-56 and the §4.4 Selects row refuse it
-  `resend-in-progress`, "live or expired", which leaves nothing but the rollback's step 4 to close
-  such a row, while every replay of its request is deferred. Which applies? A reclaim may also send
-  again a body the dead runner had already sent, a duplicate the design does not count (A3-115).]
-  *(§4.4 claim contract (c); §4.5; A2-72; A3-56; DIGEST §16)*
+- **FR-004-024**: When the leg's latest row is a `PENDING` resend row, resend-leg MUST
+  refuse the ID `resend-in-progress` whether its lease is live or expired. It MUST NOT reclaim,
+  rotate the claim or send again automatically. Expiry alone changes no row. A row left by a dead
+  runner requires operator recovery through the guarded rollback close-in-flight procedure
+  (FR-004-049/FR-004-049a); until it is closed, replay remains refused or deferred (FR-004-003,
+  FR-004-014). *(A3-56; §4.4 Selects row; clarification 2026-10-26, option B, resolves the conflict
+  with claim contract (c), §4.5 and A2-72 for this feature)*
 - **FR-004-025**: For an eligible ID the run MUST insert, in the transaction that checked it, a new
   attempt row — attempt `max(attempt) + 1`, `attempt_origin = resend`, `PENDING`, its leg claim
   (owner, token, expiry), the run's `resend_run_id` and the `operator` — and commit it before any
@@ -979,14 +996,14 @@ Assumptions.
   `FAILED(rolled-back)`) MUST be resend-eligible and, when its request is `FAILED`, re-run by a
   replay on a new replay row. *(A2-40; A2-43; A2-46; A2-62; R1-28b; §9.4 steps 4 and 6a)*
 - **FR-004-049**: The rollback's close-in-flight transition (§9.4 step 4; its statement is
-  FR-004-049a) MUST be executable by an operator through [NEEDS CLARIFICATION: the transition is
-  specified and pinned (`RollbackFencingIT`), but no §4.8 action or runner executes it. Is it a
-  runner this slice delivers (refused unless intake is paused), an action another slice owns, or a
-  step of the rollback runbook run outside the service? Slice 005 keeps it off HTTP.] *(§9.4 step
-  4; A2-51; A2-43; DIGEST §16)*
+  FR-004-049a) MUST be executable by an operator through this service's
+  `rollback-close-in-flight` command-line runner. It MUST refuse `intake-not-paused`, changing
+  nothing, unless intake is paused by an operator. Once admitted it MUST execute FR-004-049a
+  through the service's application action and report its result. It MUST NOT be exposed over
+  HTTP. *(§9.4 step 4; A2-51; A2-43; clarification 2026-10-26, option A)*
 - **FR-004-049a**: The close-in-flight statement of rollback step 4 MUST close every leg row that
-  is `PENDING` or `PARKED`, in one transaction per row, as follows; who runs it is FR-004-049's
-  open question.
+  is `PENDING` or `PARKED`, in one transaction per row, as follows; its guarded runner is
+  specified in FR-004-049.
   - The row becomes `FAILED(rolled-back)`. Its `note` gets `prev=<STATUS>/<reason>`
     (`prev=PENDING/-` for a `PENDING` row), replacing any earlier `prev=` form and keeping the row's
     other note forms.
@@ -1030,16 +1047,15 @@ Assumptions.
   and set that gauge to 0, intake taking deliveries again as soon as no other hold — a store outage —
   remains. Pausing a paused intake, or resuming a running one, MUST change nothing and answer
   `no-op`. *(§4.8 action 4; A2-57; §9.4 step 1; slice 002's intake control)*
-- **FR-004-052**: An operator pause MUST stay in force until an operator resumes intake — for the
-  whole rolled-back period — so the store's recovery from an outage MUST NOT lift it, and it MUST
-  hold on every replica and across a pod restart, by [NEEDS CLARIFICATION: the design makes pause
-  "the ops front for `ConsumerLifecycleController`", which holds its state per pod and in memory,
-  yet requires intake to stay paused for the whole rolled-back period (A2-52) with one or two
-  replicas (O-2), and a runner runs in the pod as a process of its own. How does the pause reach
-  every replica and survive a restart: a pause recorded in the store (beyond V1's three tables and
-  one view), the deployment's intake switch (`distribution.consumer.enabled`) set off for the
-  rolled-back period, or a pause applied to each pod with a restart accepted as resuming intake?]
-  *(A2-52; §4.8 action 4; §9.4 step 1; O-2)*
+- **FR-004-052**: An operator pause MUST remain in force until an operator resumes intake,
+  including throughout rollback and after database recovery or a pod restart. Pause and resume
+  MUST persist the desired state in the shared `intake_control` row. Every pod MUST read that row
+  successfully before starting consumption, and reconcile its local pause state on each
+  `distribution.store.probe-interval` (default 10 seconds). An existing pod MUST honour a changed
+  pause by its next successful reconciliation; a restarted pod MUST NOT consume before reading
+  the persisted state. Failure to read the state MUST keep consumption suspended. The operator
+  gauge MUST reflect the reconciled state; database recovery MUST NOT clear an operator pause.
+  *(A2-52; §4.8 action 4; §9.4 step 1; O-2; clarification 2026-10-26, option A)*
 
 **Purge-queue**
 
@@ -1205,7 +1221,7 @@ Assumptions.
 8. **"Intake paused" means the operator pause, for the whole deployment.** It is the rollback state
    (§9.4 step 1) and must hold for the whole rolled-back period (A2-52). This slice provides the
    pause on slice 002's intake control, which already holds intake during a store outage; how the
-   pause reaches every replica and survives a restart is FR-004-052's open question. The pause wins
+   pause reaches every replica and survives a restart is specified by FR-004-052. The pause wins
    over the store's recovery — derived from A2-52, since the copied control resumes intake by itself
    when the store answers again. Resend-leg reads the pause before a run and before each claim; the
    check before each claim is derived from A2-40's reason ("a resend would duplicate" the legacy)
@@ -1279,7 +1295,7 @@ Assumptions.
   rules over `origin = replay` and `origin = resend`, `forced` and Q28; and the rollback and cutover
   runbook inputs, which use this slice's runners (pause and resume, purge-queue, replay,
   submit-hearing, the request listing), its pinned `RequestIdRecipe` vector, the close-in-flight
-  statement of rollback step 4 (FR-004-049a), and whatever answers FR-004-049 for its execution. Those inputs, not this slice's runbook, state when intake is
+  statement of rollback step 4 (FR-004-049a), and the guarded CLI runner of FR-004-049. Those inputs, not this slice's runbook, state when intake is
   resumed after a rollback — only at the end of the roll-forward: purge, reconcile every message
   received since the purge's cut-off, a full new cutover, then resume (006's FR-006-043; A2-52;
   A3-117 (ii)) — and that messages waiting on the paused queue are purged (006's FR-006-044, which
@@ -1302,8 +1318,7 @@ Assumptions.
 - **The results team**: the helper test whose vector pins `RequestIdRecipe`, and Q20 — the landing
   order of the results branch chains, and whether the helper is shared or forked — after which the
   vector is re-taken.
-- **The owning team (H31)**: answers FR-004-024, FR-004-049 and FR-004-052, and the
-  unforced-reason default of Assumption 4.
+- **The owning team (H31)**: confirms the unforced-reason default of Assumption 4.
 
 ### Pinning tests the design names (names proposed)
 
@@ -1324,8 +1339,8 @@ UPDATE of a queue or replay row, FR-004-013; a late resend runner, FR-004-028), 
 - The optional flag check (§4.8 action 7), and the HTTP exposure of every action other than replay
   and resend-leg (O-1).
 - The rollback and cutover protocols and their runbook (§9.3, §9.4; not this repository's code),
-  beyond the interplay of FR-004-048, the close-in-flight statement (FR-004-049a) and the open
-  FR-004-049.
+  beyond the interplay of FR-004-048, the close-in-flight statement (FR-004-049a) and the guarded CLI runner
+  (FR-004-049).
 - Alert rules and dashboards (slice 006), including Q28: whether `FAILED(payload-changed)` and
   `FAILED(rolled-back)` page.
 - Counting a crash during a replay's re-run of a `FAILED` row, or a resend's reclaim — the design has
@@ -1376,9 +1391,9 @@ UPDATE of a queue or replay row, FR-004-013; a late resend runner, FR-004-028), 
 | A2-45; A2-64 | `rerun-by`: a `FAILED` row once per replay message; `PARKED` every delivery | FR-004-008, FR-004-010 |
 | A2-46; A2-59; A2-63 | Append a replay row over `FAILED` attempt ≥ 2; never over `PENDING`; a resend row never re-run in place by a replay | FR-004-009 |
 | A2-51; A2-67 | Fencing: token rotation for resend rows; request-claim-guarded writes for queue and replay rows; `RollbackFencingIT`'s three cases | FR-004-013, FR-004-028, FR-004-049a |
-| A2-52 | Intake stays paused for the whole rolled-back period; resumed only at the end of the roll-forward, which 006's inputs state | FR-004-021, FR-004-052 (open), FR-004-053; Dependencies (006) |
+| A2-52 | Intake stays paused for the whole rolled-back period; resumed only at the end of the roll-forward, which 006's inputs state | FR-004-021, FR-004-052, FR-004-053; Dependencies (006) |
 | §4.8 action 4; A2-57; §9.4 step 1 | Pause and resume intake; the `operator` cause of `probation_intake_suspended` | FR-004-042, FR-004-051, FR-004-052 |
-| O-2 | One or two replicas, which an operator pause must cover | FR-004-052 (open) |
+| O-2 | One or two replicas, which an operator pause must cover | FR-004-052 |
 | §4.8 action 6; R1-28b; §9.4 step 6 | Purge-queue only while intake is paused; the count and the cut-off reported | FR-004-042, FR-004-053 |
 | §4.8 action 5; R1-22; R1-22b | Submit-hearing: a normal command marked as support, from the cache, by the sender role | FR-004-042, FR-004-054, FR-004-056–FR-004-058 |
 | A2-4; A2-25; DIGEST §14; Q20 | `RequestIdRecipe` over the raw strings, pinned by results' vector; re-taken when Q20 lands | FR-004-055 |
@@ -1395,11 +1410,11 @@ UPDATE of a queue or replay row, FR-004-013; a late resend runner, FR-004-028), 
 | R1-24 | Per-attempt audit columns; append-only `audit_note` | FR-004-025, FR-004-037 |
 | R1-31; §10.1; §10.2; §10.3 | One outcome metric labelled by origin and `forced`; alerts read all origins; log fields | FR-004-011, FR-004-017, FR-004-038–FR-004-040 |
 | §4.4 claim contract (b), (d), (e) | Resend claim committed before the POST; token-guarded completion | FR-004-025, FR-004-028 |
-| §4.4 claim contract (c) against A3-56 | An expired `PENDING` resend row — design conflict | FR-004-024 (open) |
+| §4.4 claim contract (c) against A3-56 | An expired `PENDING` resend row — refuse without reclaim (clarification 2026-10-26) | FR-004-024 |
 | §4.4 Exposure row; §4.8 | Runners in the image, as the pod | FR-004-042–FR-004-045 |
 | §4.8 action 1 | The read-only request listing | FR-004-043 |
 | §4.8 runbook; "Resending a leg" | The dead-letter and resend runbook | FR-004-046, FR-004-047 |
-| §9.4 step 4; A2-43; A2-51; A2-66; DIGEST §7 "Rollback step 4" | The close-in-flight statement, pinned by `RollbackFencingIT` (late queue runner, late resend runner, late leg-outcome UPDATE); no executor designed | FR-004-049a; FR-004-049 (open) |
+| §9.4 step 4; A2-43; A2-51; A2-66; DIGEST §7 "Rollback step 4" | The close-in-flight statement, pinned by `RollbackFencingIT` (late queue runner, late resend runner, late leg-outcome UPDATE); guarded CLI executor confirmed 2026-10-26 | FR-004-049a; FR-004-049 |
 | §9.4 steps 6a, 7 | Replay as the route back; repair cautions | FR-004-016, FR-004-047, FR-004-048 |
 | Constitution Principle VII; DV-09; A3-60 | No body, command, payload, user id or free text in telemetry or output | FR-004-020, FR-004-041 |
 | Constitution Principles I, II | DV-26's row names its pinning test | FR-004-050 |
