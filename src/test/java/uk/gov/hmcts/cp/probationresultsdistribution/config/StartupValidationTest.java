@@ -107,6 +107,16 @@ class StartupValidationTest {
     }
 
     @Test
+    @DisplayName("refuses a blank gateway subscription key only when secrets are required")
+    void refuses_a_blank_gateway_key_when_secrets_are_required() {
+        assertThatThrownBy(() -> validator.validateGatewayKey(" ", true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.gateway.subscription-key");
+        assertThatCode(() -> validator.validateGatewayKey("", false)).doesNotThrowAnyException();
+        assertThatCode(() -> validator.validateGatewayKey("a-key", true)).doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("refuses a forbidden property and accepts an environment without one")
     void refuses_a_forbidden_property() {
         assertThatThrownBy(() -> validator.validateNoForbiddenProperties(

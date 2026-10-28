@@ -600,6 +600,29 @@ public class EndToEndTestSupport {
         wireMock.stubFor(post(urlPathEqualTo(GATEWAY_PATH)).willReturn(aResponse().withFault(fault)));
     }
 
+    /**
+     * Stubs an OTLP metrics receiver on the shared WireMock, at {@code /v1/metrics}.
+     *
+     * @return the receiver's URL
+     */
+    protected final String stubOtlpMetricsReceiver() {
+        wireMock.stubFor(post(urlPathEqualTo("/v1/metrics")).willReturn(aResponse().withStatus(200)));
+        return wireMock.baseUrl() + "/v1/metrics";
+    }
+
+    /**
+     * The bodies the OTLP metrics receiver was sent, decoded as ISO-8859-1 so the protobuf's
+     * metric-name strings can be searched.
+     *
+     * @return the received bodies
+     */
+    protected final List<String> otlpMetricsBodies() {
+        return wireMock.findAll(postRequestedFor(urlPathEqualTo("/v1/metrics"))).stream()
+                .map(request -> new String(request.getBody(),
+                        StandardCharsets.ISO_8859_1))
+                .toList();
+    }
+
     /** Stubs one gateway response followed by a recovered response on the next POST. */
     protected final void stubGatewaySequence(final int firstStatus, final String retryAfter,
                                              final int recoveredStatus) {

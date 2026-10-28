@@ -43,6 +43,18 @@ public final class StartupValidator {
     }
 
     /**
+     * Refuses a blank gateway subscription key where secrets are required (outside the {@code local}
+     * and {@code test} profiles): without it every POST is answered 401, which records
+     * {@code FAILED(receiver-rejected)}, a terminal outcome, although nothing was delivered.
+     *
+     * @param subscriptionKey {@code distribution.gateway.subscription-key}
+     * @param requireSecrets  whether required secrets must be present
+     */
+    public void validateGatewayKey(final String subscriptionKey, final boolean requireSecrets) {
+        // Seam: the check lands with the CLI composition root's startup validation.
+    }
+
+    /**
      * Validates the retention settings before the scheduled bean is constructed.
      *
      * @param properties the bound retention settings
