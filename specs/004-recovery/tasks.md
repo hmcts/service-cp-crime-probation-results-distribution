@@ -673,9 +673,16 @@ code, five report entries, refusal counters incremented.
       T042 —, attempt-1 rolled-back, `PARKED`, `PENDING` attempt 1) PASSED, and
       `ResendConcurrencyIT$Races > a replay admitted first leaves the resend refused
       request-claimed` PASSED; the cases that need a send stay red on `NotRun` until T044–T046.
-- [ ] T044 [US3] Implement the `sharedTime` comparison stage (instant parsing, honouring offset/zone,
+- [X] T044 [US3] Implement the `sharedTime` comparison stage (instant parsing, honouring offset/zone,
       stored-precision comparison) inside `LegResender`'s run, before the switch read (FR-004-029) —
       satisfies T039
+      `application/SharedTimeCheck` (package-private, pure): reads the payload's top-level
+      `sharedTime` string and parses it with `ZonedDateTime.parse(..., ISO_DATE_TIME)` — an offset
+      or a named zone honoured, a rendering with neither unparseable — and compares it with the
+      stored `shared_time` truncated to microseconds, the `timestamptz` precision. The resend
+      parses for itself rather than reusing `adapter.payload.SharedTimes` (offset only), so the
+      queue run's `payload_shared_time` recording is unchanged. Wired into the run by T045; GREEN
+      recorded with T046, when the attempt's completion is first written.
 - [ ] T045 [US3] Implement the resend run's stage sequence (fetch → `sharedTime` check → switch →
       redaction → body digest → send), reusing slice 002's `HearingPayloadSource`,
       `YouthFilterSource`, `HmppsRedaction`, `HmppsSender` unchanged, with the resend-only rules: no
