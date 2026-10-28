@@ -738,6 +738,18 @@ code, five report entries, refusal counters incremented.
 - [ ] T047 [US3] [P] Implement `cli/ResendLegRunner.java` per `contracts/cli-runners.md` §2:
       argument parsing/validation, calls `LegResender`, prints the per-ID report + summary, one
       structured log line, `probation_resend_refusals_total{reason}` per refused ID (FR-004-039)
+      Test first: `cli/ResendLegRunnerTest` (11 cases) against a seam runner (`checkArguments`
+      always empty, `run` always `DONE`).
+      RED: 9 of 11 fail on assertions — e.g. `Arguments > a missing --leg, --request-ids, --operator
+      or --reason is missing-argument : Expecting Optional to contain: MISSING_ARGUMENT but was
+      empty`, `Arguments > the forced-resend override is refused until it is built : Expecting
+      Optional to contain: UNREADABLE_ARGUMENT but was empty`, `Run > answers failed for
+      store-unavailable : expected: FAILED but was: DONE`, `Run > hands the parsed ids ... : Wanted
+      but not invoked: resender.resend(...)` (and its sibling's `UnnecessaryStubbingException`, the
+      stub never being reached). `a readable invocation passes` is an absence check, and `the
+      packaged command refuses unreadable arguments with exit 1` passes before the change only
+      because `OperatorCommandLine` refuses every unregistered action with exit 1; both are kept as
+      guards that registering the action does not open resources for unreadable input.
 - [ ] T048 [US3] [P] `OutcomeMetricsTest` (US3 half, extends T022's file): resend outcomes carry
       `origin=resend`, `forced=false`; log lines carry status/reason/HTTP status/body digest/
       `runOrigin`/`youth_switch` (FR-004-011, FR-004-040) — extends
