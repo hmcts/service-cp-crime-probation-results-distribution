@@ -5,7 +5,6 @@ import com.azure.messaging.servicebus.ServiceBusClientBuilder;
 import com.azure.messaging.servicebus.ServiceBusErrorSource;
 import com.azure.messaging.servicebus.ServiceBusProcessorClient;
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.function.Supplier;
@@ -106,16 +105,7 @@ public class ServiceBusConsumerConfig {
             @Value("${distribution.redis.verify-peer}") final boolean verifyPeer,
             @Value("${distribution.redis.key:}") final String password,
             final DistributionProperties properties) {
-        final RedisURI.Builder uri = RedisURI.builder()
-                .withHost(host)
-                .withPort(port)
-                .withSsl(ssl)
-                .withVerifyPeer(verifyPeer)
-                .withTimeout(properties.redis().commandTimeout());
-        if (!password.isBlank()) {
-            uri.withPassword(password.toCharArray());
-        }
-        return RedisClient.create(uri.build());
+        return PipelineClients.redisClient(host, port, ssl, verifyPeer, password, properties);
     }
 
     /* default */ @Bean(destroyMethod = "close")
@@ -133,10 +123,7 @@ public class ServiceBusConsumerConfig {
     /* default */ @Bean
     ResultsQueryExternalHearingClient resultsQueryExternalHearingClient(
             final DistributionProperties properties) {
-        return new ResultsQueryExternalHearingClient(properties.results().baseUrl(),
-                properties.results().systemUserId(), properties.results().connectTimeout(),
-                properties.results().readTimeout(), properties.results().maxAttempts(),
-                properties.results().initialBackoff(), properties.results().maxBackoff());
+        return PipelineClients.resultsQuery(properties);
     }
 
     /* default */ @Bean
@@ -151,20 +138,14 @@ public class ServiceBusConsumerConfig {
     FeaturePermissionClient featurePermissionClient(final DistributionProperties properties,
             @Value("${distribution.usersgroups.youth-filter-key}") final String youthFilterKey,
             final MetricRegistry metrics) {
-        return new FeaturePermissionClient(properties.usersgroups().baseUrl(),
-                properties.usersgroups().systemUserId(), youthFilterKey,
-                properties.usersgroups().connectTimeout(), properties.usersgroups().readTimeout(),
-                properties.usersgroups().maxAttempts(), properties.usersgroups().retryWait(), metrics);
+        return PipelineClients.youthFilter(properties, youthFilterKey, metrics);
     }
 
     /* default */ @Bean
     HmppsPublisher hmppsPublisher(final DistributionProperties properties,
             @Value("${distribution.gateway.subscription-key}") final String subscriptionKey,
             final MetricRegistry metrics) {
-        return new HmppsPublisher(properties.hmpps().url(), subscriptionKey,
-                properties.gateway().connectTimeout(), properties.gateway().readTimeout(),
-                properties.gateway().maxAttempts(), properties.gateway().initialBackoff(),
-                properties.gateway().maxBackoff(), properties.budget().leg(), metrics);
+        return PipelineClients.hmppsPublisher(properties, subscriptionKey, metrics);
     }
 
     /* default */ @Bean

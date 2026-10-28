@@ -1,7 +1,6 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -22,13 +21,13 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway.HmppsPublisher;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.CachedHearingPayloadAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ChainedHearingPayloadSource;
-import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ResultsQueryExternalHearingClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
@@ -109,10 +108,30 @@ public final class OperatorCommandLine {
         try (ConfigurableApplicationContext context = application.run()) {
             exitCode = context.getBean(RunnerDispatcher.class).dispatch(args).orElseThrow().exitCode();
         } catch (final RuntimeException failure) {
-            LOG.error("operator command failed reason=store-or-broker-unavailable");
+            final Optional<InvalidConfigurationException> invalid = invalidConfiguration(failure);
+            if (invalid.isPresent()) {
+                // The validator's message names the property and the rule, never a value.
+                LOG.error("operator command failed reason=invalid-configuration detail={}",
+                        invalid.get().getMessage());
+            } else {
+                LOG.error("operator command failed reason=store-or-broker-unavailable");
+            }
             exitCode = RunnerOutcome.FAILED.exitCode();
         }
         return exitCode;
+    }
+
+    private static Optional<InvalidConfigurationException> invalidConfiguration(
+            final Throwable failure) {
+        Optional<InvalidConfigurationException> found = Optional.empty();
+        Throwable cause = failure;
+        while (cause != null && found.isEmpty()) {
+            if (cause instanceof InvalidConfigurationException invalid) {
+                found = Optional.of(invalid);
+            }
+            cause = cause.getCause();
+        }
+        return found;
     }
 
     /**
@@ -156,24 +175,49 @@ public final class OperatorCommandLine {
             };
         }
 
+        /**
+         * The {@code distribution.*} properties the resend pipeline is built from, bound and put
+         * through the service's own startup validation first (the composed stage budgets, the send
+         * stage included; lease ordering; one system user; the youth-switch default, logged at
+         * INFO; the delivery limit; the resend cap; the deployed-profile secrets and forbidden
+         * properties), plus a non-blank gateway subscription key where secrets are required. Lazy:
+         * only {@code resend-leg} builds it, before any of its clients.
+         */
+        /* default */
+        @Bean
+        @Lazy
+        DistributionProperties commandDistributionProperties(final Environment environment) {
+            final DistributionProperties properties = Binder.get(environment)
+                    .bind("distribution", DistributionProperties.class)
+                    .orElseThrow(() -> new InvalidConfigurationException(
+                            new IllegalStateException("distribution.* is not configured")));
+            final boolean requireSecrets = !environment.acceptsProfiles(Profiles.of("local", "test"));
+            final StartupValidator validator = new StartupValidator();
+            try {
+                validator.validate(properties, requireSecrets);
+                validator.validateNoForbiddenProperties(environment);
+                validator.validateGatewayKey(environment.getRequiredProperty(
+                        "distribution.gateway.subscription-key"), requireSecrets);
+            } catch (final IllegalStateException invalid) {
+                throw new InvalidConfigurationException(invalid);
+            }
+            LOG.info("distribution.youth-switch.default-when-unreadable resolved to {}",
+                    properties.youthSwitch().defaultWhenUnreadable());
+            return properties;
+        }
+
         /* default */
         @Bean(destroyMethod = "shutdown")
         @Lazy
-        RedisClient commandRedisClient(final Environment environment) {
-            final DistributionProperties properties = distributionProperties(environment);
-            final RedisURI.Builder uri = RedisURI.builder()
-                    .withHost(environment.getRequiredProperty("distribution.redis.host"))
-                    .withPort(environment.getRequiredProperty("distribution.redis.port",
-                            Integer.class))
-                    .withSsl(environment.getRequiredProperty("distribution.redis.ssl", Boolean.class))
-                    .withVerifyPeer(environment.getRequiredProperty("distribution.redis.verify-peer",
-                            Boolean.class))
-                    .withTimeout(properties.redis().commandTimeout());
-            final String password = environment.getProperty("distribution.redis.key", "");
-            if (!password.isBlank()) {
-                uri.withPassword(password.toCharArray());
-            }
-            return RedisClient.create(uri.build());
+        RedisClient commandRedisClient(final Environment environment,
+                                       final DistributionProperties commandDistributionProperties) {
+            return PipelineClients.redisClient(
+                    environment.getRequiredProperty("distribution.redis.host"),
+                    environment.getRequiredProperty("distribution.redis.port", Integer.class),
+                    environment.getRequiredProperty("distribution.redis.ssl", Boolean.class),
+                    environment.getRequiredProperty("distribution.redis.verify-peer", Boolean.class),
+                    environment.getProperty("distribution.redis.key", ""),
+                    commandDistributionProperties);
         }
 
         /* default */
@@ -185,40 +229,34 @@ public final class OperatorCommandLine {
         }
 
         /**
-         * The resend-leg runner over the same pipeline the service runs: built only when
-         * {@code resend-leg} is dispatched, so no other command opens the cache or a client.
+         * The resend-leg runner over the same pipeline the service runs, its clients built by the
+         * same {@link PipelineClients} factory: built only when {@code resend-leg} is dispatched,
+         * so no other command opens the cache or a client. Its metrics go to the context's own
+         * registry, which the push registries flush when the context closes.
          */
         /* default */
         @Bean
         @Lazy
         ResendLegRunner commandResendLegRunner(final Environment environment, final JdbcClient jdbc,
                 final PlatformTransactionManager transactions,
+                final DistributionProperties commandDistributionProperties,
                 final StatefulRedisConnection<String, String> commandRedisConnection,
                 final IntakePauseGate gate, final ObjectProvider<BuildProperties> buildProperties,
                 final ObjectProvider<MeterRegistry> meterRegistry) {
-            final DistributionProperties properties = distributionProperties(environment);
+            final DistributionProperties properties = commandDistributionProperties;
             final TransactionTemplate tx = new TransactionTemplate(transactions);
             final MetricRegistry metrics = new MetricRegistry(
                     meterRegistry.getIfAvailable(SimpleMeterRegistry::new));
             final ChainedHearingPayloadSource payload = new ChainedHearingPayloadSource(
                     new CachedHearingPayloadAdapter(commandRedisConnection,
                             environment.getRequiredProperty("distribution.redis.key-prefix")),
-                    new ResultsQueryExternalHearingClient(properties.results().baseUrl(),
-                            properties.results().systemUserId(), properties.results().connectTimeout(),
-                            properties.results().readTimeout(), properties.results().maxAttempts(),
-                            properties.results().initialBackoff(), properties.results().maxBackoff()),
-                    properties.budget().payload());
-            final FeaturePermissionClient youthFilter = new FeaturePermissionClient(
-                    properties.usersgroups().baseUrl(), properties.usersgroups().systemUserId(),
+                    PipelineClients.resultsQuery(properties), properties.budget().payload());
+            final FeaturePermissionClient youthFilter = PipelineClients.youthFilter(properties,
                     environment.getRequiredProperty("distribution.usersgroups.youth-filter-key"),
-                    properties.usersgroups().connectTimeout(), properties.usersgroups().readTimeout(),
-                    properties.usersgroups().maxAttempts(), properties.usersgroups().retryWait(),
                     metrics);
-            final HmppsPublisher publisher = new HmppsPublisher(properties.hmpps().url(),
-                    environment.getProperty("distribution.gateway.subscription-key", ""),
-                    properties.gateway().connectTimeout(), properties.gateway().readTimeout(),
-                    properties.gateway().maxAttempts(), properties.gateway().initialBackoff(),
-                    properties.gateway().maxBackoff(), properties.budget().leg(), metrics);
+            final HmppsPublisher publisher = PipelineClients.hmppsPublisher(properties,
+                    environment.getRequiredProperty("distribution.gateway.subscription-key"),
+                    metrics);
             final BuildProperties build = buildProperties.getIfAvailable();
             final String serviceVersion = build == null ? "unknown" : build.getVersion();
             final OutboundLogAdapter outboundLog = new OutboundLogAdapter(
@@ -251,10 +289,18 @@ public final class OperatorCommandLine {
                     RESEND_LEG, () -> resendLeg.getObject().run(operatorArguments.asArray())));
         }
 
-        private static DistributionProperties distributionProperties(final Environment environment) {
-            return Binder.get(environment).bind("distribution", DistributionProperties.class)
-                    .orElseThrow(() -> new IllegalStateException("distribution.* is not configured"));
-        }
+    }
 
+    /**
+     * The command's configuration failed the startup validation: the run exits {@code FAILED}
+     * with {@code reason=invalid-configuration}, before any client is built.
+     */
+    /* default */ static final class InvalidConfigurationException extends IllegalStateException {
+
+        private static final long serialVersionUID = 1L;
+
+        /* default */ InvalidConfigurationException(final IllegalStateException cause) {
+            super(cause.getMessage(), cause);
+        }
     }
 }

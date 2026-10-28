@@ -51,7 +51,10 @@ public final class StartupValidator {
      * @param requireSecrets  whether required secrets must be present
      */
     public void validateGatewayKey(final String subscriptionKey, final boolean requireSecrets) {
-        // Seam: the check lands with the CLI composition root's startup validation.
+        if (requireSecrets) {
+            require(isNotBlank(subscriptionKey), "distribution.gateway.subscription-key",
+                    "is required outside the local and test profiles");
+        }
     }
 
     /**
