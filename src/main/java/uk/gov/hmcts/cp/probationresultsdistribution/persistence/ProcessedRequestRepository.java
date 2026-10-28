@@ -144,15 +144,24 @@ public interface ProcessedRequestRepository {
      * returns, so before any POST. No earlier attempt row is changed, and a refused ID changes
      * nothing.
      *
-     * @param source      the command source
-     * @param requestId   the request id
-     * @param resendRunId the resend run claiming it
-     * @param operator    the operator, already sanitised to one line of at most 200 characters
-     * @param legClaim    the leg claim to take on the new row
+     * <p>With the forced-resend override ({@code allowTerminalSuccess}, FR-004-036) a latest row
+     * {@code SENT} or {@code NOT_APPLICABLE} is eligible too, and the attempt is claimed
+     * {@linkplain ResendAttempt#forced() forced}; for a {@code FAILED} latest row the override is not
+     * used (FR-004-037).
+     *
+     * @param source             the command source
+     * @param requestId          the request id
+     * @param resendRunId        the resend run claiming it
+     * @param operator           the operator, already sanitised to one line of at most 200
+     *                           characters
+     * @param legClaim           the leg claim to take on the new row
+     * @param forcedResendReason present when the forced-resend override was requested: the
+     *                           operator's reason, already sanitised to one line of at most 200
+     *                           characters
      * @return the claimed attempt with the command rebuilt from the request's columns, or the refusal
      */
     ResendClaim claimResend(String source, UUID requestId, UUID resendRunId, String operator,
-                            RunClaim legClaim);
+                            RunClaim legClaim, Optional<String> forcedResendReason);
 
     /**
      * The result of {@link #claimResend}: the ID was claimed, or refused with a bounded code that is

@@ -968,9 +968,28 @@ labelled `forced`, without moving the request off `COMPLETED`.
 
 ### Implementation for User Story 5
 
-- [ ] T055 [US5] Extend `LegResender`'s eligibility check (T043) to accept `SENT`/`NOT_APPLICABLE`
+- [X] T055 [US5] Extend `LegResender`'s eligibility check (T043) to accept `SENT`/`NOT_APPLICABLE`
       only under `allowTerminalSuccess`, routing through the same claim/run path as any resend row
       (FR-004-036)
+      `ProcessedRequestRepository.claimResend` takes the forced-resend reason as an `Optional`
+      (present only when the override was requested, sanitised to one line); under the request-row
+      lock, a latest `SENT`/`NOT_APPLICABLE` row is eligible only with it, and the attempt is
+      claimed `ResendAttempt.forced = true`. A `FAILED` latest row is claimed as before with
+      `forced = false` — the override is per ID and unused there (FR-004-037). The check order, the
+      claim and the run are unchanged: a forced attempt goes through the same `runResend` (fetch →
+      `sharedTime` check → switch → redaction → digest → send). `LegResender` passes the reason,
+      and its report line and `ResendRunResult` now carry `allowTerminalSuccess` as requested
+      instead of the fixed `false`. `LegResenderTest`'s and `ResendConcurrencyIT`'s Mockito stubs
+      take the new argument (mechanical); `ResendLegRunnerTest`'s two hand-built results gain the
+      new component.
+      GREEN (partial, as planned): `ForcedResendIT` now gets `Ran` entries for every forced id — the
+      remaining failures are T056's and T057's, e.g. `a SENT leg is run again ... : expected: true
+      but was: false` (`override`), `... both forms : expected:
+      "override=force-resend;override=allow-changed-payload" but was:
+      "override=allow-changed-payload"`, `the reason is sanitised ... : Expecting actual not to be
+      null`, `a forced resend that fails ... : expected: 1.0 but was: 0.0` (`forced=true`).
+      `ResendByRequestIdsIT` 24/24, `ResendConcurrencyIT` 8/8, `LegResenderTest` 5/5 and
+      `ResendLegRunnerTest` 12/12 still PASSED.
 - [ ] T056 [US5] Implement the forced-resend audit write: `operator`, `override=true`,
       `override=force-resend` (+ `override=allow-changed-payload` when both used), sanitised reason
       line appended to `audit_note`, applied per-ID only (FR-004-037)

@@ -80,7 +80,7 @@ class ResendConcurrencyIT extends ResendTestSupport {
     @DisplayName("proceeds when intake is not paused at the start")
     void proceeds_when_not_paused() {
         when(pauseGate.pausedByOperator()).thenReturn(false);
-        when(store.claimResend(any(), any(), any(), any(), any()))
+        when(store.claimResend(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new ProcessedRequestRepository.ResendClaim.Refused(
                         ResendRefusal.UNKNOWN_REQUEST));
 
@@ -96,7 +96,7 @@ class ResendConcurrencyIT extends ResendTestSupport {
         // Not paused for the initial whole-run check and the first id's own check, then paused
         // from the second id's check onward.
         when(pauseGate.pausedByOperator()).thenReturn(false, false, true);
-        when(store.claimResend(any(), any(), any(), any(), any()))
+        when(store.claimResend(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new ProcessedRequestRepository.ResendClaim.Refused(
                         ResendRefusal.UNKNOWN_REQUEST));
 

@@ -45,8 +45,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
  * answer the first pause read refuses the run whole {@code store-unavailable}; one that cannot
  * answer a later pause read stops the run claiming, as a pause would, and fails it.
  *
- * <p>The forced-resend override ({@code allowTerminalSuccess}) is not part of this capability yet:
- * a leg whose latest row is {@code SENT} or {@code NOT_APPLICABLE} is {@code not-eligible}.
+ * <p>The forced-resend override ({@code allowTerminalSuccess}, FR-004-036–FR-004-038) is applied
+ * per ID by the claim: a leg whose latest row is {@code SENT} or {@code NOT_APPLICABLE} is
+ * {@code not-eligible} without it, and with it is claimed on a new resend row and run exactly as any
+ * resend; for a {@code FAILED} latest row the override is not used.
  */
 public final class LegResender {
 
@@ -94,7 +96,10 @@ public final class LegResender {
             LOG.warn("resend-leg refused reason={}", refusal.get().value());
             result = ResendRunResult.refusedWhole(refusal.get());
         } else {
-            result = run(distinct, sanitised(request.operator()), request.allowChangedPayload());
+            final Optional<String> forcedResendReason = request.allowTerminalSuccess()
+                    ? Optional.of(sanitised(request.reason())) : Optional.empty();
+            result = run(distinct, sanitised(request.operator()), request.allowChangedPayload(),
+                    forcedResendReason);
             logReport(result);
         }
         return result;
@@ -128,8 +133,9 @@ public final class LegResender {
     // One report entry per distinct id is the report itself (FR-004-039).
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
     private ResendRunResult run(final List<UUID> distinct, final String operator,
-                                final boolean allowChangedPayload) {
-        final RunState state = new RunState(UUID.randomUUID());
+                                final boolean allowChangedPayload,
+                                final Optional<String> forcedResendReason) {
+        final RunState state = new RunState(UUID.randomUUID(), forcedResendReason);
         final List<ResendRunResult.Entry> entries = new ArrayList<>();
         for (final UUID requestId : distinct) {
             final ResendEntryOutcome outcome = stopClaiming(state, requestId)
@@ -138,7 +144,7 @@ public final class LegResender {
             entries.add(new ResendRunResult.Entry(requestId, outcome));
         }
         return new ResendRunResult(Optional.empty(), Optional.of(state.resendRunId),
-                allowChangedPayload, entries, state.storeFailed);
+                allowChangedPayload, forcedResendReason.isPresent(), entries, state.storeFailed);
     }
 
     private boolean stopClaiming(final RunState state, final UUID requestId) {
@@ -179,7 +185,7 @@ public final class LegResender {
         Optional<ResendClaim> claim;
         try {
             claim = Optional.of(store.claimResend(SOURCE, requestId, state.resendRunId, operator,
-                    RunClaim.fresh()));
+                    RunClaim.fresh(), state.forcedResendReason));
         } catch (final DataAccessException storeFailure) {
             // The claim did not commit: nothing was written for this id, so it is not-run. The run
             // carries on with the next id (FR-004-022) and its result is failed.
@@ -239,10 +245,10 @@ public final class LegResender {
         final List<String> entries = result.entries().stream()
                 .map(entry -> entry.requestId() + "=" + entry.outcome().reportValue()).toList();
         LOG.info("resend-leg report resendRunId={} leg=HMPPS allowChangedPayload={} "
-                        + "allowTerminalSuccess=false ids={} taken={} sent={} storeFailed={} "
+                        + "allowTerminalSuccess={} ids={} taken={} sent={} storeFailed={} "
                         + "summary={} entries={}",
                 result.resendRunId().orElseThrow(), result.allowChangedPayloadRequested(),
-                result.entries().size(), taken,
+                result.allowTerminalSuccessRequested(), result.entries().size(), taken,
                 byOutcome.getOrDefault(LegStatus.SENT.wireValue(), 0), result.storeFailed(),
                 byOutcome, entries);
     }
@@ -251,19 +257,24 @@ public final class LegResender {
         return value == null || value.isBlank();
     }
 
-    private static String sanitised(final String operator) {
-        return LINE_BREAKS.matcher(operator).replaceAll(" ").strip();
+    private static String sanitised(final String text) {
+        return LINE_BREAKS.matcher(text).replaceAll(" ").strip();
     }
 
-    /** One run's id and its mutable progress: whether claiming has stopped, whether the store failed. */
+    /**
+     * One run's id, the forced-resend reason when the override was requested, and its mutable
+     * progress: whether claiming has stopped, whether the store failed.
+     */
     private static final class RunState {
 
         private final UUID resendRunId;
+        private final Optional<String> forcedResendReason;
         private boolean stopped;
         private boolean storeFailed;
 
-        private RunState(final UUID resendRunId) {
+        private RunState(final UUID resendRunId, final Optional<String> forcedResendReason) {
             this.resendRunId = resendRunId;
+            this.forcedResendReason = forcedResendReason;
         }
     }
 }

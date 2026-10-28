@@ -163,7 +163,7 @@ class ResendLegRunnerTest {
         void answers_failed_for_a_store_failure_during_the_run() {
             final ResendRunResult ran = ran();
             when(resender.resend(any())).thenReturn(new ResendRunResult(ran.wholeRunRefusal(),
-                    ran.resendRunId(), false, ran.entries(), true));
+                    ran.resendRunId(), false, false, ran.entries(), true));
 
             assertThat(new ResendLegRunner(resender).run(args("HMPPS", IDS, "op", "why")))
                     .isEqualTo(RunnerOutcome.FAILED);
@@ -185,7 +185,7 @@ class ResendLegRunnerTest {
     }
 
     private static ResendRunResult ran() {
-        return new ResendRunResult(Optional.empty(), Optional.of(UUID.randomUUID()), false,
+        return new ResendRunResult(Optional.empty(), Optional.of(UUID.randomUUID()), false, false,
                 List.of(new ResendRunResult.Entry(ID_1, new ResendEntryOutcome.Ran(LegStatus.SENT,
                                 Optional.empty())),
                         new ResendRunResult.Entry(ID_2,

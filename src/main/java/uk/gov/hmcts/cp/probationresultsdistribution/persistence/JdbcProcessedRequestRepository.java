@@ -157,16 +157,17 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
 
     @Override
     public ResendClaim claimResend(final String source, final UUID requestId, final UUID resendRunId,
-                                   final String operator, final RunClaim legClaim) {
-        return transactionTemplate.execute(status ->
-                checkAndClaim(source, requestId, resendRunId, operator, legClaim));
+                                   final String operator, final RunClaim legClaim,
+                                   final Optional<String> forcedResendReason) {
+        return transactionTemplate.execute(status -> checkAndClaim(source, requestId, resendRunId,
+                operator, legClaim, forcedResendReason.isPresent()));
     }
 
     // Each refusal exits as soon as its check decides, in the fixed FR-004-022 order.
     @SuppressWarnings("PMD.OnlyOneReturn")
     private ResendClaim checkAndClaim(final String source, final UUID requestId,
                                       final UUID resendRunId, final String operator,
-                                      final RunClaim legClaim) {
+                                      final RunClaim legClaim, final boolean allowTerminalSuccess) {
         // The request row is locked first (FOR UPDATE), so a concurrent resend of the same request
         // waits here and then, in its next statement, sees this run's committed attempt row.
         final Optional<ResendRequestRow> request = jdbc.sql("SELECT hearing_id, hearing_day, "
@@ -198,7 +199,10 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
         if (latest.isPresent() && latest.get().pendingResend()) {
             return new ResendClaim.Refused(ResendRefusal.RESEND_IN_PROGRESS);
         }
-        if (latest.isEmpty() || !latest.get().resendEligible()) {
+        // The override applies per ID: it is used only over a terminal-success latest row.
+        final boolean forced = allowTerminalSuccess && latest.isPresent()
+                && latest.get().terminalSuccess();
+        if (latest.isEmpty() || !latest.get().resendEligible() && !forced) {
             return new ResendClaim.Refused(ResendRefusal.NOT_ELIGIBLE);
         }
         final UUID attemptId = UUID.randomUUID();
@@ -219,7 +223,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                 .param("operator", operator)
                 .update();
         final ResendRequestRow row = request.get();
-        return new ResendClaim.Claimed(new ResendAttempt(attemptId, attempt, legClaim, resendRunId),
+        return new ResendClaim.Claimed(
+                new ResendAttempt(attemptId, attempt, legClaim, resendRunId, forced),
                 new DistributionCommand(source, requestId, row.hearingId(), row.hearingDay(),
                         row.sharedTime(), row.eventType(), Optional.empty()));
     }
@@ -233,7 +238,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
      * The leg's latest attempt, as the resend eligibility table reads it (FR-004-023, FR-004-024):
      * a {@code PENDING} resend row, live or expired, is in progress and never reclaimed; a
      * {@code FAILED} row is eligible except an attempt-1 {@code FAILED(rolled-back)} row, which a
-     * replay re-runs instead; every other latest row is not eligible.
+     * replay re-runs instead; a {@code SENT} or {@code NOT_APPLICABLE} row is eligible only under the
+     * forced-resend override (FR-004-036); every other latest row is not eligible.
      */
     private record LatestLeg(int attempt, String attemptOrigin, String status, String reason) {
 
@@ -243,6 +249,10 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
 
         /* default */ boolean resendEligible() {
             return "FAILED".equals(status) && !(attempt == 1 && "rolled-back".equals(reason));
+        }
+
+        /* default */ boolean terminalSuccess() {
+            return "SENT".equals(status) || "NOT_APPLICABLE".equals(status);
         }
     }
 

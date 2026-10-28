@@ -14,13 +14,30 @@ import java.util.UUID;
  * @param attempt     the attempt number the row was inserted at
  * @param legClaim    the leg claim (owner and token) taken on the row
  * @param resendRunId the resend run that claimed it
+ * @param forced      whether the row was claimed under the forced-resend override
+ *                    ({@code allowTerminalSuccess}) over a {@code SENT} or {@code NOT_APPLICABLE}
+ *                    latest row (FR-004-036, FR-004-037)
  */
-public record ResendAttempt(UUID attemptId, int attempt, RunClaim legClaim, UUID resendRunId) {
+public record ResendAttempt(UUID attemptId, int attempt, RunClaim legClaim, UUID resendRunId,
+                            boolean forced) {
 
     /** Rejects null components. */
     public ResendAttempt {
         Objects.requireNonNull(attemptId, "attemptId");
         Objects.requireNonNull(legClaim, "legClaim");
         Objects.requireNonNull(resendRunId, "resendRunId");
+    }
+
+    /**
+     * An attempt claimed without the forced-resend override.
+     *
+     * @param attemptId   the {@code outbound_message.id} of the claimed row
+     * @param attempt     the attempt number the row was inserted at
+     * @param legClaim    the leg claim (owner and token) taken on the row
+     * @param resendRunId the resend run that claimed it
+     */
+    public ResendAttempt(final UUID attemptId, final int attempt, final RunClaim legClaim,
+                         final UUID resendRunId) {
+        this(attemptId, attempt, legClaim, resendRunId, false);
     }
 }

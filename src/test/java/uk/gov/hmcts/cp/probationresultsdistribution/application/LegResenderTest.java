@@ -82,9 +82,9 @@ class LegResenderTest {
         @DisplayName("a failed claim is not-run, the next id still runs, and the run is failed")
         void claim_failure_is_not_run_and_the_run_carries_on() {
             when(pauseGate.pausedByOperator()).thenReturn(false);
-            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any()))
+            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenThrow(new DataAccessResourceFailureException("connection lost"));
-            when(store.claimResend(eq("RESULTS"), eq(ID_2), any(), any(), any()))
+            when(store.claimResend(eq("RESULTS"), eq(ID_2), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_2, invocation.getArgument(2)));
             when(runner.runResend(any(), any(), anyBoolean())).thenReturn(sent(true));
 
@@ -106,7 +106,7 @@ class LegResenderTest {
         @DisplayName("a store failure after the claim is claimed-incomplete, and the run is failed")
         void failure_after_claim_is_claimed_incomplete() {
             when(pauseGate.pausedByOperator()).thenReturn(false);
-            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any()))
+            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
             when(runner.runResend(any(), any(), anyBoolean()))
                     .thenThrow(new DataAccessResourceFailureException("completion write failed"));
@@ -131,7 +131,7 @@ class LegResenderTest {
         @DisplayName("is claimed-incomplete, counts a stale-runner rejection, and does not fail the run")
         void fenced_completion_is_claimed_incomplete() {
             when(pauseGate.pausedByOperator()).thenReturn(false);
-            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any()))
+            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
             when(runner.runResend(any(), any(), anyBoolean())).thenReturn(sent(false));
 
@@ -158,7 +158,7 @@ class LegResenderTest {
 
             assertThat(result.wholeRunRefusal()).contains(WholeRunRefusal.STORE_UNAVAILABLE);
             assertThat(result.entries()).isEmpty();
-            verify(store, never()).claimResend(any(), any(), any(), any(), any());
+            verify(store, never()).claimResend(any(), any(), any(), any(), any(), any());
         }
 
         @Test
@@ -166,7 +166,7 @@ class LegResenderTest {
         void mid_run_pause_read_failure_stops_claiming() {
             when(pauseGate.pausedByOperator()).thenReturn(false, false)
                     .thenThrow(new DataAccessResourceFailureException("store down"));
-            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any()))
+            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
             when(runner.runResend(any(), any(), anyBoolean())).thenReturn(sent(true));
 
@@ -177,7 +177,7 @@ class LegResenderTest {
                             new ResendEntryOutcome.Ran(LegStatus.SENT, Optional.empty())),
                     new ResendRunResult.Entry(ID_2, new ResendEntryOutcome.NotRun()));
             assertThat(result.storeFailed()).isTrue();
-            verify(store, never()).claimResend(eq("RESULTS"), eq(ID_2), any(), any(), any());
+            verify(store, never()).claimResend(eq("RESULTS"), eq(ID_2), any(), any(), any(), any());
         }
     }
 

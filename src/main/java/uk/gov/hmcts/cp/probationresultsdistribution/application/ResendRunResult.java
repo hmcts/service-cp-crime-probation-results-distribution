@@ -9,18 +9,20 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
 /**
  * The result of one resend-leg run (slice 004, FR-004-039): either refused whole before anything
  * was read, or the run's report — its {@code resend_run_id}, whether {@code allow-changed-payload}
- * was requested, every distinct listed ID exactly once with its outcome, and whether the store
+ * and the forced-resend override ({@code allowTerminalSuccess}) were requested, every distinct listed ID exactly once with its outcome, and whether the store
  * failed during the run, which makes the run's result failed although its report stands (spec edge
  * case "The store fails during a resend run").
  *
- * @param wholeRunRefusal              present when the run was refused whole
- * @param resendRunId                  the run's id, present when it was not refused whole
- * @param allowChangedPayloadRequested whether {@code allow-changed-payload} was requested
- * @param entries                      every distinct listed ID with its outcome, in list order
- * @param storeFailed                  whether a store failure occurred during the run
+ * @param wholeRunRefusal               present when the run was refused whole
+ * @param resendRunId                   the run's id, present when it was not refused whole
+ * @param allowChangedPayloadRequested  whether {@code allow-changed-payload} was requested
+ * @param allowTerminalSuccessRequested whether the forced-resend override was requested
+ * @param entries                       every distinct listed ID with its outcome, in list order
+ * @param storeFailed                   whether a store failure occurred during the run
  */
 public record ResendRunResult(Optional<WholeRunRefusal> wholeRunRefusal, Optional<UUID> resendRunId,
-                              boolean allowChangedPayloadRequested, List<Entry> entries,
+                              boolean allowChangedPayloadRequested,
+                              boolean allowTerminalSuccessRequested, List<Entry> entries,
                               boolean storeFailed) {
 
     /** Rejects null components. */
@@ -38,7 +40,8 @@ public record ResendRunResult(Optional<WholeRunRefusal> wholeRunRefusal, Optiona
      * @return the refused result
      */
     public static ResendRunResult refusedWhole(final WholeRunRefusal refusal) {
-        return new ResendRunResult(Optional.of(refusal), Optional.empty(), false, List.of(), false);
+        return new ResendRunResult(Optional.of(refusal), Optional.empty(), false, false, List.of(),
+                false);
     }
 
     /**
