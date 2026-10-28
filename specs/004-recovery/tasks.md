@@ -1155,9 +1155,30 @@ failed and unknown requests; run both runners; compare output with seeded state.
       but was: Listed[rows=[], more=false]`, and every store read `Expecting actual: [] to contain
       exactly ...`. The row-shape case and the unknown-hearing case passed (characterisation: the
       record has no such component; an empty answer is already empty).
-- [ ] T060 [P] [US6] `DlqCompletedListingQueryTest`: lists only DLQ entries whose request is
+- [X] T060 [P] [US6] `DlqCompletedListingQueryTest`: lists only DLQ entries whose request is
       `COMPLETED`, with their dead-letter reason, removes nothing — same privacy bound as T059 —
       `src/test/java/.../application/DlqCompletedListingQueryTest.java`
+      Test first, in two classes: `application/DlqCompletedListingQueryTest` (plain mocks: only
+      `COMPLETED` requests' entries are listed — a `FAILED`, an unknown and an unparseable entry
+      are not —, a `REPLAY:<uuid>` copy included; a dead-letter reason or `messageId` chosen
+      elsewhere is bounded to `other` and an absent reason is `none`, never echoed; the peek pages
+      by sequence number until the queue is exhausted; one page of 500 with `more`; only `peek`
+      is called, and the port has no other method; `broker-unavailable` and `store-unavailable`;
+      no body/payload/command/operator/description/user/property component on either entry type)
+      and `inbound/DeadLetterQueuePeekerIT` (the Service Bus emulator: each entry's `requestId`
+      read from its body, its reason, its enqueued time; a non-command body has no `requestId`; a
+      bounded page in sequence order; a second peek, and the broker, still see every entry).
+      Compile-safe seams: the `application/DeadLetterReader` port (a peek-only broker port beside
+      `QueuePurger` and `ReplayEnqueuer`), `DlqCompletedListing`, a `DlqCompletedListingQuery`
+      answering an empty listing and an `inbound/DeadLetterQueuePeeker` answering no entry.
+      RED: 9 of 10 failed on assertions, e.g. `lists only the entries whose request is COMPLETED
+      ... : expected: Listed[entries=[Entry[sequenceNumber=3, ...], Entry[sequenceNumber=7,
+      messageId=REPLAY:...]], more=false] but was: Listed[entries=[], more=false]`, `pages at 500
+      ... : Expected size: 500 but was: 0`, `removes nothing ... : Wanted but not invoked:
+      reader.peek(0L, 100)`, `answers broker-unavailable ... : expected: BrokerUnavailable[] but
+      was: Listed[entries=[], more=false]`, and the IT's `no dead-letter entry RESULTS:<id>` and
+      `Expected size to be between: 1 and 2 but was: 0`. The entry-shape case passed
+      (characterisation).
 
 ### Implementation for User Story 6
 
