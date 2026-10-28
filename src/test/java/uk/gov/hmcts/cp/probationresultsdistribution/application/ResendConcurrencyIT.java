@@ -197,7 +197,8 @@ class ResendConcurrencyIT extends ResendTestSupport {
 
             final ResendRunResult result = first.resend(request(false, requestId));
 
-            assertThat(entryFor(result, requestId)).contains(new ResendEntryOutcome.NotRun());
+            assertThat(entryFor(result, requestId)).contains(new ResendEntryOutcome.ClaimedIncomplete());
+            assertThat(result.storeFailed()).isFalse();
             final Map<String, Object> row = latestAttempt(requestId);
             assertThat(row.get("attempt")).isEqualTo(2);
             assertThat(row.get("status")).isEqualTo("FAILED");

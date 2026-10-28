@@ -125,7 +125,7 @@ public final class LegResender {
             entries.add(new ResendRunResult.Entry(requestId, outcome));
         }
         return new ResendRunResult(Optional.empty(), Optional.of(resendRunId), allowChangedPayload,
-                entries);
+                entries, false);
     }
 
     private ResendEntryOutcome runOne(final UUID requestId, final UUID resendRunId,

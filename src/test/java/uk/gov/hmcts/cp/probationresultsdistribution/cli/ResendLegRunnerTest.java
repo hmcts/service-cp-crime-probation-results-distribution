@@ -159,6 +159,17 @@ class ResendLegRunnerTest {
         }
 
         @Test
+        @DisplayName("answers failed for a report whose run met a store failure")
+        void answers_failed_for_a_store_failure_during_the_run() {
+            final ResendRunResult ran = ran();
+            when(resender.resend(any())).thenReturn(new ResendRunResult(ran.wholeRunRefusal(),
+                    ran.resendRunId(), false, ran.entries(), true));
+
+            assertThat(new ResendLegRunner(resender).run(args("HMPPS", IDS, "op", "why")))
+                    .isEqualTo(RunnerOutcome.FAILED);
+        }
+
+        @Test
         @DisplayName("refuses unreadable arguments without calling LegResender")
         void refuses_without_calling_the_capability() {
             assertThat(new ResendLegRunner(resender).run(args("HMPPS", "nope", "op", "why")))
@@ -178,6 +189,7 @@ class ResendLegRunnerTest {
                 List.of(new ResendRunResult.Entry(ID_1, new ResendEntryOutcome.Ran(LegStatus.SENT,
                                 Optional.empty())),
                         new ResendRunResult.Entry(ID_2,
-                                new ResendEntryOutcome.Refused(ResendRefusal.NOT_ELIGIBLE))));
+                                new ResendEntryOutcome.Refused(ResendRefusal.NOT_ELIGIBLE))),
+                false);
     }
 }
