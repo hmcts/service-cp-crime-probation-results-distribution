@@ -82,7 +82,8 @@ above for each entry.
 | The request is … | Use |
 |---|---|
 | `FAILED`, and its dead-letter entry is still there | Resend the entry (above) |
-| `FAILED`, and its entry was purged or removed (for example after a rollback) | The replay action re-sends the stored command under a fresh `messageId`. It is the only route left after a rollback purge. Its runner is not packaged in this build, so until it is, use `resend-leg` |
+| `FAILED(leg-exhausted)`, and its entry was removed | `resend-leg`. Its latest attempt is `FAILED`, so it is resend-eligible |
+| `FAILED(rolled-back)`, and its entry was purged after a rollback | The replay action, which re-sends the stored command under a fresh `messageId`. It is the only route after a rollback purge. **This build has no packaged route for it**: the replay runner is in no command line yet. `resend-leg` cannot stand in. The attempt-1 `FAILED(rolled-back)` row is refused `not-eligible`, and intake stays paused after a rollback, so the whole run is refused `intake-paused`. The request waits for the replay runner and for the full new cutover (purge, reconcile, cutover, then resume intake) |
 | `COMPLETED`, and HMPPS needs the hearing again | `resend-leg` with `--force-resend-sent` (below) |
 | `FAILED` or `COMPLETED`, and the leg's latest attempt is `FAILED` | `resend-leg` |
 
@@ -228,7 +229,8 @@ close-in-flight procedure:
    resume-intake`).
 5. The closed resend row (attempt ≥ 2, `FAILED(rolled-back)`) is now resend-eligible. If HMPPS did
    not receive the attempt, resend it. A request closed `FAILED(rolled-back)` at attempt 1 is
-   replayed instead.
+   replayed instead. The replay runner is not packaged in this build, so that request waits for it
+   (see "Replay or resend-leg?").
 
 ## The forced resend
 
