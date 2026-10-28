@@ -1029,8 +1029,22 @@ labelled `forced`, without moving the request off `COMPLETED`.
       GREEN: `ForcedResendIT` 10/10 and `OutcomeMetricsTest` 8/8 PASSED; `DistributionRunnerTest`
       26/26 and `LegOutcomeLogLineTest` 1/1 still PASSED. The `application` package-info no longer
       says the override is unbuilt.
-- [ ] T058 [US5] Add `--force-resend-sent` parsing to `cli/ResendLegRunner.java` (T047) per
+- [X] T058 [US5] Add `--force-resend-sent` parsing to `cli/ResendLegRunner.java` (T047) per
       `contracts/cli-runners.md` §2
+      Test first, in `cli/ResendLegRunnerTest`: T047's placeholder case (`the forced-resend override
+      is refused until it is built`) becomes `--force-resend-sent is a readable flag`
+      (`checkArguments` empty), the existing hand-off case also asserts `allowTerminalSuccess` is
+      `false` without the flag, and a new case runs with `--force-resend-sent` and expects `DONE`
+      with `allowTerminalSuccess = true` (and `allowChangedPayload = false`) handed to `LegResender`.
+      RED: `--force-resend-sent is a readable flag : Expecting an empty Optional but was containing
+      value: UNREADABLE_ARGUMENT`; `hands --force-resend-sent to LegResender as allowTerminalSuccess
+      : expected: DONE but was: REFUSED`.
+      Implementation: the `unreadable-argument` refusal of the flag is removed; like
+      `--allow-changed-payload` it is a flag taking no value, passed as
+      `ResendRequest.allowTerminalSuccess`. Every other argument rule, the outcomes and the exit
+      codes (`claimed-incomplete`, exit 2 on a store failure) are unchanged.
+      GREEN: all 13 `ResendLegRunnerTest` cases PASSED; `PackagedResendLegCommandIT` 3/3 still
+      PASSED.
 
 **Checkpoint**: all five send-side user stories (1, 2, 3, 4, 5) are independently functional.
 

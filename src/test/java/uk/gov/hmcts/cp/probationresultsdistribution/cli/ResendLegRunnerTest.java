@@ -28,7 +28,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
 
 /**
  * Pins {@code contracts/cli-runners.md} §2: {@code resend-leg --leg HMPPS --request-ids <id,...>
- * --operator <name> --reason <text> [--allow-changed-payload]}. Arguments are checked whole before
+ * --operator <name> --reason <text> [--force-resend-sent] [--allow-changed-payload]}. Arguments are checked whole before
  * anything is opened (FR-004-020); the runner calls the same {@link LegResender} the operations API
  * calls and maps its result to the bounded exit code (FR-004-045).
  */
@@ -90,13 +90,12 @@ class ResendLegRunnerTest {
         }
 
         @Test
-        @DisplayName("the forced-resend override is refused until it is built")
-        void forced_resend_is_refused() {
+        @DisplayName("the forced-resend override --force-resend-sent is a readable flag")
+        void forced_resend_is_readable() {
             final String[] forced = {"resend-leg", "--leg", "HMPPS", "--request-ids", IDS,
                 "--operator", "op", "--reason", "why", "--force-resend-sent"};
 
-            assertThat(ResendLegRunner.checkArguments(forced))
-                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+            assertThat(ResendLegRunner.checkArguments(forced)).isEmpty();
         }
 
         @Test
@@ -127,6 +126,23 @@ class ResendLegRunnerTest {
             assertThat(request.getValue().operator()).isEqualTo("op");
             assertThat(request.getValue().reason()).isEqualTo("why");
             assertThat(request.getValue().allowChangedPayload()).isTrue();
+            assertThat(request.getValue().allowTerminalSuccess()).isFalse();
+        }
+
+        @Test
+        @DisplayName("hands --force-resend-sent to LegResender as allowTerminalSuccess")
+        void hands_the_forced_resend_override_to_the_capability() {
+            when(resender.resend(any())).thenReturn(ran());
+            final ArgumentCaptor<ResendRequest> request = ArgumentCaptor.forClass(ResendRequest.class);
+
+            final RunnerOutcome outcome = new ResendLegRunner(resender).run("resend-leg", "--leg",
+                    "HMPPS", "--request-ids", IDS, "--operator", "op", "--reason", "why",
+                    "--force-resend-sent");
+
+            assertThat(outcome).isEqualTo(RunnerOutcome.DONE);
+            verify(resender).resend(request.capture());
+            assertThat(request.getValue().allowTerminalSuccess()).isTrue();
+            assertThat(request.getValue().allowChangedPayload()).isFalse();
         }
 
         @Test

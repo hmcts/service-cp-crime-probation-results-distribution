@@ -17,7 +17,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
  * The {@code resend-leg} command-line runner (design §4.8 action 3; slice 004, FR-004-018–FR-004-042;
  * {@code contracts/cli-runners.md} §2):
  * {@code resend-leg --leg HMPPS --request-ids <id,id,...> --operator <name> --reason <text>
- * [--allow-changed-payload]}.
+ * [--force-resend-sent] [--allow-changed-payload]}.
  *
  * <p>The arguments are checked whole before anything is opened (FR-004-020) — {@link
  * #checkArguments} is what the packaged command calls before it builds a context — and the run
@@ -26,8 +26,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
  * per-ID outcomes are printed as bounded codes; no supplied text is echoed, and neither the
  * operator's name nor the reason's text is logged (FR-004-041).
  *
- * <p>The forced-resend override ({@code --force-resend-sent}) is not built yet (slice 004 US5): an
- * invocation that asks for it is refused {@code unreadable-argument} rather than run without it.
+ * <p>{@code --force-resend-sent} is the forced-resend override, the design's
+ * {@code allowTerminalSuccess} (FR-004-036–FR-004-038), and {@code --allow-changed-payload} the
+ * {@code allow-changed-payload} override (FR-004-031); each is a flag taking no value, and
+ * {@link LegResender} applies it per ID.
  */
 public final class ResendLegRunner {
 
@@ -55,10 +57,9 @@ public final class ResendLegRunner {
     /**
      * Checks the arguments' shape before any resource is opened (FR-004-020): a missing or blank
      * {@code --leg}, {@code --request-ids}, {@code --operator} or {@code --reason} is
-     * {@code missing-argument}; a leg other than {@code HMPPS}, an entry of the id list that is not
-     * a UUID, or the not-yet-built forced-resend override is {@code unreadable-argument}; an
-     * operator or reason over 200 characters is {@code argument-too-long}. The cap and the pause
-     * are the capability's own checks.
+     * {@code missing-argument}; a leg other than {@code HMPPS}, or an entry of the id list that is
+     * not a UUID, is {@code unreadable-argument}; an operator or reason over 200 characters is
+     * {@code argument-too-long}. The cap and the pause are the capability's own checks.
      *
      * @param args the full command-line arguments, including the leading action name
      * @return the whole-run refusal, or empty when the arguments are readable
@@ -127,7 +128,7 @@ public final class ResendLegRunner {
         if (blank(leg) || blank(ids) || blank(operator) || blank(reason)) {
             return Parsed.refused(WholeRunRefusal.MISSING_ARGUMENT);
         }
-        if (!HMPPS.equals(leg) || Arrays.asList(args).contains(FORCE_RESEND_FLAG)) {
+        if (!HMPPS.equals(leg)) {
             return Parsed.refused(WholeRunRefusal.UNREADABLE_ARGUMENT);
         }
         if (operator.length() > MAX_TEXT_LENGTH || reason.length() > MAX_TEXT_LENGTH) {
@@ -137,8 +138,9 @@ public final class ResendLegRunner {
         if (requestIds.isEmpty()) {
             return Parsed.refused(WholeRunRefusal.UNREADABLE_ARGUMENT);
         }
+        final List<String> flags = Arrays.asList(args);
         return new Parsed(Optional.empty(), Optional.of(new ResendRequest(requestIds.get(), operator,
-                reason, Arrays.asList(args).contains(ALLOW_CHANGED_PAYLOAD_FLAG))));
+                reason, flags.contains(ALLOW_CHANGED_PAYLOAD_FLAG), flags.contains(FORCE_RESEND_FLAG))));
     }
 
     private static Optional<List<UUID>> requestIds(final String raw) {
