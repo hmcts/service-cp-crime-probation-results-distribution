@@ -1,10 +1,20 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus;
 
+import com.azure.core.amqp.exception.AmqpException;
+import com.azure.messaging.servicebus.ServiceBusMessage;
 import com.azure.messaging.servicebus.ServiceBusSenderClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.CommandEnqueuer;
 
-/** The Service Bus {@link CommandEnqueuer}. */
+/**
+ * The Service Bus {@link CommandEnqueuer} (slice 004, FR-004-056, FR-004-058): sends one message to
+ * {@code probation.requests} through a sender client — the broker's sender role, which replay and
+ * submit-hearing share — with the {@code messageId}, {@code correlationId}, body and application
+ * properties given and {@code contentType = application/json}. A broker that cannot take the
+ * message, or a sender that can no longer send, is {@link CommandEnqueueException}.
+ */
 public final class ServiceBusCommandEnqueuer implements CommandEnqueuer {
+
+    private static final String JSON = "application/json";
 
     private final ServiceBusSenderClient sender;
 
@@ -19,8 +29,16 @@ public final class ServiceBusCommandEnqueuer implements CommandEnqueuer {
 
     @Override
     public void enqueue(final OutgoingCommand command) {
-        if (sender == null) {
-            throw new CommandEnqueueException(new IllegalStateException("no sender"));
+        final ServiceBusMessage message = new ServiceBusMessage(command.body())
+                .setMessageId(command.messageId())
+                .setCorrelationId(command.correlationId())
+                .setContentType(JSON);
+        message.getApplicationProperties().putAll(command.applicationProperties());
+        try {
+            sender.sendMessage(message);
+        } catch (final AmqpException | IllegalStateException brokerFailure) {
+            // A disposed sender raises IllegalStateException; a broker failure, an AmqpException.
+            throw new CommandEnqueueException(brokerFailure);
         }
     }
 }

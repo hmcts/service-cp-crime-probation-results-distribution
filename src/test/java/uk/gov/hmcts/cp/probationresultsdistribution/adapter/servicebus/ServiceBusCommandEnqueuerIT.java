@@ -56,12 +56,14 @@ class ServiceBusCommandEnqueuerIT extends EndToEndTestSupport {
     @Test
     @DisplayName("throws CommandEnqueueException when the broker cannot take the message")
     void enqueue_closedSender_should_throw() {
-        final ServiceBusSenderClient sender = new ServiceBusClientBuilder()
+        final ServiceBusCommandEnqueuer enqueuer;
+        try (ServiceBusSenderClient sender = new ServiceBusClientBuilder()
                 .connectionString(serviceBusConnectionString()).sender().queueName(QUEUE)
-                .buildClient();
-        sender.close();
+                .buildClient()) {
+            enqueuer = new ServiceBusCommandEnqueuer(sender);
+        }
 
-        assertThatThrownBy(() -> new ServiceBusCommandEnqueuer(sender).enqueue(
+        assertThatThrownBy(() -> enqueuer.enqueue(
                 new OutgoingCommand("RESULTS:" + UUID.randomUUID(), "c", "{}", Map.of())))
                 .isInstanceOf(CommandEnqueuer.CommandEnqueueException.class);
     }

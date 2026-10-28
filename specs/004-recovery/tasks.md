@@ -1347,7 +1347,9 @@ observe a new request with the audit line and `origin=queue` outcomes.
       them failed through Mockito's strict stubs rather than an AssertJ line — the guard calling
       the overload without the markers (`PotentialStubbingProblem` on `insertClaim`/
       `admitReplay`) and the seam never reading the cache (`UnnecessaryStubbingException` on the
-      four payload-unavailable cases) — which is the behaviour under test, not a compile error.
+      four payload-unavailable cases) — and one through a `ClassCastException` casting the seam's
+      `PayloadUnavailable` to `Enqueued` (the fresh-run-id case): the behaviour under test, not a
+      compile error.
 
 ### Implementation for User Story 8
 
@@ -1356,9 +1358,26 @@ observe a new request with the audit line and `origin=queue` outcomes.
       `UUID.nameUUIDFromBytes` over the UTF-8 bytes of the three strings joined by `|`; nothing
       parsed or re-rendered.
       GREEN: `RequestIdRecipeTest` 4/4 PASSED; the vector reproduces exactly from the raw strings.
-- [ ] T068 [US8] Implement `application/SubmitHearingAction.java`: cache-only read (dated, then
+- [X] T068 [US8] Implement `application/SubmitHearingAction.java`: cache-only read (dated, then
       undated `EXT_` key), `requestId` via T067, command assembly, enqueue via the existing Service
       Bus sender client (FR-004-054–056, FR-004-058)
+      `SubmitHearingAction.check` refuses whole before any read — missing/blank (after the
+      one-line sanitising) → `missing-argument`, not a UUID or not exactly a `YYYY-MM-DD` date →
+      `unreadable-argument`, over 200 characters → `argument-too-long` — and the outcome carries
+      only the code. The payload is read through the existing `HearingPayloadSource` port, given a
+      cache-only adapter (`CachedHearingPayloadAdapter`: dated key, then undated) by the
+      composition, never the chain with the query fallback; a payload whose `sharedTime` is not a
+      string reading as an instant is `payload-unavailable`. The `requestId` is
+      `RequestIdRecipe` over the hearing id and day in their canonical forms and the raw
+      `sharedTime`; the body is the six fields (no `userId`) built as a Jackson `ObjectNode`; the
+      properties are `origin = SUPPORT`, the sanitised operator and reason and a fresh run id.
+      There was no production Service Bus sender in the service (the replay action's
+      `ReplayEnqueuer` has no adapter yet, and carries no application properties), so the enqueue
+      goes through a new send-only `CommandEnqueuer` port and its `adapter/servicebus/
+      ServiceBusCommandEnqueuer` (`contentType = application/json`; an `AmqpException`, or the
+      `IllegalStateException` of a disposed sender, is `CommandEnqueueException` →
+      `broker-unavailable`). It reads no intake state and writes no store.
+      GREEN: `SubmitHearingActionTest` 20/20 and `ServiceBusCommandEnqueuerIT` 2/2 PASSED.
 - [ ] T069 [US8] Wire the `origin=SUPPORT` admission audit (operator, runId, reason →
       `audit_note`) and the `origin=queue`-unless-`FAILED` run-kind decision into the guard/runner
       from T011/T025 (FR-004-057)
