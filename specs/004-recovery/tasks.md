@@ -1073,6 +1073,12 @@ labelled `forced`, without moving the request off `COMPLETED`.
       21 (the claimed-incomplete, `SENT` and `NOT_APPLICABLE` cases); dropping the
       `appendForcedResendLine` call failed 5 of 21 (those three, the sanitised-reason case and the
       forced race).
+      Gate round 2 (characterisation, no red run of its own): `ForcedResendIT` `PerId` adds a
+      `COMPLETED` request with no HMPPS attempt row, resent with `allowTerminalSuccess`: refused
+      `not-eligible`, no attempt row, no audit line, no POST. GREEN on first run: `ForcedResendIT`
+      13/13. Shown falsifiable by one reverted mutation: changing the refusal's `latest.isEmpty() ||`
+      to `latest.isPresent() &&` failed the new case with `java.util.NoSuchElementException: No
+      value present` at `JdbcProcessedRequestRepository.checkAndClaim`.
 - [X] T057 [US5] Wire `forced=true`/`false` labelling into the outcome metric and log line from T048
       (FR-004-038) — extends `application/LegResender.java`'s outcome recording
       The outcome is recorded by `DistributionRunner`'s shared `record` path (T045), so the label is

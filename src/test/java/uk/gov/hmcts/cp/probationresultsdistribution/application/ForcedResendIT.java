@@ -317,6 +317,23 @@ class ForcedResendIT extends ResendTestSupport {
             assertThat(legOutcomes("false", "SENT")).isEqualTo(1.0d);
             assertThat(legOutcomes("true", "SENT")).isEqualTo(1.0d);
         }
+
+        @Test
+        @DisplayName("a request with no HMPPS attempt row is not-eligible, the override unused")
+        void request_without_attempt_row_is_not_eligible() {
+            final UUID requestId = UUID.randomUUID();
+            final UUID hearingId = UUID.randomUUID();
+            putDatedCachePayload(hearingId, HEARING_DAY, payload(SHARED_TIME));
+            seedRequestRow(requestId, hearingId, COMPLETED, null);
+
+            final ResendRunResult result = resendOnce(requestId, true, false, 200);
+
+            assertThat(entryFor(result, requestId))
+                    .contains(new Refused(ResendRefusal.NOT_ELIGIBLE));
+            assertThat(attemptCount(requestId)).isZero();
+            assertThat(forcedResendLines(requestId)).isEmpty();
+            assertThat(gatewayPostCount()).isZero();
+        }
     }
 
     private UUID seedCompletedSent(final String payloadSharedTime) {
