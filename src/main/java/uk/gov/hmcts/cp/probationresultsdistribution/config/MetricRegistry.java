@@ -343,7 +343,8 @@ public final class MetricRegistry implements OutcomeMetrics {
      */
     @Override
     public void resendRefusal(final ResendRefusal reason) {
-        // Seam (T038): counted with T043.
+        registry.counter(RESEND_REFUSALS_M, Tags.of(Tag.of(TAG_REASON, reason.wireValue())))
+                .increment();
     }
 
     /**

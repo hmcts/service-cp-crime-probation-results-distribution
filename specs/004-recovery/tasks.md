@@ -647,7 +647,7 @@ code, five report entries, refusal counters incremented.
 
 ### Implementation for User Story 3
 
-- [ ] T043 [US3] Implement `application/LegResender.java`: input validation per FR-004-020/
+- [X] T043 [US3] Implement `application/LegResender.java`: input validation per FR-004-020/
       FR-004-019 (collapse duplicates, cap check, whole-run refusals before any read), the per-ID
       check order of T038 (`unknown-request` → `request-claimed` → `resend-in-progress` →
       `not-eligible`), sequential execution per run (research.md Decision 4). **For each eligible
@@ -655,6 +655,24 @@ code, five report entries, refusal counters incremented.
       `attempt_origin=resend`, `PENDING`, its own leg claim (`claim_owner`, fresh `claim_token`,
       `claim_expires_at`), `resend_run_id`, `operator` — and COMMIT that transaction before issuing
       any POST** (FR-004-025) — satisfies the claim-before-POST half of T038
+      `LegResender` validates whole-run input (empty list or blank/control-only operator or reason →
+      `missing-argument`; operator or reason over 200 → `argument-too-long`; distinct ids over the cap
+      → `too-many-request-ids`; then the pause → `intake-paused`), collapses duplicates in list
+      order, and runs the ids one after another, latching an operator pause seen mid-run. The
+      per-ID check and claim are `JdbcProcessedRequestRepository.claimResend`: one transaction that
+      locks the request row `FOR UPDATE`, then the leg's latest row, refusing in the FR-004-022
+      order, and inserts the `PENDING` resend row (`max(attempt)+1`, its own leg claim at the
+      configured lease, `resend_run_id`, sanitised `operator`), committed before the run starts.
+      Refusals count `probation_resend_refusals_total{reason}` (`MetricRegistry.resendRefusal`,
+      on the `OutcomeMetrics` port); an unrecorded completion counts a stale-runner rejection and is
+      reported `not-run`; a per-ID store failure is logged at ERROR and reported `not-run`. One
+      structured `resend-leg report` line (run id, leg, overrides, counts, `id=outcome` entries; no
+      operator or reason text). T031's two non-paused Mockito cases now stub `claimResend`.
+      GREEN (partial, as planned): `ResendByRequestIdsIT` `Input` (empty, over-cap, operator/reason)
+      and `CheckOrder` refusal cases (request-claimed first, live and expired `PENDING` resend rows —
+      T042 —, attempt-1 rolled-back, `PARKED`, `PENDING` attempt 1) PASSED, and
+      `ResendConcurrencyIT$Races > a replay admitted first leaves the resend refused
+      request-claimed` PASSED; the cases that need a send stay red on `NotRun` until T044–T046.
 - [ ] T044 [US3] Implement the `sharedTime` comparison stage (instant parsing, honouring offset/zone,
       stored-precision comparison) inside `LegResender`'s run, before the switch read (FR-004-029) —
       satisfies T039

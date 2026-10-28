@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.Counter;
@@ -79,6 +80,9 @@ class ResendConcurrencyIT extends ResendTestSupport {
     @DisplayName("proceeds when intake is not paused at the start")
     void proceeds_when_not_paused() {
         when(pauseGate.pausedByOperator()).thenReturn(false);
+        when(store.claimResend(any(), any(), any(), any(), any()))
+                .thenReturn(new ProcessedRequestRepository.ResendClaim.Refused(
+                        ResendRefusal.UNKNOWN_REQUEST));
 
         final ResendRunResult outcome = resender.resend(
                 new ResendRequest(List.of(ID_1, ID_2), "an-operator", "a reason", false));
@@ -92,6 +96,9 @@ class ResendConcurrencyIT extends ResendTestSupport {
         // Not paused for the initial whole-run check and the first id's own check, then paused
         // from the second id's check onward.
         when(pauseGate.pausedByOperator()).thenReturn(false, false, true);
+        when(store.claimResend(any(), any(), any(), any(), any()))
+                .thenReturn(new ProcessedRequestRepository.ResendClaim.Refused(
+                        ResendRefusal.UNKNOWN_REQUEST));
 
         final ResendRunResult outcome = resender.resend(
                 new ResendRequest(List.of(ID_1, ID_2), "an-operator", "a reason", false));

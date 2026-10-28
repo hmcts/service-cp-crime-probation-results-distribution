@@ -1,6 +1,8 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.persistence;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Optional;
@@ -13,6 +15,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 
@@ -136,8 +139,92 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     @Override
     public ResendClaim claimResend(final String source, final UUID requestId, final UUID resendRunId,
                                    final String operator, final RunClaim legClaim) {
-        // Seam (T038): the per-ID check and claim land with T043.
-        return new ResendClaim.Refused(ResendRefusal.UNKNOWN_REQUEST);
+        return transactionTemplate.execute(status ->
+                checkAndClaim(source, requestId, resendRunId, operator, legClaim));
+    }
+
+    // Each refusal exits as soon as its check decides, in the fixed FR-004-022 order.
+    @SuppressWarnings("PMD.OnlyOneReturn")
+    private ResendClaim checkAndClaim(final String source, final UUID requestId,
+                                      final UUID resendRunId, final String operator,
+                                      final RunClaim legClaim) {
+        // The request row is locked first (FOR UPDATE), so a concurrent resend of the same request
+        // waits here and then, in its next statement, sees this run's committed attempt row.
+        final Optional<ResendRequestRow> request = jdbc.sql("SELECT hearing_id, hearing_day, "
+                        + "shared_time, event_type, "
+                        + "(claim_expires_at IS NOT NULL AND claim_expires_at > now()) AS claim_live "
+                        + "FROM processed_request " + REQUEST_WHERE + "FOR UPDATE")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query((rs, rowNum) -> new ResendRequestRow((UUID) rs.getObject("hearing_id"),
+                        rs.getObject("hearing_day", LocalDate.class),
+                        rs.getObject("shared_time", OffsetDateTime.class).toInstant(),
+                        rs.getString("event_type"), rs.getBoolean("claim_live")))
+                .optional();
+        if (request.isEmpty()) {
+            return new ResendClaim.Refused(ResendRefusal.UNKNOWN_REQUEST);
+        }
+        if (request.get().claimLive()) {
+            return new ResendClaim.Refused(ResendRefusal.REQUEST_CLAIMED);
+        }
+        final Optional<LatestLeg> latest = jdbc.sql("SELECT attempt, attempt_origin, status, reason "
+                        + "FROM outbound_message " + REQUEST_WHERE + "AND leg = 'HMPPS' "
+                        + "ORDER BY attempt DESC LIMIT 1 FOR UPDATE")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query((rs, rowNum) -> new LatestLeg(rs.getInt("attempt"),
+                        rs.getString("attempt_origin"), rs.getString("status"),
+                        rs.getString("reason")))
+                .optional();
+        if (latest.isPresent() && latest.get().pendingResend()) {
+            return new ResendClaim.Refused(ResendRefusal.RESEND_IN_PROGRESS);
+        }
+        if (latest.isEmpty() || !latest.get().resendEligible()) {
+            return new ResendClaim.Refused(ResendRefusal.NOT_ELIGIBLE);
+        }
+        final UUID attemptId = UUID.randomUUID();
+        final int attempt = latest.get().attempt() + 1;
+        jdbc.sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                        + "attempt_origin, status, attempts, claim_owner, claim_token, "
+                        + "claim_expires_at, resend_run_id, operator) VALUES (:id, :source, "
+                        + ":requestId, 'HMPPS', :attempt, 'resend', 'PENDING', 0, :owner, :token, "
+                        + "now() + make_interval(secs => :lease), :resendRunId, :operator)")
+                .param("id", attemptId)
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .param("attempt", attempt)
+                .param(OWNER, legClaim.owner().toString())
+                .param(TOKEN, legClaim.token())
+                .param("lease", (double) leaseSeconds)
+                .param("resendRunId", resendRunId)
+                .param("operator", operator)
+                .update();
+        final ResendRequestRow row = request.get();
+        return new ResendClaim.Claimed(new ResendAttempt(attemptId, attempt, legClaim, resendRunId),
+                new DistributionCommand(source, requestId, row.hearingId(), row.hearingDay(),
+                        row.sharedTime(), row.eventType(), Optional.empty()));
+    }
+
+    /** The request columns a resend rebuilds its command from, and whether a live claim holds it. */
+    private record ResendRequestRow(UUID hearingId, LocalDate hearingDay, Instant sharedTime,
+                                    String eventType, boolean claimLive) {
+    }
+
+    /**
+     * The leg's latest attempt, as the resend eligibility table reads it (FR-004-023, FR-004-024):
+     * a {@code PENDING} resend row, live or expired, is in progress and never reclaimed; a
+     * {@code FAILED} row is eligible except an attempt-1 {@code FAILED(rolled-back)} row, which a
+     * replay re-runs instead; every other latest row is not eligible.
+     */
+    private record LatestLeg(int attempt, String attemptOrigin, String status, String reason) {
+
+        boolean pendingResend() {
+            return "resend".equals(attemptOrigin) && "PENDING".equals(status);
+        }
+
+        boolean resendEligible() {
+            return "FAILED".equals(status) && !(attempt == 1 && "rolled-back".equals(reason));
+        }
     }
 
     @Override
