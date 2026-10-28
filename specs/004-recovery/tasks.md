@@ -792,6 +792,24 @@ code, five report entries, refusal counters incremented.
       `sharedTime` check, recovery and fencing are slice 004's own requirements, not departures
       from the legacy, which has no resend. `DeviationRegisterTest` still passes.
 - [ ] T050 Run `quickstart.md` steps 3–4 (resend, forced-resend precondition) locally
+      **Partially run (2026-10-28), left unchecked.** What ran: `docker compose up -d postgres redis
+      wiremock` (no Service Bus emulator); the built jar
+      (`build/libs/service-cp-crime-probation-results-distribution-0.0.999.jar`, JDK 25) with the
+      compose stack's `local`-profile environment. `resume-intake` migrated the store (exit 0). A
+      `FAILED(leg-exhausted)` request with an attempt-1 `FAILED(payload-unavailable)` row was seeded
+      directly in PostgreSQL (not through quickstart step 1's queue-and-500 path), its payload under
+      the dated `EXT_` key in Redis, WireMock stubbed for the users-groups read (`active: true`) and
+      the gateway (200). Step 4, `resend-leg --leg HMPPS --request-ids <id> --operator local-dev
+      --reason "manual smoke test"`, exited 0 and logged the one `resend-leg report ... ids=1 taken=1
+      sent=1 summary={SENT=1}` line, a `resend-leg id ... outcome=SENT` line and `resend-leg done`;
+      the store then held attempt 2 `resend`/`SENT` with `operator = local-dev` and a
+      `resend_run_id`, attempt 1 unchanged, and the request `COMPLETED(recovered)`. The forced-resend
+      precondition: a second run over the now-`SENT` leg exited 0 reporting `not-eligible`, and the
+      same run with `--force-resend-sent` exited 1 (refused `unreadable-argument` until US5 builds
+      the override). What did not run: quickstart step 3 (resubmitting the original dead-letter
+      entry with the emulator's tools and seeing a no-op once `COMPLETED`) — the emulator and a real
+      step-1 dead-letter entry were not set up; that path is covered by the automated
+      `DlqResubmissionReplayIT` (US2), not by this manual run.
 
 **Checkpoint**: Stories 1, 2, 3 and 7 all work independently — recovery via replay and resend is
 fully usable without forced resend, listings or submit-hearing.
