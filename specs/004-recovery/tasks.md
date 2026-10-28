@@ -1129,11 +1129,32 @@ failed and unknown requests; run both runners; compare output with seeded state.
 
 ### Tests for User Story 6
 
-- [ ] T059 [P] [US6] `RequestListingQueryTest`: by hearing+day shows every request for that
+- [X] T059 [P] [US6] `RequestListingQueryTest`: by hearing+day shows every request for that
       hearing/day with status, reasons and every leg attempt; by status/reason/`updated_at` range
       reads from `outbound_message_latest`; prints no stored command/body/payload/`audit_note`
       text/operator/`userId`; pages at 500 and says when more exist (FR-004-043, FR-004-041;
       Research Decision 5) — `src/test/java/.../application/RequestListingQueryTest.java`
+      Test first, in two classes: `application/RequestListingQueryTest` (plain mocks: the two
+      forms, the FR-004-020 input check — `missing-argument`/`unreadable-argument`, refused whole
+      with no store read and no supplied text in the outcome —, one page of 500 asked for as 501
+      rows with `more` set when the 501st exists, `store-unavailable`, and a row type with no
+      command/body/payload/audit/operator/user component) and
+      `persistence/JdbcRequestListingRepositoryIT` (Testcontainers Postgres: by hearing and day
+      every attempt of every request; by status/reason/`updated_at` range — inclusive after,
+      exclusive before — the latest attempt only, read from `outbound_message_latest`, not an
+      earlier attempt and not the request's status; the limit; the request-status lookup the
+      `dlq-completed` listing joins on). Compile-safe seams: `RequestListingRepository` (a
+      read-only store interface in `persistence`, beside `IntakeControlRepository` and
+      `RollbackFencingRepository`), a `JdbcRequestListingRepository` answering nothing, and a
+      `RequestListingQuery` answering an empty listing.
+      RED: 26 of 28 failed on assertions, e.g. `shows every attempt row ... : expected:
+      Listed[rows=[ListedAttempt[...] x3], more=false] but was: Listed[rows=[], more=false]`,
+      `pages at 500 and says when more exist : Expected size: 500 but was: 0`, every input case
+      `expected: Refused[reason=MISSING_ARGUMENT]` (or `UNREADABLE_ARGUMENT`) `but was:
+      Listed[rows=[], more=false]`, `answers store-unavailable ... : expected: StoreUnavailable[]
+      but was: Listed[rows=[], more=false]`, and every store read `Expecting actual: [] to contain
+      exactly ...`. The row-shape case and the unknown-hearing case passed (characterisation: the
+      record has no such component; an empty answer is already empty).
 - [ ] T060 [P] [US6] `DlqCompletedListingQueryTest`: lists only DLQ entries whose request is
       `COMPLETED`, with their dead-letter reason, removes nothing — same privacy bound as T059 —
       `src/test/java/.../application/DlqCompletedListingQueryTest.java`
