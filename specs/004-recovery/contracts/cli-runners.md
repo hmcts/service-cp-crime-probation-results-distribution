@@ -143,7 +143,9 @@ submit-hearing --hearing-id <uuid> --hearing-day <YYYY-MM-DD> --operator <name> 
 
 Outcome: `enqueued` with the `requestId` (from `RequestIdRecipe`) and a fresh run id, or
 `payload-unavailable` if neither the dated nor the undated `EXT_` key holds a readable payload with a
-`sharedTime`. Writes nothing to the store itself; the admission effects happen once the message is
+`sharedTime`. As built: `enqueued` exits `0`; `payload-unavailable` and an input refusal exit `1`;
+`broker-unavailable` exits `2`. The hearing id and day enter the recipe in their canonical forms
+(lower-case UUID, `YYYY-MM-DD`) and `sharedTime` as the payload's raw string. Writes nothing to the store itself; the admission effects happen once the message is
 delivered (a first delivery, a no-op, an abandon, or a replay with route `support` — FR-004-057).
 
 ## 6. `rollback-close-in-flight` (FR-004-049/049a — confirmed 2026-10-26; Research Decision 2)
@@ -175,7 +177,11 @@ list-dlq-completed
 ```
 
 No arguments. Peeks the dead-letter queue, lists only the entries whose `processed_request` is
-`COMPLETED`, with their dead-letter reason. Removes nothing. Pages at 500 rows.
+`COMPLETED`, with their dead-letter reason. Removes nothing. Pages at 500 rows. As built: the peek is
+a Service Bus receiver peek of the `DEAD_LETTER_QUEUE` sub-queue (the management client cannot
+peek); each entry's `requestId` is read from its body; a dead-letter reason outside this service's
+closed set prints as `other` (none recorded: `none`) and a `messageId` that is not `RESULTS:<uuid>`
+or `REPLAY:<uuid>` prints as `other`, so text chosen elsewhere is never echoed.
 
 ## Cross-cutting rules (every runner above)
 
