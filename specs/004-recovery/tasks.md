@@ -1059,6 +1059,20 @@ labelled `forced`, without moving the request off `COMPLETED`.
       ... : expected: 1.0 but was: 0.0`, `PerId > ... : expected: 1.0 but was: 2.0` (both outcomes
       still labelled `forced=false`). `ResendSharedTimeCheckIT` 9/9, `RequestRecoveryTransitionTest`
       12/12 and `ResendByRequestIdsIT` 24/24 still PASSED.
+      Gate round 1 (characterisation tests over the code above, so no red run of their own):
+      `ForcedResendIT` now pins the whole `FORCED_RESEND attempt=2 operator=<operator>
+      reason=<reason>` line for `SENT` and `NOT_APPLICABLE` latest rows (and operator and
+      `override = true` for the latter), a forced 503 failing `gateway-transient` at once with one
+      POST and the request still `COMPLETED`, and a claimed-incomplete forced attempt — read from
+      inside the send, its row still `PENDING` and the POST not yet made, `audit_note` already holds
+      the line; the rollback close then fences the outcome write. `ResendConcurrencyIT` `Races` adds
+      two concurrent forced resends of one `SENT` leg: one `Ran`, one `Refused(resend-in-progress)`,
+      one POST, two attempt rows and one audit line. GREEN on first run: `ForcedResendIT` 12/12,
+      `ResendConcurrencyIT` 9/9. Shown falsifiable by two reverted mutations of
+      `JdbcProcessedRequestRepository`: renaming ` operator=` to ` by=` in the audit SQL failed 3 of
+      21 (the claimed-incomplete, `SENT` and `NOT_APPLICABLE` cases); dropping the
+      `appendForcedResendLine` call failed 5 of 21 (those three, the sanitised-reason case and the
+      forced race).
 - [X] T057 [US5] Wire `forced=true`/`false` labelling into the outcome metric and log line from T048
       (FR-004-038) — extends `application/LegResender.java`'s outcome recording
       The outcome is recorded by `DistributionRunner`'s shared `record` path (T045), so the label is

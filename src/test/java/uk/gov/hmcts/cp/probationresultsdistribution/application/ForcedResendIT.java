@@ -7,6 +7,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.micrometer.core.instrument.Counter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -17,11 +18,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendEntryOutcome.Ran;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendEntryOutcome.Refused;
+import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcRollbackFencingRepository;
 
 /**
  * The forced resend (slice 004, US5; FR-004-036–FR-004-038, FR-004-006; design H9 (c), A3-36). With
@@ -114,7 +119,8 @@ class ForcedResendIT extends ResendTestSupport {
             assertThat(usersGroupsReadCount()).as("the switch is re-read").isEqualTo(1);
             assertThat(gatewayPostCount()).as("a genuine duplicate is sent").isEqualTo(1);
             assertRequestStillCompleted(requestId);
-            assertThat((String) requestRow(requestId).get("audit_note")).contains(REASON);
+            assertThat(forcedResendLines(requestId)).singleElement().asString()
+                    .endsWith(forcedResendLine(2));
             assertThat(legOutcomes("true", "SENT")).isEqualTo(1.0d);
             assertThat(legOutcomes("false", "SENT")).isZero();
             assertThat(outcomeLine().getFormattedMessage()).contains("forced=true", "runOrigin=RESEND");
@@ -129,7 +135,12 @@ class ForcedResendIT extends ResendTestSupport {
             final ResendRunResult result = resendOnce(requestId, true, false, 200);
 
             assertThat(entryFor(result, requestId)).contains(new Ran(LegStatus.SENT, Optional.empty()));
-            assertThat(latestAttempt(requestId).get("note")).isEqualTo(FORCE_RESEND);
+            final Map<String, Object> row = latestAttempt(requestId);
+            assertThat(row.get("note")).isEqualTo(FORCE_RESEND);
+            assertThat(row.get("operator")).isEqualTo(OPERATOR);
+            assertThat(row.get("override")).isEqualTo(true);
+            assertThat(forcedResendLines(requestId)).singleElement().asString()
+                    .endsWith(forcedResendLine(2));
             assertThat(gatewayPostCount()).isEqualTo(1);
             assertRequestStillCompleted(requestId);
             assertThat(legOutcomes("true", "SENT")).isEqualTo(1.0d);
@@ -227,6 +238,53 @@ class ForcedResendIT extends ResendTestSupport {
             assertThat(row.get("note")).isNull();
             assertRequestStillCompleted(requestId);
         }
+        @Test
+        @DisplayName("an outcome-unknown 5xx fails gateway-transient at once, the request left COMPLETED")
+        void outcome_unknown_5xx_fails_gateway_transient_at_once() {
+            final UUID requestId = seedCompletedSent(SHARED_TIME);
+
+            final ResendRunResult result = resendOnce(requestId, true, false, 503);
+
+            assertThat(entryFor(result, requestId))
+                    .contains(new Ran(LegStatus.FAILED, Optional.of(LegReason.GATEWAY_TRANSIENT)));
+            final Map<String, Object> row = latestAttempt(requestId);
+            assertThat(row.get(STATUS)).isEqualTo("FAILED");
+            assertThat(row.get("reason")).isEqualTo("gateway-transient");
+            assertThat(row.get("note")).isEqualTo(FORCE_RESEND);
+            assertThat(gatewayPostCount()).as("no in-run retry").isEqualTo(1);
+            assertRequestStillCompleted(requestId);
+            assertThat(legOutcomes("true", "FAILED")).isEqualTo(1.0d);
+        }
+
+        @Test
+        @DisplayName("a claimed-incomplete forced attempt is already audited before its POST")
+        void claimed_incomplete_forced_attempt_is_audited_before_the_post() {
+            final UUID requestId = seedCompletedSent(SHARED_TIME);
+            stubYouthSwitchActive();
+            stubGateway(200);
+            final JdbcRollbackFencingRepository fencing = new JdbcRollbackFencingRepository(jdbc(),
+                    new TransactionTemplate(new DataSourceTransactionManager(sharedDataSource())));
+            final List<String> auditedBeforePost = new ArrayList<>();
+            final List<Object> statusBeforePost = new ArrayList<>();
+            final HmppsSender real = publisher(new MetricRegistry(meterRegistry()));
+            // Inside the send, the attempt row is committed PENDING and the POST not yet made; the
+            // rollback close then rotates the claim, so the run's outcome write is fenced.
+            final HmppsSender fenced = redacted -> {
+                statusBeforePost.add(latestAttempt(requestId).get(STATUS));
+                auditedBeforePost.addAll(forcedResendLines(requestId));
+                fencing.closeInFlight();
+                return real.send(redacted);
+            };
+
+            final ResendRunResult result = resender(sharedRedisConnection(), 100, () -> false, fenced)
+                    .resend(new ResendRequest(List.of(requestId), OPERATOR, REASON, false, true));
+
+            assertThat(entryFor(result, requestId)).contains(new ResendEntryOutcome.ClaimedIncomplete());
+            assertThat(statusBeforePost).containsExactly("PENDING");
+            assertThat(auditedBeforePost).singleElement().asString().endsWith(forcedResendLine(2));
+            assertThat(forcedResendLines(requestId)).hasSize(1);
+            assertThat(requestRow(requestId).get(STATUS)).isEqualTo(COMPLETED);
+        }
     }
 
     @Nested
@@ -302,6 +360,16 @@ class ForcedResendIT extends ResendTestSupport {
     private double legOutcomes(final String forced, final String status) {
         return meterRegistry().find(OUTCOMES).tag("origin", "resend").tag("forced", forced)
                 .tag(STATUS, status).counters().stream().mapToDouble(Counter::count).sum();
+    }
+
+    private List<String> forcedResendLines(final UUID requestId) {
+        final String auditNote = (String) requestRow(requestId).get("audit_note");
+        return auditNote == null ? List.of() : auditNote.lines()
+                .filter(line -> line.contains("FORCED_RESEND")).toList();
+    }
+
+    private static String forcedResendLine(final int attempt) {
+        return " FORCED_RESEND attempt=" + attempt + " operator=" + OPERATOR + " reason=" + REASON;
     }
 
     private ILoggingEvent outcomeLine() {
