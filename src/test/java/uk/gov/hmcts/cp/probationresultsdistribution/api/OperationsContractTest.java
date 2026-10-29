@@ -23,11 +23,13 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
  * operations under a version raised from the placeholder's {@code 0.0.0}, and every closed value set
  * it carries equals the service's own vocabulary, value for value, in both directions.
  *
- * <p>The served-operations half of story 6 ("everything the document describes is served") is
- * checkable today only for replay ({@link ReplayController} exists); the resend-leg half remains
- * {@code [BLOCKED-ON-004]} until {@code application.LegResender} and {@code ResendLegController}
- * exist. This test covers the document-content half, which needs no controller: the document's own
- * closed enums compared against the code's, both ways.
+ * <p>Both controllers now exist ({@link ReplayController}, {@link ResendLegController}), but the
+ * served-operations half of story 6 ("everything the document describes is served") stays {@code
+ * [BLOCKED-ON-004]} for resend-leg: {@code application.LegResender} is not yet a bean of the
+ * serving context, so the endpoint is not registered there, and its answer is not yet the
+ * asynchronous one FR-005-015 names (tasks.md T029, T046). This test covers the document-content
+ * half, which needs no controller: the document's own closed enums compared against the code's,
+ * both ways.
  */
 @DisplayName("the operations API's OpenAPI document")
 class OperationsContractTest {

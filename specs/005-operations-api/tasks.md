@@ -403,8 +403,9 @@ outcomes.
 
 - [X] T024 [P] [US2] `ResendLegControllerTest` (`@WebMvcTest`, `LegResender` mocked): the list
       passed to `LegResender` exactly as sent — no collapse, no cap, no reorder (FR-005-011,
-      FR-005-013); `202 {resendRunId}` on acceptance, immediately, not waiting for any ID
-      (FR-005-015); whole-call refusals render 004's own codes
+      FR-005-013); `202 {resendRunId}` on acceptance — pinned as answered once 004's synchronous
+      `LegResender.resend` returns; FR-005-015's "immediately, not waiting for any ID" is **not**
+      pinned here and is tracked open as T046; whole-call refusals render 004's own codes
       (`missing-argument`/`argument-too-long`/`too-many-request-ids`/`unreadable-argument`/
       `intake-paused`/`store-unavailable`) per contracts/operations-api.md §2 —
       `src/test/java/.../api/ResendLegControllerTest.java`
@@ -422,6 +423,21 @@ outcomes.
       could not be absent, against FR-005-010's "both `false` when absent". GREEN after T028 →
       `15 tests completed, 0 failed` (and every other `api.*` test, the `*IT`s included, still
       green).
+      Gate round 1 remediation, test-first: RED `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.*" -Dtest.noFailFast=true` →
+      `135 tests completed, 11 failed`, every one an assertion (`WantedButNotInvoked` for the
+      response event on an unexpected failure in either controller, FR-005-025; `argumentName`
+      present for an unsafe unknown-field name, FR-005-031; `500` instead of the framework's
+      `404`/`405` for an unmapped route, FR-005-034), with the request event's exact fields, the
+      accepted run's `ids`/`notRun` counts, explicit-null overrides and an accepted run without a
+      run id pinned alongside. GREEN after the three fixes → `135 tests completed, 0 failed`.
+- [ ] T046 [BLOCKED-ON-004] [US2] Pin FR-005-015's "`202` before any ID has necessarily
+      finished" in `ResendLegControllerTest` (the `202` comes back while a mocked run is still
+      going) and make `ResendLegController` answer that way — needs 004 to split the whole-run
+      checks and the `resendRunId` assignment from the run itself (or expose an asynchronous entry
+      point); until then the endpoint answers after the whole run, and neither T029 nor deployed
+      wiring of `LegResender` should proceed without this or a spec amendment accepting a
+      synchronous answer
 - [X] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
       result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
       extends `src/test/java/.../api/OperationsResponseMapperTest.java`
@@ -482,7 +498,8 @@ reads `ResendRunResult` — `wholeRunRefusal` rendered as its own code, otherwis
 the plan is not closed here**: `resend` is synchronous — it runs every listed id and only then
 returns the run id — so the `202` arrives after the run, not "before any ID has necessarily
 finished" (FR-005-015). Making it asynchronous would need 004 to split the whole-run checks and
-the run-id assignment from the run itself; that is 004's change to make, not this slice's.
+the run-id assignment from the run itself; that is 004's change to make, not this slice's, and it
+is tracked open as T046.
 `LegResender` is also still built only inside the packaged command line (`OperatorCommandLine`),
 never as a bean of the serving context, so `ResendLegController` — registered, like
 `ReplayController`, by a `@ConditionalOnBean(LegResender.class)` `@Bean` method — is absent from a
