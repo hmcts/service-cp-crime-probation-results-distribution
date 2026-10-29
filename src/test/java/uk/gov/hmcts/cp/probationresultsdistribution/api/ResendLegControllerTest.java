@@ -37,6 +37,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -82,6 +83,8 @@ class ResendLegControllerTest {
     private MockMvc mockMvc;
     @Autowired
     private LegResender legResender;
+    @Autowired
+    private ResendLegExecutor executor;
     @MockitoBean
     private OperationsAuditPublisher auditPublisher;
     @MockitoBean
@@ -288,6 +291,26 @@ class ResendLegControllerTest {
         final ArgumentCaptor<Map<String, Object>> response = ArgumentCaptor.forClass(Map.class);
         verify(auditPublisher).publishResponseEvent(eq(OperationsAction.RESEND_LEG), response.capture());
         assertThat(response.getValue()).containsEntry("outcome", "unexpected");
+    }
+
+    @Test
+    @DirtiesContext
+    @DisplayName("a run accepted while the executor is shutting down answers 500 unexpected, never 202")
+    void resendLeg_executorShuttingDown_should_answer500UnexpectedWithoutTheRunId() throws Exception {
+        when(legResender.accept(any())).thenReturn(accepted(FIRST));
+        executor.close();
+
+        postJson(VALID_BODY)
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.reason").value("unexpected"))
+                .andExpect(content().string(not(containsString(RUN_ID.toString()))));
+
+        @SuppressWarnings("unchecked")
+        final ArgumentCaptor<Map<String, Object>> response = ArgumentCaptor.forClass(Map.class);
+        verify(auditPublisher).publishResponseEvent(eq(OperationsAction.RESEND_LEG), response.capture());
+        assertThat(response.getValue()).containsEntry("outcome", "unexpected")
+                .doesNotContainKey("resendRunId");
+        verify(legResender, never()).run(any(), any());
     }
 
     @ParameterizedTest(name = "{0} renders 500 unexpected")
