@@ -518,6 +518,18 @@ outcomes.
       is not; the IT boots `OperationsConfiguration` first to pin that. No `distribution.*`
       property added (T040 green) — `./gradlew test --tests "...api.*" --tests "...config.*"
       --tests "...cli.*" -Dtest.noFailFast=true` → `279 tests completed, 0 failed`.
+      Review round 1 (2026-10-29): pinned, green on first run as they pin behaviour already
+      built, `close()`'s two failure paths (ERROR `cause=shutdown-wait-elapsed`; an interrupted
+      wait logged at ERROR with the interrupt flag kept), a submit refused at shutdown answering
+      `500 unexpected` with an `outcome=unexpected` response event and no run id, and the serving
+      context with intake disabled holding no `LegResender`, executor or controller; a submit and
+      `close()`'s stop-and-drain made mutually exclusive, and a run the thread takes after the stop
+      dropped with the same WARN line (a thread race, not reproducible deterministically, so no
+      red run); the new test methods renamed to `{action}_{scenario}_should_{expectation}`.
+      Coverage on `3cb1b91`: `./gradlew jacocoTestReport check -Dtest.noFailFast=true`
+      → BUILD SUCCESSFUL, `jacocoTestCoverageVerification` green at LINE 0.9448 / BRANCH 0.8878
+      (gate 0.88 / 0.85); `ResendLegExecutor` 35/35 lines, 6/6 branches; `ResendLegController`
+      34/34 lines; `ResendAcceptance` fully covered.
 - [X] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
       result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
       extends `src/test/java/.../api/OperationsResponseMapperTest.java`
