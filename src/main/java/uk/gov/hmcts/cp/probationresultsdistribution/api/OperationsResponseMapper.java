@@ -4,6 +4,7 @@ import java.util.UUID;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.dto.ReplayResponse;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.dto.ResendLegAcceptedResponse;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendAcceptance;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendRunResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
@@ -72,6 +73,27 @@ public final class OperationsResponseMapper {
         }
         return new ResendLegAcceptedResponse(result.resendRunId().orElseThrow(
                 () -> new IllegalStateException("an accepted resend-leg run carries its run id")));
+    }
+
+    /**
+     * Maps resend-leg's accept step to the accepted-run answer (FR-005-015): an accepted run
+     * answers with its {@code resendRunId} only (research.md Decision 4), before any id has run; a
+     * whole-run refusal is thrown as its own code, exactly as {@link
+     * #toResendLegAcceptedResponse(ResendRunResult, int)} renders it.
+     *
+     * @param acceptance the accept step's answer
+     * @param capApplied {@code distribution.resend.max-ids-per-run}, carried on
+     *                   {@code too-many-request-ids}
+     * @return the accepted-run answer
+     */
+    public ResendLegAcceptedResponse toResendLegAcceptedResponse(final ResendAcceptance acceptance,
+                                                                 final int capApplied) {
+        return switch (acceptance) {
+            case ResendAcceptance.Refused refused -> throw wholeRunRefusalFor(refused.refusal(),
+                    capApplied);
+            case ResendAcceptance.Accepted accepted ->
+                new ResendLegAcceptedResponse(accepted.resendRunId());
+        };
     }
 
     private static OperationsRefusalException wholeRunRefusalFor(final WholeRunRefusal refusal,

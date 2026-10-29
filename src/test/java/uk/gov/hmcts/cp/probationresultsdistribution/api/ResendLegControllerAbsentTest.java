@@ -18,10 +18,11 @@ import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 
 /**
  * Pins the {@code @ConditionalOnBean(LegResender.class)} registration in {@code
- * config.OperationsConfiguration}: with no {@link LegResender} bean, as in the serving context
- * until slice 004 wires one, the context still starts, holds no {@link ResendLegController} and
- * has no resend-leg route. Its presence once a {@link LegResender} bean exists is pinned by
- * {@code ResendLegControllerTest}.
+ * config.OperationsConfiguration}: with no {@link LegResender} bean, as in a context with intake
+ * off ({@code distribution.consumer.enabled=false}), the context still starts, holds no {@link
+ * ResendLegController} and has no resend-leg route. Its presence once a {@link LegResender} bean
+ * exists is pinned by {@code ResendLegControllerTest}, and the serving context's own {@link
+ * LegResender} bean with intake on by {@code ResendLegExecutionIT}.
  */
 @WebMvcTest(controllers = ResendLegController.class, properties = "distribution.consumer.enabled=false")
 @ActiveProfiles("test")

@@ -17,7 +17,10 @@ before the paired implementation task's commit records the green run.
 **`application.ReplayAction` now exists** on this branch — `public ReplayOutcome
 replay(UUID requestId)`, exactly the shape `research.md` Decision 5 assumed — so **US1's tasks are
 no longer blocked on a nonexistent class** and are unmarked below. **`application.LegResender`
-still does not exist**; US2, US3 and US7's tasks remain `[BLOCKED-ON-004]`. One gap remains even
+now exists too, split into an accept step and a run step, and is a bean of the serving context
+whenever intake is wired** (T047–T050, 2026-10-29), so `ResendLegController` is registered when
+deployed and answers `202` before the run (T046 closed); US2's T029 and US3's T030–T031 are
+runnable, and US7's remaining `[BLOCKED-ON-004]` tags are that story's own to revisit. One gap remains even
 for US1: `ReplayAction` has no production `ReplayEnqueuer` wired in Spring yet (004's own
 `cli/ReplayRunner` has the same gap), so a *manual, end-to-end* run (T023) still can't happen until
 that adapter lands — the `@WebMvcTest` controller tests (which mock `ReplayAction` at the boundary)
@@ -431,7 +434,7 @@ outcomes.
       `404`/`405` for an unmapped route, FR-005-034), with the request event's exact fields, the
       accepted run's `ids`/`notRun` counts, explicit-null overrides and an accepted run without a
       run id pinned alongside. GREEN after the three fixes → `135 tests completed, 0 failed`.
-- [ ] T046 [BLOCKED-ON-004] [US2] Pin FR-005-015's "`202` before any ID has necessarily
+- [X] T046 [US2] Pin FR-005-015's "`202` before any ID has necessarily
       finished" in `ResendLegControllerTest` (the `202` comes back while a mocked run is still
       going) and make `ResendLegController` answer that way — needs 004 to split the whole-run
       checks and the `resendRunId` assignment from the run itself (or expose an asynchronous entry
@@ -439,7 +442,8 @@ outcomes.
       wiring of `LegResender` should proceed without this or a spec amendment accepting a
       synchronous answer. Unblocked by T047–T050 (decided 2026-10-29: runs queue one at a time on
       a single-thread executor fixed in code; on shutdown a run claims nothing further and reports
-      the rest `not-run`)
+      the rest `not-run`). Closed by T050: pinned by
+      `ResendLegControllerTest.answers_202_while_the_run_is_still_going`.
 - [X] T047 [US2] `LegResenderTest` (004's class, extended): the run splits in two without changing
       what it does — an accept step applies every whole-run check and assigns the `resendRunId`
       (a whole-run refusal claims nothing and assigns no run id), and a run step over an accepted
@@ -469,7 +473,7 @@ outcomes.
       "...config.LogStatementSweepTest" -Dtest.noFailFast=true` → `99 tests completed, 0 failed`
       (`LegResenderTest` 11/11; 004's resend ITs, `ResendLegRunnerTest` and T040 unchanged and
       green).
-- [ ] T049 [US2] `ResendLegControllerTest` + `ResendLegExecutionIT`: the `202 {resendRunId}`
+- [X] T049 [US2] `ResendLegControllerTest` + `ResendLegExecutionIT`: the `202 {resendRunId}`
       comes back while a mocked run is still going (T046's pin); accepted runs execute one at a
       time, in acceptance order, on one executor thread fixed in code; whole-call refusals still
       answer synchronously with 004's codes; the response audit event is published at acceptance;
@@ -479,12 +483,41 @@ outcomes.
       serving context (built from the consumer's `DistributionRunner`, the processed-log store and
       the intake-pause gate), so `ResendLegController` is registered when deployed —
       `src/test/java/.../api/ResendLegControllerTest.java`, `src/test/java/.../api/ResendLegExecutionIT.java`
-- [ ] T050 [US2] Implement the accepted-run execution and the serving-context wiring: a
+      RED (seam: `api.ResendLegExecutor` with its real constructors, `submit` and `close` doing
+      nothing; `ResendLegControllerTest` rewritten against `LegResender.accept`, with the
+      accepted-run response event now carrying `ids` = the distinct ids accepted and no `notRun`,
+      which is known only once the run has gone; the test-only `DistributionProperties` builder
+      moved to `config.DistributionPropertiesFixtures` so the new IT outside `config` can build one,
+      `ServiceBusConsumerConfigIT` using it unchanged) — `./gradlew test --tests
+      "...api.ResendLegControllerTest" --tests "...api.ResendLegExecutionIT" --tests
+      "...config.ServiceBusConsumerConfigIT" -Dtest.noFailFast=true` → `28 tests completed,
+      19 failed`, every one an assertion: 15 controller cases `Status expected:<202|400|409|503>
+      but was:<500>` (the controller still called `resend`), the three executor cases `Expecting
+      value to be true but was false` (nothing ran), and the serving context `to have a single bean
+      of type LegResender but found no beans of that type`; no compile error.
+- [X] T050 [US2] Implement the accepted-run execution and the serving-context wiring: a
       single-thread resend executor (in code, not a property) with the shutdown behaviour above,
       `ResendLegController` answering `202` after the accept step and submitting the run step, and
       a `LegResender` `@Bean` in the serving context; the command-line wiring in
       `OperatorCommandLine` unchanged — satisfies T049 and T046 (mark T046 `[X]`, drop its
       `[BLOCKED-ON-004]` tag); T029 and T030–T031 then become runnable
+      GREEN: `api.ResendLegExecutor` — one platform thread `resend-leg-run` on a
+      `ThreadPoolExecutor(1, 1)` over its own queue; a thrown run logged at ERROR
+      `resend-leg run failed resendRunId=… cause=<class>`; `close()` raises the stop signal the
+      run step reads, drops every queued run (WARN `resend-leg run not started cause=shutdown
+      resendRunId=…`), refuses further submits, and waits for the id in flight up to the 4-minute
+      processing deadline (fixed in code). `ResendLegController` calls `accept`, renders a refusal
+      at once through `OperationsResponseMapper.toResendLegAcceptedResponse(ResendAcceptance,
+      int)`, submits an accepted run and answers `202`. `OperationsConfiguration` declares the
+      `LegResender` `@Bean` (`@ConditionalOnProperty(distribution.consumer.enabled=true)`, from
+      the consumer's `DistributionRunner`, `ProcessedRequestRepository` and the
+      `ConsumerLifecycleController` pause gate) ahead of its two `@ConditionalOnBean(LegResender)`
+      methods (the executor, closed with the context, and the controller) — declared there rather
+      than in `ServiceBusConsumerConfig` because a bean-method condition sees only definitions
+      registered before it, which within one class is declaration order and across scanned classes
+      is not; the IT boots `OperationsConfiguration` first to pin that. No `distribution.*`
+      property added (T040 green) — `./gradlew test --tests "...api.*" --tests "...config.*"
+      --tests "...cli.*" -Dtest.noFailFast=true` → `279 tests completed, 0 failed`.
 - [X] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
       result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
       extends `src/test/java/.../api/OperationsResponseMapperTest.java`
@@ -531,7 +564,10 @@ outcomes.
       properties, so the contract's `unknown-field` (FR-005-033) was not reachable for this body
       before; the cap carried on `too-many-request-ids` read from
       `distribution.resend.max-ids-per-run`.
-- [ ] T029 Run `quickstart.md`'s resend-leg steps once `application.LegResender` lands
+- [ ] T029 Run `quickstart.md`'s resend-leg steps — runnable now: `LegResender` is a bean of the
+      serving context whenever intake is wired, so `ResendLegController` is registered (T050); the
+      call answers `202` before the run, so read the outcomes from 004's report line or the list
+      runner, not from the answer
 
 **Checkpoint**: resend-leg over HTTP is implementable the moment 004's `LegResender` exists.
 
@@ -547,10 +583,13 @@ returns the run id — so the `202` arrives after the run, not "before any ID ha
 finished" (FR-005-015). Making it asynchronous would need 004 to split the whole-run checks and
 the run-id assignment from the run itself; that is 004's change to make, not this slice's, and it
 is tracked open as T046.
-`LegResender` is also still built only inside the packaged command line (`OperatorCommandLine`),
-never as a bean of the serving context, so `ResendLegController` — registered, like
-`ReplayController`, by a `@ConditionalOnBean(LegResender.class)` `@Bean` method — is absent from a
-deployed context until 004 wires it (T029 waits on that too).
+`LegResender` was also built only inside the packaged command line (`OperatorCommandLine`), never
+as a bean of the serving context, so `ResendLegController` was absent from a deployed context.
+**Both are closed by T047–T050** (2026-10-29): 004's class is split into `accept` (every whole-run
+check and the run id, claiming nothing) and `run` (the ids, with a stop signal), `resend` kept as
+the two in turn for the command line; the controller answers `202` after `accept` and hands the run
+to a single-thread `api.ResendLegExecutor`; and `OperationsConfiguration` builds a `LegResender`
+bean from the consumer's own pipeline whenever intake is wired.
 
 ---
 
@@ -564,7 +603,7 @@ reaches the capability as `true` with operator/reason unchanged, and both audit 
 to end, send a request whose latest row is `SENT` with the override, then without it, and assert a
 new attempt then `not-eligible`.
 
-### Tests for User Story 3 (write first, confirm red, then implement) ⚠️ `[BLOCKED-ON-004]`
+### Tests for User Story 3 (write first, confirm red, then implement) ⚠️
 
 - [ ] T030 [P] [US3] `ForcedResendControllerIT`: `allowTerminalSuccess: true` reaches `LegResender`
       unchanged with operator/reason; both audit events say the override was requested
@@ -572,10 +611,12 @@ new attempt then `not-eligible`.
       succeeds (`202`); a reason or operator over 200 characters is `400 argument-too-long`
       (FR-005-016); neither operator nor reason appears in the answer, a log line, or a metric label
       (FR-005-023, FR-005-031); a forced resend whose send later fails is still a `202`-accepted
-      call — the failure surfaces only in 004's report (FR-005-014) — `[BLOCKED-ON-004]` —
+      call — the failure surfaces only in 004's report (FR-005-014) — unblocked by T047–T050; since
+      the answer now comes before the run, "renders `not-eligible`" is read from 004's report line,
+      not from the `202` —
       `src/test/java/.../api/ForcedResendControllerIT.java`
 
-### Implementation for User Story 3 `[BLOCKED-ON-004]`
+### Implementation for User Story 3
 
 - [ ] T031 [US3] Confirm `ResendLegController`/`OperationsAuditPublisher` (T028, T010) already pass
       `allowTerminalSuccess` through unchanged and surface it on both audit events without a new

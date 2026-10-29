@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.dto.ResendLegAcceptedResponse;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.dto.ResendLegRequest;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
-import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendRunResult;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendAcceptance;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
 
 /**
@@ -20,10 +20,12 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
  * 004's code, rendered by {@link OperationsResponseMapper}; per-ID outcomes are 004's report and
  * never the call's status (FR-005-014).
  *
- * <p>{@link LegResender#resend} runs every listed id before it returns, and the run's
- * {@code resendRunId} is known only on that return, so this endpoint answers {@code 202} once the
- * run has finished rather than before any id has (FR-005-015's accepted-run shape, with 004's
- * synchronous capability underneath it; recorded as an open point in {@code tasks.md}).
+ * <p>The call answers as an accepted run (FR-005-015): {@link LegResender#accept} applies every
+ * whole-run check and assigns the {@code resendRunId}, claiming nothing, and a refusal there is
+ * answered at once; an accepted run is handed to {@link ResendLegExecutor}, which runs it behind
+ * any run already accepted, and the call answers {@code 202} with the run id without waiting for
+ * any id. The response audit event is published at acceptance and carries the run id and the
+ * number of distinct ids accepted; how each id ended is in 004's run report line only.
  *
  * <p>Excluded from {@code Application}'s component scan and registered by a {@code
  * @ConditionalOnBean(LegResender.class)}-gated {@code @Bean} method in {@code
@@ -36,6 +38,7 @@ public class ResendLegController {
     private static final String ACCEPTED = "accepted";
 
     private final LegResender legResender;
+    private final ResendLegExecutor executor;
     private final OperationsRequestMapper requestMapper;
     private final OperationsResponseMapper responseMapper;
     private final OperationsAuditPublisher auditPublisher;
@@ -45,16 +48,19 @@ public class ResendLegController {
      * Creates the controller.
      *
      * @param legResender    slice 004's resend-leg capability
+     * @param executor       runs each accepted run, one at a time
      * @param requestMapper  parses and bound-checks the request (FR-005-003)
      * @param responseMapper maps the capability's result to this slice's answer shapes
      * @param auditPublisher publishes the before/after audit event pair (FR-005-025)
      * @param maxIdsPerRun   {@code distribution.resend.max-ids-per-run}, carried on a
      *                       {@code too-many-request-ids} refusal
      */
-    public ResendLegController(final LegResender legResender, final OperationsRequestMapper requestMapper,
+    public ResendLegController(final LegResender legResender, final ResendLegExecutor executor,
+                               final OperationsRequestMapper requestMapper,
                                final OperationsResponseMapper responseMapper,
                                final OperationsAuditPublisher auditPublisher, final int maxIdsPerRun) {
         this.legResender = legResender;
+        this.executor = executor;
         this.requestMapper = requestMapper;
         this.responseMapper = responseMapper;
         this.auditPublisher = auditPublisher;
@@ -62,7 +68,7 @@ public class ResendLegController {
     }
 
     /**
-     * Runs resend-leg over an explicit list of ids.
+     * Accepts resend-leg over an explicit list of ids and queues the run.
      *
      * @param body the request as sent
      * @return the {@code 202} accepted-run answer
@@ -75,19 +81,23 @@ public class ResendLegController {
     }
 
     /**
-     * Runs the call and publishes its response event whatever the outcome (FR-005-025): {@code
-     * accepted} with the run id and counts, the refusal code, or {@code unexpected} for any other
-     * failure, which is then rethrown for the problem-detail handler to render {@code 500}.
+     * Accepts the run, queues it, and publishes the response event whatever the outcome
+     * (FR-005-025): {@code accepted} with the run id and the number of distinct ids, the refusal
+     * code, or {@code unexpected} for any other failure, which is then rethrown for the
+     * problem-detail handler to render {@code 500}.
      */
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     // Caught only to publish the response event FR-005-025 owes every outcome, then rethrown unchanged.
     private ResendLegAcceptedResponse runAudited(final ParsedResendLegCommand parsed) {
         final Map<String, Object> fields = overrides(parsed);
-        final ResendRunResult result;
+        final ResendAcceptance.Accepted accepted;
         final ResendLegAcceptedResponse response;
         try {
-            result = legResender.resend(requestMapper.toResendRequest(parsed));
-            response = responseMapper.toResendLegAcceptedResponse(result, maxIdsPerRun);
+            final ResendAcceptance acceptance = legResender.accept(requestMapper.toResendRequest(parsed));
+            // Throws the refusal's own code for a run refused whole, so past it the run was accepted.
+            response = responseMapper.toResendLegAcceptedResponse(acceptance, maxIdsPerRun);
+            accepted = (ResendAcceptance.Accepted) acceptance;
+            executor.submit(accepted);
         } catch (final OperationsRefusalException refusal) {
             fields.put(OUTCOME, refusal.reason().wireValue());
             auditPublisher.publishResponseEvent(OperationsAction.RESEND_LEG, fields);
@@ -99,8 +109,7 @@ public class ResendLegController {
         }
         fields.put(OUTCOME, ACCEPTED);
         fields.put("resendRunId", response.resendRunId().toString());
-        fields.put("ids", result.entries().size());
-        fields.put("notRun", result.notRun().size());
+        fields.put("ids", accepted.requestIds().size());
         auditPublisher.publishResponseEvent(OperationsAction.RESEND_LEG, fields);
         return response;
     }

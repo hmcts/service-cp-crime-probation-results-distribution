@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Optional;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,11 +18,16 @@ import uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRequestMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsResponseMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.ReplayController;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.ResendLegController;
+import uk.gov.hmcts.cp.probationresultsdistribution.api.ResendLegExecutor;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.IntakePauseGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
 /**
- * Composes the operations API's audit publishing (FR-005-025 to FR-005-027). {@code JmsTemplate} is
+ * Composes the operations API: its controllers, the resend-leg capability and the one thread its
+ * accepted runs execute on (FR-005-015), and its audit publishing (FR-005-025 to FR-005-027). {@code JmsTemplate} is
  * {@link Optional} because {@code cp-audit-filter-springboot}'s own auto-configuration only
  * registers it when the audit transport is switched on ({@code cp.audit.enabled=true}); when it is
  * off (the scaffold's default), {@link OperationsAuditPublisher} treats every call as unaudited
@@ -99,13 +105,57 @@ public class OperationsConfiguration {
     }
 
     /**
-     * Registers {@link ResendLegController} once a {@link LegResender} bean exists, for the same
-     * reason and in the same way as {@link #replayController}: slice 004 builds its {@link
-     * LegResender} today only inside the packaged command line ({@code OperatorCommandLine}), never
-     * as a bean of the serving context, so until it is wired here this controller is absent from
-     * the context rather than failing it.
+     * Slice 004's resend-leg capability as a bean of the serving context, built from the
+     * consumer's own {@link DistributionRunner} and processed-log store ({@code
+     * ServiceBusConsumerConfig}) and its reconciled intake-pause gate ({@code
+     * inbound.ConsumerLifecycleController}), so it exists exactly when intake is wired. The packaged
+     * command line ({@code OperatorCommandLine}) still builds its own, unchanged.
      *
-     * @param legResender    slice 004's resend-leg capability, once it is wired
+     * <p>Declared here, ahead of the two {@code @ConditionalOnBean(LegResender.class)} methods
+     * below, rather than in {@code ServiceBusConsumerConfig}: a {@code @Bean}-method condition sees
+     * only the definitions registered before it, and within one class that is declaration order,
+     * whereas the order in which the component scan parses two configuration classes is not
+     * something to rely on.
+     *
+     * @param pauseGate  the reconciled operator-pause read
+     * @param store      the processed-log store
+     * @param runner     the consumer's pipeline
+     * @param metrics    the telemetry port
+     * @param properties the service's typed configuration, for
+     *                   {@code distribution.resend.max-ids-per-run}
+     * @return the capability
+     */
+    /* default */
+    @Bean
+    @ConditionalOnProperty(name = "distribution.consumer.enabled", havingValue = "true")
+    LegResender legResender(final IntakePauseGate pauseGate, final ProcessedRequestRepository store,
+                            final DistributionRunner runner, final MetricRegistry metrics,
+                            final DistributionProperties properties) {
+        return new LegResender(pauseGate, store, runner, metrics, properties.resend().maxIdsPerRun());
+    }
+
+    /**
+     * The one thread accepted resend-leg runs execute on, one at a time (FR-005-015); closed with
+     * the context, when the running run claims nothing further and queued runs never start.
+     *
+     * @param legResender slice 004's resend-leg capability
+     * @return the executor
+     */
+    /* default */
+    @Bean(destroyMethod = "close")
+    @ConditionalOnBean(LegResender.class)
+    ResendLegExecutor resendLegExecutor(final LegResender legResender) {
+        return new ResendLegExecutor(legResender);
+    }
+
+    /**
+     * Registers {@link ResendLegController} once a {@link LegResender} bean exists, for the same
+     * reason and in the same way as {@link #replayController}: the serving context has one exactly
+     * when intake is wired ({@link #legResender}); without one the controller is absent from the
+     * context rather than failing it.
+     *
+     * @param legResender    slice 004's resend-leg capability
+     * @param executor       runs each accepted run
      * @param requestMapper  the request mapper
      * @param responseMapper the response mapper
      * @param auditPublisher the audit publisher
@@ -117,12 +167,13 @@ public class OperationsConfiguration {
     @Bean
     @ConditionalOnBean(LegResender.class)
     ResendLegController resendLegController(final LegResender legResender,
+                                            final ResendLegExecutor executor,
                                             final OperationsRequestMapper requestMapper,
                                             final OperationsResponseMapper responseMapper,
                                             final OperationsAuditPublisher auditPublisher,
                                             final DistributionProperties properties) {
-        return new ResendLegController(legResender, requestMapper, responseMapper, auditPublisher,
-                properties.resend().maxIdsPerRun());
+        return new ResendLegController(legResender, executor, requestMapper, responseMapper,
+                auditPublisher, properties.resend().maxIdsPerRun());
     }
 
     /**

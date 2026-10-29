@@ -12,7 +12,10 @@
  * {@code FAILED} request under its exhausted {@code messageId}, at broker delivery count 1, as a
  * replay (DV-26).
  *
- * <p>{@code LegResender} is the resend-leg capability. It takes an explicit list of
+ * <p>{@code LegResender} is the resend-leg capability, in two steps: an accept step that applies
+ * every whole-run check and assigns the run id, claiming nothing, and a run step that takes the
+ * accepted ids in turn and stops claiming on a plain stop signal as on a pause; {@code resend} is
+ * the two in turn. It takes an explicit list of
  * {@code requestId}s and checks and reports each one on its own: an ineligible one is refused with
  * a bounded code ({@code unknown-request}, {@code not-eligible}, {@code resend-in-progress} or
  * {@code request-claimed}) while the rest proceed (design H16). Directly after the payload fetch,
