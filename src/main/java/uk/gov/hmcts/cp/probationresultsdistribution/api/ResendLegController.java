@@ -71,20 +71,31 @@ public class ResendLegController {
     public ResponseEntity<ResendLegAcceptedResponse> resendLeg(@RequestBody final ResendLegRequest body) {
         final ParsedResendLegCommand parsed = requestMapper.parseResendLeg(body);
         auditPublisher.publishRequestEvent(OperationsAction.RESEND_LEG, overrides(parsed));
-        final ResendRunResult result = legResender.resend(requestMapper.toResendRequest(parsed));
-        return ResponseEntity.accepted().body(renderAudited(parsed, result));
+        return ResponseEntity.accepted().body(runAudited(parsed));
     }
 
-    private ResendLegAcceptedResponse renderAudited(final ParsedResendLegCommand parsed,
-                                                    final ResendRunResult result) {
+    /**
+     * Runs the call and publishes its response event whatever the outcome (FR-005-025): {@code
+     * accepted} with the run id and counts, the refusal code, or {@code unexpected} for any other
+     * failure, which is then rethrown for the problem-detail handler to render {@code 500}.
+     */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    // Caught only to publish the response event FR-005-025 owes every outcome, then rethrown unchanged.
+    private ResendLegAcceptedResponse runAudited(final ParsedResendLegCommand parsed) {
         final Map<String, Object> fields = overrides(parsed);
+        final ResendRunResult result;
         final ResendLegAcceptedResponse response;
         try {
+            result = legResender.resend(requestMapper.toResendRequest(parsed));
             response = responseMapper.toResendLegAcceptedResponse(result, maxIdsPerRun);
         } catch (final OperationsRefusalException refusal) {
             fields.put(OUTCOME, refusal.reason().wireValue());
             auditPublisher.publishResponseEvent(OperationsAction.RESEND_LEG, fields);
             throw refusal;
+        } catch (final RuntimeException unexpected) {
+            fields.put(OUTCOME, OperationsRefusalReason.UNEXPECTED.wireValue());
+            auditPublisher.publishResponseEvent(OperationsAction.RESEND_LEG, fields);
+            throw unexpected;
         }
         fields.put(OUTCOME, ACCEPTED);
         fields.put("resendRunId", response.resendRunId().toString());

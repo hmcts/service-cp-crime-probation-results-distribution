@@ -8,7 +8,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.dto.ReplayResponse;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction;
-import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
 
 /**
@@ -27,6 +26,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
  */
 @RestController
 public class ReplayController {
+
+    private static final String OUTCOME = "outcome";
 
     private final ReplayAction replayAction;
     private final OperationsRequestMapper requestMapper;
@@ -65,20 +66,30 @@ public class ReplayController {
         final UUID parsedRequestId = requestMapper.parseRequestId(requestId);
         auditPublisher.publishRequestEvent(OperationsAction.REPLAY,
                 Map.of("requestId", parsedRequestId.toString()));
-        final ReplayOutcome outcome = replayAction.replay(parsedRequestId);
-        return renderAudited(parsedRequestId, outcome);
+        return replayAudited(parsedRequestId);
     }
 
-    private ReplayResponse renderAudited(final UUID requestId, final ReplayOutcome outcome) {
+    /**
+     * Runs the call and publishes its response event whatever the outcome (FR-005-025): the
+     * rendered outcome, the refusal code, or {@code unexpected} for any other failure, which is
+     * then rethrown for the problem-detail handler to render {@code 500}.
+     */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    // Caught only to publish the response event FR-005-025 owes every outcome, then rethrown unchanged.
+    private ReplayResponse replayAudited(final UUID requestId) {
         final ReplayResponse response;
         try {
-            response = responseMapper.toReplayResponse(requestId, outcome);
+            response = responseMapper.toReplayResponse(requestId, replayAction.replay(requestId));
         } catch (final OperationsRefusalException refusal) {
             auditPublisher.publishResponseEvent(OperationsAction.REPLAY,
-                    Map.of("outcome", refusal.reason().wireValue()));
+                    Map.of(OUTCOME, refusal.reason().wireValue()));
             throw refusal;
+        } catch (final RuntimeException unexpected) {
+            auditPublisher.publishResponseEvent(OperationsAction.REPLAY,
+                    Map.of(OUTCOME, OperationsRefusalReason.UNEXPECTED.wireValue()));
+            throw unexpected;
         }
-        auditPublisher.publishResponseEvent(OperationsAction.REPLAY, Map.of("outcome", response.outcome()));
+        auditPublisher.publishResponseEvent(OperationsAction.REPLAY, Map.of(OUTCOME, response.outcome()));
         return response;
     }
 }
