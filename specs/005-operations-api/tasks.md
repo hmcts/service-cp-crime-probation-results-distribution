@@ -411,6 +411,13 @@ outcomes.
 - [ ] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
       result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
       `[BLOCKED-ON-004]` — extends `src/test/java/.../api/OperationsResponseMapperTest.java`
+      RED (seam: `OperationsResponseMapper.toResendLegAcceptedResponse(ResendRunResult, int)`
+      returning `new ResendLegAcceptedResponse(null)`) — `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsResponseMapperTest"
+      -Dtest.noFailFast=true` → `18 tests completed, 11 failed`: every resend-leg-half case an
+      `AssertionError`/`AssertionFailedError` (`expected: 9c4f2a10-… but was: null`, `Expecting
+      actual not to be null` for each whole-run refusal), the seven replay-half cases still green,
+      no compile error.
 - [ ] T026 [P] [US2] `OperationsRequestMapperTest` (resend-leg list half): `allowChangedPayload`
       passed through unchanged, `false` when absent (FR-005-010) — `[BLOCKED-ON-004]` for the
       end-to-end case, but the parsing-only assertions can run against T008 today — extends

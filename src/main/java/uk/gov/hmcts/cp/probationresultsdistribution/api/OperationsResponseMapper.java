@@ -2,7 +2,9 @@ package uk.gov.hmcts.cp.probationresultsdistribution.api;
 
 import java.util.UUID;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.dto.ReplayResponse;
+import uk.gov.hmcts.cp.probationresultsdistribution.api.dto.ResendLegAcceptedResponse;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendRunResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 
 /**
@@ -45,5 +47,19 @@ public final class OperationsResponseMapper {
                     "replay never yields request-claimed (slice 004, Assumption 2)");
         };
         return OperationsRefusalException.forReason(mapped);
+    }
+
+    /**
+     * Maps one resend-leg run's result to the endpoint's accepted-run answer (FR-005-015;
+     * research.md Decision 4).
+     *
+     * @param result     the resend-leg capability's result
+     * @param capApplied {@code distribution.resend.max-ids-per-run}, carried on a
+     *                   {@code too-many-request-ids} refusal
+     * @return the {@code 202} body
+     */
+    public ResendLegAcceptedResponse toResendLegAcceptedResponse(final ResendRunResult result,
+                                                                 final int capApplied) {
+        return new ResendLegAcceptedResponse(null);
     }
 }
