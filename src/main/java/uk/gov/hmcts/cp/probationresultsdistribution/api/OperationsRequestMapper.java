@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.dto.ResendLegRequest;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendRequest;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 
 /**
@@ -63,6 +64,17 @@ public final class OperationsRequestMapper {
         final String reason = requireBoundedText(raw.reason(), REASON);
         return new ParsedResendLegCommand(requestIds, leg, operator, reason, raw.allowTerminalSuccess(),
                 raw.allowChangedPayload());
+    }
+
+    /**
+     * Hands a parsed resend-leg command to slice 004's resend-leg capability as its own input
+     * (FR-005-013).
+     *
+     * @param parsed the parsed command
+     * @return slice 004's {@link ResendRequest}
+     */
+    public ResendRequest toResendRequest(final ParsedResendLegCommand parsed) {
+        return new ResendRequest(List.of(), "", "", false, false);
     }
 
     private List<UUID> parseRequestIds(final List<String> raw) {

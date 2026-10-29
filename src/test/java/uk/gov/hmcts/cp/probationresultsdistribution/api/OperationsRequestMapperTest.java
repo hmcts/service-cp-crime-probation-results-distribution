@@ -9,7 +9,10 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.dto.ResendLegRequest;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendRequest;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 
 /**
@@ -238,6 +241,41 @@ class OperationsRequestMapperTest {
 
             assertThat(parsed.allowTerminalSuccess()).isTrue();
             assertThat(parsed.allowChangedPayload()).isTrue();
+        }
+
+        @Test
+        @DisplayName("hands 004 the list exactly as sent, with the operator and reason unchanged")
+        void hands_004_the_list_as_sent() {
+            final ParsedResendLegCommand parsed = mapper.parseResendLeg(new ResendLegRequest(
+                    List.of("4fa85f64-5717-4562-b3fc-2c963f66afa6",
+                            "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                            "4fa85f64-5717-4562-b3fc-2c963f66afa6"),
+                    "HMPPS", "an-operator", "a reason", false, false));
+
+            final ResendRequest request = mapper.toResendRequest(parsed);
+
+            assertThat(request.requestIds()).containsExactly(
+                    UUID.fromString("4fa85f64-5717-4562-b3fc-2c963f66afa6"),
+                    UUID.fromString("3fa85f64-5717-4562-b3fc-2c963f66afa6"),
+                    UUID.fromString("4fa85f64-5717-4562-b3fc-2c963f66afa6"));
+            assertThat(request.operator()).isEqualTo("an-operator");
+            assertThat(request.reason()).isEqualTo("a reason");
+        }
+
+        @ParameterizedTest(name = "allowTerminalSuccess={0}, allowChangedPayload={1}")
+        @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+        @DisplayName("hands 004 each override unchanged and independently of the other")
+        void hands_004_each_override_unchanged(final boolean allowTerminalSuccess,
+                                               final boolean allowChangedPayload) {
+            final ParsedResendLegCommand parsed = mapper.parseResendLeg(new ResendLegRequest(
+                    List.of("3fa85f64-5717-4562-b3fc-2c963f66afa6"), "HMPPS", "an-operator",
+                    "a reason", allowTerminalSuccess, allowChangedPayload));
+
+            final ResendRequest request = mapper.toResendRequest(parsed);
+
+            assertThat(request.allowTerminalSuccess()).isEqualTo(allowTerminalSuccess);
+            assertThat(request.allowChangedPayload()).isEqualTo(allowChangedPayload);
+            assertThat(request.requestIds()).isNotEmpty();
         }
     }
 }

@@ -422,6 +422,13 @@ outcomes.
       passed through unchanged, `false` when absent (FR-005-010) — `[BLOCKED-ON-004]` for the
       end-to-end case, but the parsing-only assertions can run against T008 today — extends
       `src/test/java/.../api/OperationsRequestMapperTest.java`
+      RED (seam: `OperationsRequestMapper.toResendRequest(ParsedResendLegCommand)` — the hand-off
+      onto 004's real `application.ResendRequest` — returning an empty list, blank text and both
+      overrides `false`) — `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRequestMapperTest"
+      -Dtest.noFailFast=true` → `20 tests completed, 5 failed`: the list-as-sent case and all four
+      override combinations, each an `AssertionError`/`AssertionFailedError`, the 15 parsing cases
+      green, no compile error.
 
 ### Implementation for User Story 2 `[BLOCKED-ON-004]`
 
