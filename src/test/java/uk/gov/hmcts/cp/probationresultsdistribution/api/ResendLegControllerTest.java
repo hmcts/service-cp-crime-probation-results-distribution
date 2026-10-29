@@ -152,7 +152,7 @@ class ResendLegControllerTest {
 
     @Test
     @DisplayName("answers 202 with the run id while the run is still going (FR-005-015)")
-    void answers_202_while_the_run_is_still_going() throws Exception {
+    void resendLeg_runStillGoing_should_answer202WithTheRunId() throws Exception {
         final ResendAcceptance.Accepted accepted = accepted(FIRST, SECOND);
         final CountDownLatch runStarted = new CountDownLatch(1);
         final CountDownLatch releaseRun = new CountDownLatch(1);
@@ -177,7 +177,7 @@ class ResendLegControllerTest {
 
     @Test
     @DisplayName("hands the accepted run, and only it, to the run step")
-    void hands_the_accepted_run_to_the_run_step() throws Exception {
+    void resendLeg_acceptedRun_should_handItToTheRunStep() throws Exception {
         final ResendAcceptance.Accepted accepted = accepted(FIRST);
         when(legResender.accept(any())).thenReturn(accepted);
 

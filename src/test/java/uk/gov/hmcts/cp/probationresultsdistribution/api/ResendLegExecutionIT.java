@@ -102,7 +102,7 @@ class ResendLegExecutionIT {
 
         @Test
         @DisplayName("execute one at a time, in acceptance order, on the one executor thread")
-        void runs_execute_one_at_a_time_in_order() throws InterruptedException {
+        void submit_threeAcceptedRuns_should_executeOneAtATimeInOrder() throws InterruptedException {
             final LegResender resender = mock(LegResender.class);
             final List<UUID> order = new CopyOnWriteArrayList<>();
             final List<String> threads = new CopyOnWriteArrayList<>();
@@ -139,7 +139,7 @@ class ResendLegExecutionIT {
 
         @Test
         @DisplayName("a run that throws is logged at ERROR with a bounded cause and the next still runs")
-        void a_thrown_run_is_logged_and_the_next_runs() throws InterruptedException {
+        void submit_runThrows_should_logErrorAndRunTheNext() throws InterruptedException {
             final LegResender resender = mock(LegResender.class);
             final ResendAcceptance.Accepted failing = accepted(ID_1);
             final ResendAcceptance.Accepted next = accepted(ID_2);
@@ -172,7 +172,7 @@ class ResendLegExecutionIT {
         @DisplayName("the running run claims nothing further, reports the rest not-run; queued runs never start")
         // The executor is closed on its own thread, which is the behaviour under test.
         @SuppressWarnings("PMD.CloseResource")
-        void shutdown_stops_claiming_and_drops_queued_runs() throws InterruptedException {
+        void close_runInFlight_should_stopClaimingAndDropQueuedRuns() throws InterruptedException {
             final IntakePauseGate pauseGate = mock(IntakePauseGate.class);
             final ProcessedRequestRepository store = mock(ProcessedRequestRepository.class);
             final DistributionRunner runner = mock(DistributionRunner.class);
@@ -285,7 +285,7 @@ class ResendLegExecutionIT {
 
         @Test
         @DisplayName("with intake enabled LegResender is a bean, so ResendLegController is registered")
-        void leg_resender_and_controller_are_beans_when_deployed() {
+        void servingContext_intakeEnabled_should_registerLegResenderAndController() {
             EndToEndTestSupport.startSharedContainers();
             servingContext().run(context -> {
                 assertThat(context).hasNotFailed();

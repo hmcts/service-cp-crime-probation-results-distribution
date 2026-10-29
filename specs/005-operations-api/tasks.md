@@ -443,7 +443,7 @@ outcomes.
       synchronous answer. Unblocked by T047–T050 (decided 2026-10-29: runs queue one at a time on
       a single-thread executor fixed in code; on shutdown a run claims nothing further and reports
       the rest `not-run`). Closed by T050: pinned by
-      `ResendLegControllerTest.answers_202_while_the_run_is_still_going`.
+      `ResendLegControllerTest.resendLeg_runStillGoing_should_answer202WithTheRunId`.
 - [X] T047 [US2] `LegResenderTest` (004's class, extended): the run splits in two without changing
       what it does — an accept step applies every whole-run check and assigns the `resendRunId`
       (a whole-run refusal claims nothing and assigns no run id), and a run step over an accepted

@@ -188,7 +188,7 @@ class LegResenderTest {
 
         @Test
         @DisplayName("accept applies the whole-run checks, assigns a run id and claims nothing")
-        void accept_assigns_a_run_id_and_claims_nothing() {
+        void accept_runAccepted_should_assignRunIdAndClaimNothing() {
             when(pauseGate.pausedByOperator()).thenReturn(false);
 
             final ResendAcceptance acceptance = resender().accept(new ResendRequest(
@@ -209,7 +209,7 @@ class LegResenderTest {
 
         @Test
         @DisplayName("without the override, accept carries no forced-resend reason")
-        void accept_without_the_override_carries_no_reason() {
+        void accept_withoutForcedResend_should_carryNoReason() {
             when(pauseGate.pausedByOperator()).thenReturn(false);
 
             final ResendAcceptance acceptance = resender().accept(request(ID_1));
@@ -220,7 +220,7 @@ class LegResenderTest {
 
         @Test
         @DisplayName("a whole-run refusal at accept claims nothing and assigns no run id")
-        void accept_refusal_claims_nothing() {
+        void accept_runRefused_should_claimNothing() {
             when(pauseGate.pausedByOperator()).thenReturn(true);
 
             final ResendAcceptance acceptance = resender().accept(request(ID_1, ID_2));
@@ -232,7 +232,7 @@ class LegResenderTest {
 
         @Test
         @DisplayName("the run step over an accepted run gives the report resend gives, under its run id")
-        void run_step_gives_the_resend_report() {
+        void run_acceptedRun_should_giveTheResendReport() {
             when(pauseGate.pausedByOperator()).thenReturn(false);
             when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
@@ -253,7 +253,7 @@ class LegResenderTest {
 
         @Test
         @DisplayName("a stop raised between ids claims nothing further and reports the rest not-run")
-        void stop_between_ids_reports_the_rest_not_run() {
+        void run_stopBetweenIds_should_reportTheRestNotRun() {
             when(pauseGate.pausedByOperator()).thenReturn(false);
             when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
@@ -278,7 +278,7 @@ class LegResenderTest {
 
         @Test
         @DisplayName("a stop raised before the first id claims nothing at all")
-        void stop_before_the_first_id_claims_nothing() {
+        void run_stopBeforeFirstId_should_claimNothing() {
             when(pauseGate.pausedByOperator()).thenReturn(false);
             final LegResender resender = resender();
             final ResendAcceptance.Accepted accepted =
