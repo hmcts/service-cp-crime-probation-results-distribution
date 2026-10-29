@@ -408,9 +408,9 @@ outcomes.
       (`missing-argument`/`argument-too-long`/`too-many-request-ids`/`unreadable-argument`/
       `intake-paused`/`store-unavailable`) per contracts/operations-api.md §2 — `[BLOCKED-ON-004]` —
       `src/test/java/.../api/ResendLegControllerTest.java`
-- [ ] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
+- [X] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
       result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
-      `[BLOCKED-ON-004]` — extends `src/test/java/.../api/OperationsResponseMapperTest.java`
+      extends `src/test/java/.../api/OperationsResponseMapperTest.java`
       RED (seam: `OperationsResponseMapper.toResendLegAcceptedResponse(ResendRunResult, int)`
       returning `new ResendLegAcceptedResponse(null)`) — `./gradlew test --tests
       "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsResponseMapperTest"
@@ -425,9 +425,14 @@ outcomes.
 
 ### Implementation for User Story 2 `[BLOCKED-ON-004]`
 
-- [ ] T027 [US2] Implement `api/OperationsResponseMapper.java` (resend-leg half): maps
-      `LegResender`'s accepted-run result to `ResendLegAcceptedResponse` — satisfies T025 —
-      **cannot compile until `application.LegResender` exists**
+- [X] T027 [US2] Implement `api/OperationsResponseMapper.java` (resend-leg half): maps
+      `LegResender`'s accepted-run result to `ResendLegAcceptedResponse` — satisfies T025.
+      Landed against 004's real shape: `toResendLegAcceptedResponse(ResendRunResult, int cap)` —
+      a run not refused whole is accepted with its `resendRunId` whatever its entries (every ID
+      refused, `not-run`, or `storeFailed`, whose report stands); each `WholeRunRefusal` maps to its
+      own `OperationsRefusalReason` (`too-many-request-ids` carrying the cap), and
+      `intake-not-paused`/`broker-unavailable`, which resend never yields, are a defect
+      (`IllegalStateException` → `500 unexpected`). GREEN → `18 tests completed, 0 failed`.
 - [ ] T028 [US2] Implement `api/ResendLegController.java`: `POST /operations/resend-leg`, parses via
       `OperationsRequestMapper`, calls `LegResender`, answers `202` via
       `OperationsResponseMapper`, wrapped by `OperationsAuditPublisher` — satisfies T024 — **cannot
