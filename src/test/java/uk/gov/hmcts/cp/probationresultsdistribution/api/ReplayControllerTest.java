@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 
 /**
@@ -161,6 +163,50 @@ class ReplayControllerTest {
                 .andExpect(jsonPath("$.argumentName").value("requestId"))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
                         org.hamcrest.Matchers.containsString("not-a-uuid"))));
+    }
+
+    @Test
+    @DisplayName("ReplayAction throwing answers 500 unexpected and still publishes the response event")
+    void a_throwing_replay_still_publishes_its_response_event() throws Exception {
+        when(replayAction.replay(any())).thenThrow(new IllegalStateException("a defect"));
+
+        mockMvc.perform(post(REPLAY_PATH))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.reason").value("unexpected"));
+
+        Mockito.verify(auditPublisher).publishResponseEvent(OperationsAction.REPLAY,
+                Map.of("outcome", "unexpected"));
+    }
+
+    @Test
+    @DisplayName("Refused(REQUEST_CLAIMED), a defect, still publishes its response event as unexpected")
+    void request_claimed_publishes_unexpected() throws Exception {
+        when(replayAction.replay(UUID.fromString(REQUEST_ID)))
+                .thenReturn(new ReplayOutcome.Refused(ResendRefusal.REQUEST_CLAIMED));
+
+        mockMvc.perform(post(REPLAY_PATH)).andExpect(status().isInternalServerError());
+
+        Mockito.verify(auditPublisher).publishResponseEvent(OperationsAction.REPLAY,
+                Map.of("outcome", "unexpected"));
+    }
+
+    @Test
+    @DisplayName("a body field whose name is not a plain bounded identifier is refused without naming it")
+    void unsafe_body_field_name_is_never_echoed() throws Exception {
+        mockMvc.perform(post(REPLAY_PATH).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"<b>" + "y".repeat(100) + "\": 1}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.reason").value("unknown-field"))
+                .andExpect(jsonPath("$.argumentName").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("an unmapped method is answered as the framework answers it, 405, never 500 unexpected")
+    void unmapped_method_is_the_frameworks_answer() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(REPLAY_PATH))
+                .andExpect(status().isMethodNotAllowed());
+
+        Mockito.verifyNoInteractions(metrics);
     }
 
     /** Registers a mock {@link ReplayAction} bean so the conditional controller bean sees it. */

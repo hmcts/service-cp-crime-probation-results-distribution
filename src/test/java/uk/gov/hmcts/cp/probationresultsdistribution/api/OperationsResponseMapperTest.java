@@ -211,5 +211,13 @@ class OperationsResponseMapperTest {
                     ResendRunResult.refusedWhole(refusal), CAP))
                     .isInstanceOf(IllegalStateException.class);
         }
+
+        @Test
+        @DisplayName("an accepted run carrying no run id is a defect, never an answer without one")
+        void accepted_run_without_a_run_id_is_a_defect() {
+            assertThatThrownBy(() -> mapper.toResendLegAcceptedResponse(new ResendRunResult(
+                    Optional.empty(), Optional.empty(), false, false, List.of(), false), CAP))
+                    .isInstanceOf(IllegalStateException.class);
+        }
     }
 }

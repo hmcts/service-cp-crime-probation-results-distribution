@@ -78,6 +78,26 @@ class OperationsRequestMapperTest {
                         assertThat(refusal.argumentName()).contains("operator");
                     });
         }
+
+        @Test
+        @DisplayName("refuses a field whose name is not a plain bounded identifier without naming it")
+        void refuses_an_unsafe_field_name_without_naming_it() {
+            assertThatThrownBy(() -> mapper.validateReplayBody(Map.of("a b<c>", "someone")))
+                    .isInstanceOf(OperationsRefusalException.class)
+                    .satisfies(ex -> {
+                        final OperationsRefusalException refusal = (OperationsRefusalException) ex;
+                        assertThat(refusal.reason()).isEqualTo(OperationsRefusalReason.UNKNOWN_FIELD);
+                        assertThat(refusal.argumentName()).isEmpty();
+                    });
+        }
+
+        @Test
+        @DisplayName("refuses a field name over 64 characters without naming it")
+        void refuses_an_overlong_field_name_without_naming_it() {
+            assertThatThrownBy(() -> mapper.validateReplayBody(Map.of("f".repeat(65), "someone")))
+                    .isInstanceOf(OperationsRefusalException.class)
+                    .satisfies(ex -> assertThat(((OperationsRefusalException) ex).argumentName()).isEmpty());
+        }
     }
 
     @Nested

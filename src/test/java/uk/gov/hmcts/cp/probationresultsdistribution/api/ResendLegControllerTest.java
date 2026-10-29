@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.oneOf;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -219,12 +219,21 @@ class ResendLegControllerTest {
     @Test
     @DisplayName("the request event precedes the call and the response event follows it, bounded fields only")
     void audit_events_bracket_the_call() throws Exception {
-        when(legResender.resend(any())).thenReturn(acceptedRun(List.of()));
+        when(legResender.resend(any())).thenReturn(acceptedRun(List.of(
+                new ResendRunResult.Entry(UUID.fromString(FIRST),
+                        new ResendEntryOutcome.Ran(LegStatus.SENT, Optional.empty())),
+                new ResendRunResult.Entry(UUID.fromString(SECOND), new ResendEntryOutcome.NotRun()))));
 
         postJson(VALID_BODY).andExpect(status().isAccepted());
 
         final InOrder order = inOrder(auditPublisher, legResender);
-        order.verify(auditPublisher).publishRequestEvent(eq(OperationsAction.RESEND_LEG), anyMap());
+        @SuppressWarnings("unchecked")
+        final ArgumentCaptor<Map<String, Object>> request = ArgumentCaptor.forClass(Map.class);
+        order.verify(auditPublisher).publishRequestEvent(eq(OperationsAction.RESEND_LEG), request.capture());
+        assertThat(request.getValue()).containsOnlyKeys("allowTerminalSuccess", "allowChangedPayload")
+                .containsEntry("allowTerminalSuccess", false)
+                .containsEntry("allowChangedPayload", false);
+        assertThat(request.getValue().values()).doesNotContain(OPERATOR, REASON);
         order.verify(legResender).resend(any());
         @SuppressWarnings("unchecked")
         final ArgumentCaptor<Map<String, Object>> response = ArgumentCaptor.forClass(Map.class);
@@ -234,8 +243,88 @@ class ResendLegControllerTest {
                 .containsEntry("outcome", "accepted")
                 .containsEntry("resendRunId", RUN_ID.toString())
                 .containsEntry("allowTerminalSuccess", false)
-                .containsEntry("allowChangedPayload", false);
+                .containsEntry("allowChangedPayload", false)
+                .containsEntry("ids", 2)
+                .containsEntry("notRun", 1);
         assertThat(response.getValue().values()).doesNotContain(OPERATOR, REASON);
+    }
+
+    @Test
+    @DisplayName("LegResender throwing answers 500 unexpected and still publishes the response event")
+    void a_throwing_run_still_publishes_its_response_event() throws Exception {
+        when(legResender.resend(any())).thenThrow(new IllegalStateException("a defect"));
+
+        postJson(VALID_BODY)
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.reason").value("unexpected"))
+                .andExpect(content().string(not(containsString("a defect"))));
+
+        @SuppressWarnings("unchecked")
+        final ArgumentCaptor<Map<String, Object>> response = ArgumentCaptor.forClass(Map.class);
+        verify(auditPublisher).publishResponseEvent(eq(OperationsAction.RESEND_LEG), response.capture());
+        assertThat(response.getValue()).containsEntry("outcome", "unexpected");
+    }
+
+    @ParameterizedTest(name = "{0} renders 500 unexpected")
+    @CsvSource({"INTAKE_NOT_PAUSED", "BROKER_UNAVAILABLE"})
+    @DisplayName("a whole-run code resend-leg never yields answers 500 unexpected with its response event")
+    void a_code_resend_never_yields_publishes_unexpected(final WholeRunRefusal refusal) throws Exception {
+        when(legResender.resend(any())).thenReturn(ResendRunResult.refusedWhole(refusal));
+
+        postJson(VALID_BODY)
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.reason").value("unexpected"));
+
+        @SuppressWarnings("unchecked")
+        final ArgumentCaptor<Map<String, Object>> response = ArgumentCaptor.forClass(Map.class);
+        verify(auditPublisher).publishResponseEvent(eq(OperationsAction.RESEND_LEG), response.capture());
+        assertThat(response.getValue()).containsEntry("outcome", "unexpected");
+    }
+
+    @Test
+    @DisplayName("explicit JSON null overrides reach LegResender as false")
+    void null_overrides_reach_004_as_false() throws Exception {
+        when(legResender.resend(any())).thenReturn(acceptedRun(List.of()));
+
+        postJson("""
+                {"requestIds": ["%s"], "leg": "HMPPS", "operator": "%s", "reason": "%s",
+                 "allowTerminalSuccess": null, "allowChangedPayload": null}
+                """.formatted(FIRST, OPERATOR, REASON))
+                .andExpect(status().isAccepted());
+
+        final ArgumentCaptor<ResendRequest> sent = ArgumentCaptor.forClass(ResendRequest.class);
+        verify(legResender).resend(sent.capture());
+        assertThat(sent.getValue().allowTerminalSuccess()).isFalse();
+        assertThat(sent.getValue().allowChangedPayload()).isFalse();
+    }
+
+    @Test
+    @DisplayName("of several unknown fields, one of them is named (Jackson keeps no body order for them)")
+    void several_unknown_fields_name_one_of_them() throws Exception {
+        postJson("""
+                {"requestIds": ["%s"], "leg": "HMPPS", "operator": "%s", "reason": "%s",
+                 "zeta": 1, "alpha": 2}
+                """.formatted(FIRST, OPERATOR, REASON))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.reason").value("unknown-field"))
+                .andExpect(jsonPath("$.argumentName", oneOf("zeta", "alpha")));
+
+        verify(legResender, never()).resend(any());
+    }
+
+    @Test
+    @DisplayName("an unknown field whose name is not a plain bounded identifier is refused without naming it")
+    void unsafe_unknown_field_name_is_never_echoed() throws Exception {
+        final String unsafeName = "<script>" + "x".repeat(100);
+        postJson("""
+                {"requestIds": ["%s"], "leg": "HMPPS", "operator": "%s", "reason": "%s", "%s": 1}
+                """.formatted(FIRST, OPERATOR, REASON, unsafeName))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.reason").value("unknown-field"))
+                .andExpect(jsonPath("$.argumentName").doesNotExist())
+                .andExpect(content().string(not(containsString("script"))));
+
+        verify(legResender, never()).resend(any());
     }
 
     @Test
