@@ -437,7 +437,35 @@ outcomes.
       checks and the `resendRunId` assignment from the run itself (or expose an asynchronous entry
       point); until then the endpoint answers after the whole run, and neither T029 nor deployed
       wiring of `LegResender` should proceed without this or a spec amendment accepting a
-      synchronous answer
+      synchronous answer. Unblocked by T047–T050 (decided 2026-10-29: runs queue one at a time on
+      a single-thread executor fixed in code; on shutdown a run claims nothing further and reports
+      the rest `not-run`)
+- [ ] T047 [US2] `LegResenderTest` (004's class, extended): the run splits in two without changing
+      what it does — an accept step applies every whole-run check and assigns the `resendRunId`
+      (a whole-run refusal claims nothing and assigns no run id), and a run step over an accepted
+      run gives the same report `resend` gives today; `resend(ResendRequest)` stays as accept then
+      run, so `cli/ResendLegRunner` and its tests are unchanged; a stop signal raised between IDs
+      (shutdown) claims nothing further and reports every unreached ID `not-run`, exactly as a
+      pause that begins mid-run does (FR-004-021) — `src/test/java/.../application/LegResenderTest.java`
+- [ ] T048 [US2] Implement the split in `application/LegResender.java` (accept step, run step, the
+      stop signal; `resend` kept as accept then run) — satisfies T047; no new `distribution.*`
+      property (T040 stays green)
+- [ ] T049 [US2] `ResendLegControllerTest` + `ResendLegExecutionIT`: the `202 {resendRunId}`
+      comes back while a mocked run is still going (T046's pin); accepted runs execute one at a
+      time, in acceptance order, on one executor thread fixed in code; whole-call refusals still
+      answer synchronously with 004's codes; the response audit event is published at acceptance;
+      a run that throws is logged at ERROR with a bounded cause and never lost silently; on
+      context shutdown the running run stops claiming and reports the rest `not-run`, and queued
+      runs never start (each logged at WARN with its `resendRunId`); `LegResender` is a bean of the
+      serving context (built from the consumer's `DistributionRunner`, the processed-log store and
+      the intake-pause gate), so `ResendLegController` is registered when deployed —
+      `src/test/java/.../api/ResendLegControllerTest.java`, `src/test/java/.../api/ResendLegExecutionIT.java`
+- [ ] T050 [US2] Implement the accepted-run execution and the serving-context wiring: a
+      single-thread resend executor (in code, not a property) with the shutdown behaviour above,
+      `ResendLegController` answering `202` after the accept step and submitting the run step, and
+      a `LegResender` `@Bean` in the serving context; the command-line wiring in
+      `OperatorCommandLine` unchanged — satisfies T049 and T046 (mark T046 `[X]`, drop its
+      `[BLOCKED-ON-004]` tag); T029 and T030–T031 then become runnable
 - [X] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
       result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
       extends `src/test/java/.../api/OperationsResponseMapperTest.java`
