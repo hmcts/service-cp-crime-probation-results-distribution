@@ -646,10 +646,20 @@ new attempt then `not-eligible`.
 
 ### Implementation for User Story 3
 
-- [ ] T031 [US3] Confirm `ResendLegController`/`OperationsAuditPublisher` (T028, T010) already pass
+- [X] T031 [US3] Confirm `ResendLegController`/`OperationsAuditPublisher` (T028, T010) already pass
       `allowTerminalSuccess` through unchanged and surface it on both audit events without a new
       code path — satisfies T030; if a gap is found, fix `OperationsAuditPublisher`'s event-field
       mapping only
+      Confirmed, no gap, **no production change**: `ResendLegController.overrides` puts
+      `allowTerminalSuccess` and `allowChangedPayload` (and nothing caller-typed) on the request
+      event and, with `outcome=accepted`, `resendRunId` and `ids`, on the response event published
+      at acceptance; `OperationsRequestMapper.toResendRequest` hands the override, operator and
+      reason to `LegResender.accept` unchanged; 004 records the operator on the attempt row and the
+      reason on `audit_note` only, and its report line carries `allowTerminalSuccess=` and the
+      per-ID outcomes, never operator or reason. GREEN (T030 as landed) → `7 tests completed,
+      0 failed`. Full build on the T030 commit: `./gradlew build -Dtest.noFailFast=true` →
+      BUILD SUCCESSFUL, `1176 tests completed, 0 failed`, Checkstyle and PMD clean,
+      `jacocoTestCoverageVerification` green at LINE 0.9448 / BRANCH 0.8878 (gate 0.88 / 0.85).
 
 **Checkpoint**: Stories 1–4 together give the whole P1 slice — replay, resend-leg, the forced
 override, and the authorisation/audit chain all sitting on the same, already-tested foundation.
