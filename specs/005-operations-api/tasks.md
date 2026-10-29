@@ -418,9 +418,9 @@ outcomes.
       `AssertionError`/`AssertionFailedError` (`expected: 9c4f2a10-… but was: null`, `Expecting
       actual not to be null` for each whole-run refusal), the seven replay-half cases still green,
       no compile error.
-- [ ] T026 [P] [US2] `OperationsRequestMapperTest` (resend-leg list half): `allowChangedPayload`
-      passed through unchanged, `false` when absent (FR-005-010) — `[BLOCKED-ON-004]` for the
-      end-to-end case, but the parsing-only assertions can run against T008 today — extends
+- [X] T026 [P] [US2] `OperationsRequestMapperTest` (resend-leg list half): `allowChangedPayload`
+      passed through unchanged, `false` when absent (FR-005-010) — the parsing-only assertions
+      ran against T008; the end-to-end hand-off is now pinned against 004's real input — extends
       `src/test/java/.../api/OperationsRequestMapperTest.java`
       RED (seam: `OperationsRequestMapper.toResendRequest(ParsedResendLegCommand)` — the hand-off
       onto 004's real `application.ResendRequest` — returning an empty list, blank text and both
@@ -428,7 +428,9 @@ outcomes.
       "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRequestMapperTest"
       -Dtest.noFailFast=true` → `20 tests completed, 5 failed`: the list-as-sent case and all four
       override combinations, each an `AssertionError`/`AssertionFailedError`, the 15 parsing cases
-      green, no compile error.
+      green, no compile error. GREEN, after `toResendRequest` passes every parsed field through
+      (`leg` dropped: 004's input names no leg, `HMPPS` being its only value) →
+      `20 tests completed, 0 failed`. "`false` when absent" at the JSON boundary is pinned by T024.
 
 ### Implementation for User Story 2 `[BLOCKED-ON-004]`
 

@@ -68,13 +68,16 @@ public final class OperationsRequestMapper {
 
     /**
      * Hands a parsed resend-leg command to slice 004's resend-leg capability as its own input
-     * (FR-005-013).
+     * (FR-005-013): the list exactly as sent, duplicates and order included, the operator, the
+     * reason and both overrides unchanged. {@code leg} is not carried: {@link Leg#HMPPS} is its only
+     * value and 004's input names no leg.
      *
      * @param parsed the parsed command
      * @return slice 004's {@link ResendRequest}
      */
     public ResendRequest toResendRequest(final ParsedResendLegCommand parsed) {
-        return new ResendRequest(List.of(), "", "", false, false);
+        return new ResendRequest(parsed.requestIds(), parsed.operator(), parsed.reason(),
+                parsed.allowChangedPayload(), parsed.allowTerminalSuccess());
     }
 
     private List<UUID> parseRequestIds(final List<String> raw) {
