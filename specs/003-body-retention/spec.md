@@ -956,3 +956,5 @@ matching its attempt's `body_digest`.
 | DIGEST §6, §13 | Readiness is the store only | FR-003-019 |
 | DIGEST §12 | No `distribution.*` property outside the catalogue | FR-003-016, FR-003-027 |
 | DIGEST §16 | The job's package and the properties' environment binding not established | AS-1, AS-2 |
+
+<!-- token-budget: compacted (level=medium) on 2026-10-22T18:33:26Z; original at spec.full.md -->

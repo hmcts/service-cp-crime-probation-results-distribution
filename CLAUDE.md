@@ -38,7 +38,7 @@ Jira: none — this work carries no ticket; features land on `main` through pull
 | Design digest | `doc/design/DIGEST.md` — the rules of rev 3.6 and H35 for spec authors and implementers, each tagged with its design row id; rules only, no rationale. The design wins where they differ |
 | Constitution | `.specify/memory/constitution.md` |
 | Contracts | `doc/API_CONTRACTS.md` |
-| Deviation register | `doc/DEVIATIONS.md` — seeded from design §7.2 (DV-01 … DV-26) by the first feature that lands behaviour; not present yet |
+| Deviation register | `doc/DEVIATIONS.md` — seeded from design §7.2 (DV-01 … DV-26; next free DV-27); every intended difference from the legacy with its pinning test, plus the carried and pending-external defects |
 | Specifications | none yet — the first feature starts with `/speckit-specify` |
 | Inbound message schema | `src/main/resources/contracts/distribution-command.schema.json` — design Appendix B.1, vendored with the first feature |
 | Outbound HMPPS schema | **none in this release** — outbound schema validation is parked and gate G1 is not a gate (H13); the HMPPS ICD v0.8 is information only (H12) |
@@ -152,15 +152,48 @@ Postgres, Redis, WireMock).
 ## Setup
 
 <!-- SPECKIT START -->
-All six features are specified (design rev 3.6 + H35, constitution v2.0.1); none is planned yet.
-Implement in dependency order: `001-parity-kernel` → `002-hmpps-distribution` (owns the shared core:
-Flyway V1, enums, state machine, ports, metric registry) → `003-body-retention` and `004-recovery`
-→ `005-operations-api` → `006-production-readiness`.
+All six features are specified (design rev 3.6 + H35, constitution v2.0.1). **This branch,
+`002-hmpps-distribution` (PR #8), is now the one common integration branch for every slice**: all
+further work on any spec, for any slice, lands here, rather than spreading across per-slice
+branches — open one long-lived PR, not one per slice. `001-parity-kernel` and `002-hmpps-distribution`
+are implemented here (Flyway V1, enums, state machine, ports, metric registry, the redaction pipeline
+and the ported rules). `001-parity-kernel`'s own corpus is **not** yet a satisfied go-live evidence
+gate (H21, FR-001-017): the committed corpus is synthetic-only, holding only the `CACHE` form, pending
+the owning team's SIT capture (`doc/DEVIATIONS.md` "Corpus status"; an external dependency, not a code
+gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are resolved (spec.md
+Clarifications). `003-body-retention` is implemented here too (the body-maintenance job, Flyway V2).
+`004-recovery` is planned here (`specs/004-recovery/plan.md`, with `research.md`, `data-model.md`,
+`quickstart.md`, `contracts/` and `tasks.md` alongside it), with its first foundational pieces (the
+`cli` runner-dispatch package, the `WholeRunRefusal`/`RunnerOutcome` vocabulary) implemented; the
+rest of its 77 tasks await the remaining guard/runner/port work. `005-operations-api` is now planned
+too, fully clarified (both `[NEEDS CLARIFICATION]` markers resolved 2026-10-25: resend-leg answers
+`202` accepted-run; the caller group defaults to `Second Line Support` pending H31): **the current
+plan is `specs/005-operations-api/plan.md`**, with `research.md`, `data-model.md`, `quickstart.md`
+and `contracts/` alongside it; nothing of it is implemented yet, and it depends on 004's
+`ReplayAction`/`LegResender` landing for real. `006-production-readiness` is specified but not yet
+planned.
 
-To start a feature: branch from `main` with the spec's folder name (e.g. `git switch -c
-002-hmpps-distribution`) — the Spec Kit scripts resolve `specs/<NNN>-*` from the branch prefix —
-then run `/speckit-clarify` for any remaining `[NEEDS CLARIFICATION]` (answers come from the design
-owner), `/speckit-plan`, `/speckit-tasks`, `/speckit-analyze`, `/speckit-implement`. The plan
-(`specs/<NNN-slug>/plan.md`, with `spec.md` and `tasks.md` alongside it) then becomes the current
-context here. Specs are written against `doc/design/DIGEST.md` and the design it cites.
+**The Spec Kit scripts resolve the active feature from the current branch name by default**
+(`specs/<NNN>-*` matching the branch's numeric prefix), which only resolves correctly for
+`002-hmpps-distribution` itself while everything lands on this one branch. Before running
+`/speckit-clarify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-analyze` or `/speckit-implement` for
+any other feature (e.g. `004-recovery`, `005-operations-api`), export
+`SPECIFY_FEATURE=<NNN-slug>` first so the scripts resolve that feature's own `specs/<NNN-slug>/`
+folder instead of this branch's. `/speckit-clarify` resolves any remaining `[NEEDS CLARIFICATION]`
+(answers come from the design owner). The plan (`specs/<NNN-slug>/plan.md`, with `spec.md` and
+`tasks.md` alongside it) then becomes the current context here. Specs are written against
+`doc/design/DIGEST.md` and the design it cites.
 <!-- SPECKIT END -->
+
+<!-- BEGIN token-budget compact-backups -->
+
+## Token Budget — backup guard
+
+Files ending in `.full.md` inside `specs/` and `.specify/memory/`
+(e.g. `spec.full.md`, `plan.full.md`) are pre-compaction backups created
+by `/speckit.token-budget.compact`. **Do not read them.** They contain the
+full uncompacted content; loading them cancels the token savings compaction
+achieved. To revert an artifact to its original state, run
+`/speckit.token-budget.restore` instead.
+
+<!-- END token-budget compact-backups -->

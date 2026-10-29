@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hmcts.gov.uk/cp/probation-results-distribution/contracts/distribution-command.schema.json",
+  "title": "Probation results distribution command",
+  "description": "The closed inbound message on probation.requests, one per resulted regular hearing share. The informant register contract verbatim: only $id, title and descriptions differ (design Appendix B.1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "requestId",
+    "hearingId",
+    "hearingDay",
+    "sharedTime",
+    "eventType"
+  ],
+  "properties": {
+    "source": {
+      "description": "The publishing system; half of the idempotency key.",
+      "type": "string",
+      "enum": ["RESULTS"]
+    },
+    "requestId": {
+      "description": "Deterministic UUID derived from hearingId, hearingDay and sharedTime.",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "hearingId": {
+      "description": "The resulted hearing; forms the cache keys and the results query path.",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "hearingDay": {
+      "description": "The hearing day of this share (YYYY-MM-DD).",
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "sharedTime": {
+      "description": "When the hearing was shared, as an ISO-8601 instant.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "eventType": {
+      "description": "Hearing_Resulted only; any other value is rejected.",
+      "type": "string",
+      "enum": ["Hearing_Resulted"]
+    },
+    "userId": {
+      "description": "The sharing user. Optional: absence is valid, explicit null is refused. Not part of the request fingerprint.",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    }
+  }
+}

@@ -42,7 +42,8 @@
       design owner's answer to open question 1 (H35); one answered as far as the design goes, which
       since H35 fixes the removals' transactions but not whether the run's other statements share
       the lock's (AS-13); and two the design does not establish, carried as assumptions (the
-      failure causes, AS-14; the job's package and the properties' binding, AS-1 and AS-2)
+      failure causes, AS-14; the job's package and the properties' binding, AS-1 and AS-2). A further
+      point was settled in the session of 2026-10-22: open question 2 itself, closing AS-15.
 - [x] Requirements are testable and unambiguous — every requirement states an outcome a test can
       check, and a failure's cause is one of a closed set (FR-003-017; AS-14). FR-003-011 states
       the removal H35 decides — a plain `DROP`, committed in its own transaction while the lock's
@@ -125,8 +126,9 @@
     the DEFAULT count, the `DROP` gives up after the 5 s lock timeout (checked on PostgreSQL 15.14
     the same day, for H35; AS-13).
 - Before `/speckit-plan`: open question 1 is answered (option A, H35, 2026-10-21), so the tasks for
-  FR-003-011 can be written, and slice 002 writes V1 unchanged (002's FR-002-054). Open question 2
-  blocks nothing: the design's default stands (AS-15). The plan also records where the job sits
+  FR-003-011 can be written, and slice 002 writes V1 unchanged (002's FR-002-054). Open question 2 is
+  also answered (option C and D combined, slice 003 clarification, 2026-10-22; FR-003-031,
+  FR-003-032), so AS-15 is closed rather than carried. The plan also records where the job sits
   (AS-1) and whether the creations, the DEFAULT delete and the gauge's read share the lock's
   transaction, within the constraint AS-13 states. The whole slice can be planned now.
 - Raised with the design owner alongside the two questions, as assumptions rather than markers: the
@@ -239,7 +241,7 @@ once, under the 5 s lock timeout; the single-runner advisory lock stays on its o
 the whole run (AS-13 (b) for removals); a timed-out `DROP` is retried on the next run; the DEFAULT
 partition, its alert and its recovery stay; V1 unchanged. Applied in FR-003-011.
 
-### Question 2: How is a job that does not run, or a stale reading, noticed? (AS-15; not a marker)
+### Question 2: How is a job that does not run, or a stale reading, noticed? (AS-15; answered, 2026-10-22)
 
 **Context**: every signal of the job comes from a run — "each run … gauges the DEFAULT partition's
 row count, and counts failures by step" (A3-64; §10.1). Two consequences follow, and the design
@@ -253,8 +255,8 @@ addresses neither:
   reading, so a spill already recovered can stay alerted, or a new one be masked, depending on how
   the alert rule (slice 006) combines the pods.
 
-The design's default (option A) stands until the design owner answers, so nothing in this slice is
-blocked (AS-15).
+The design's default (option A) was not blocking — the slice could be planned while this was open —
+but it is not what was chosen: the design owner chose option C and D combined (see below).
 
 **What we need to know**: whether the DEFAULT reading should be kept current independently of the
 lock, and whether a run that is overdue should be signalled.

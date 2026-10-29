@@ -9,6 +9,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.env.Environment;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.BodyMaintenanceStateRepository;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.BodyRetentionJob;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.DatabaseClock;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.MaintenanceMetrics;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionCatalogue;
+import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionMaintenanceRepository;
 
 /**
  * The verification for the shared test fixtures: the {@code test} profile really does produce a
@@ -24,6 +31,10 @@ import org.springframework.test.context.ActiveProfiles;
  * <p>A bootstrap verification rather than a TDD pair: there is no behaviour being specified here,
  * so the evidence recorded is the verification itself.
  */
+// This fixture has no store; maintenance is exercised against PostgreSQL by its own ITs.
+@MockitoBean(types = {BodyRetentionJob.class, DatabaseClock.class, MaintenanceMetrics.class,
+    PartitionCatalogue.class, PartitionMaintenanceRepository.class,
+    BodyMaintenanceStateRepository.class})
 @SpringBootTest
 @ActiveProfiles("test") // context-load only: no broker, no database, no Docker (application-test.yaml)
 @DisplayName("the test profile")

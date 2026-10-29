@@ -1,0 +1,873 @@
+---
+description: "Task list for 005-operations-api: replay and resend-leg over HTTP"
+---
+
+# Tasks: Operations API — replay and resend-leg over HTTP
+
+**Input**: Design documents from `/specs/005-operations-api/`
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/operations-api.md,
+quickstart.md
+
+**Tests**: MANDATORY (constitution Principle II). Every test task is ordered before the
+implementation task it guards; its commit records the failing assertion (not a compile error)
+before the paired implementation task's commit records the green run.
+
+**Hard dependency, status as of this pass**: this slice's controllers call slice 004's
+`ReplayAction` and `LegResender` directly (plan.md, "no new port").
+**`application.ReplayAction` now exists** on this branch — `public ReplayOutcome
+replay(UUID requestId)`, exactly the shape `research.md` Decision 5 assumed — so **US1's tasks are
+no longer blocked on a nonexistent class** and are unmarked below. **`application.LegResender`
+now exists too, split into an accept step and a run step, and is a bean of the serving context
+whenever intake is wired** (T047–T050, 2026-10-29), so `ResendLegController` is registered when
+deployed and answers `202` before the run (T046 closed); US2's T029 and US3's T030–T031 are
+runnable, and US7's remaining `[BLOCKED-ON-004]` tags are that story's own to revisit. One gap remains even
+for US1: `ReplayAction` has no production `ReplayEnqueuer` wired in Spring yet (004's own
+`cli/ReplayRunner` has the same gap), so a *manual, end-to-end* run (T023) still can't happen until
+that adapter lands — the `@WebMvcTest` controller tests (which mock `ReplayAction` at the boundary)
+are unaffected by that gap and can be written and run for real now.
+Per the lesson already learned once this session (004's own `ReplayRoute`/`ResendRefusalReason`
+duplicating classes that turned out to already exist on this branch): **do not stub, fake or
+pre-define `LegResender` here.** Where a task needs it to compile, write the test against the
+method shape `research.md` Decision 5 commits to, mark it blocked, and move on; do not invent the
+real class under this slice's ticket.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependency on an incomplete task)
+- **[Story]**: US1–US7, mapped to spec.md's seven user stories
+- File paths are under `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/` and
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/` unless stated otherwise
+
+---
+
+## Phase 1: Setup
+
+**Purpose**: the request/response shapes and the skeleton every story's controller needs — no
+business logic, no dependency on 004.
+
+- [X] T001 [P] Create `api/dto/ReplayResponse.java` (record: `requestId`, `outcome`, `messageId`)
+      per data-model.md
+- [X] T002 [P] Create `api/dto/ResendLegRequest.java` (record: `requestIds`, `leg`, `operator`,
+      `reason`, `allowTerminalSuccess`, `allowChangedPayload`, the last two defaulting `false`) per
+      data-model.md
+- [X] T003 [P] Create `api/dto/ResendLegAcceptedResponse.java` (record: `resendRunId` only — no
+      per-ID detail, research.md Decision 4)
+- [X] T004 [P] Add `src/main/resources/acl/operations-api.drl`: two rules, one per action
+      (`probation-results-distribution-operations.replay`,
+      `probation-results-distribution-operations.resend-leg`), each admitting `Second Line Support`
+      and nothing else, no catch-all (research.md Decision 1; FR-005-020)
+
+**Checkpoint**: DTOs and the Drools rules file compile/load; no controller yet.
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: the error-handling and audit-publishing infrastructure every endpoint depends on.
+**⚠️ CRITICAL**: no user-story phase starts before this one is complete.
+
+- [X] T005 [P] `OperationsProblemDetailHandlerTest`: for each closed `reason` in FR-005-029, the
+      status family it maps to (FR-005-030), that a `400` about one argument names the argument and
+      never its value, that no exception message/stack trace/far-end text reaches the body
+      (FR-005-031), that an unmapped path/method answers without a stack trace or a path echo
+      (FR-005-034), **and that every `5xx` answer increments
+      `MetricRegistry.operationsFailure(OperationsAction, OperationsFailure)` with the reason
+      matching the mapped `OperationsFailure` value (FR-005-043)** —
+      `src/test/java/.../api/OperationsProblemDetailHandlerTest.java`
+- [X] T006 Implement `api/OperationsProblemDetailHandler.java` (`@RestControllerAdvice`): maps every
+      refusal/failure type to an RFC 9457 `ProblemDetail` with the closed `reason` set and status
+      families of FR-005-029/030; satisfies T005
+- [X] T007 [P] `OperationsRequestMapperTest`: a non-UUID `requestId` or `requestIds` entry →
+      `unreadable-argument` naming the right field; `leg` absent → `missing-argument`, not `HMPPS` →
+      `unreadable-argument`; `operator`/`reason` absent, blank, or > 200 chars →
+      `missing-argument`/`argument-too-long` naming the argument, refused not truncated
+      (FR-005-010, FR-005-011, FR-005-016; Assumption 4); an unknown JSON field → `400
+      unknown-field`; replay's body — none or `{}` accepted, any field refused `unknown-field`
+      (FR-005-033) — `src/test/java/.../api/OperationsRequestMapperTest.java`
+- [X] T008 Implement `api/OperationsRequestMapper.java`: typed parsing per T007, refusing whole
+      before any downstream call (FR-005-003, FR-005-033)
+- [X] T009 [P] `OperationsAuditPublisherTest`: a request-event publish failure is surfaced as a
+      checked outcome before any downstream call; a response-event publish failure is caught,
+      logged ERROR, and does not change the call's already-decided outcome (FR-005-027), **and
+      increments `MetricRegistry.operationsFailure(action, OperationsFailure.
+      AUDIT_RESPONSE_UNPUBLISHED)` (FR-005-043)** — `src/test/java/.../api/OperationsAuditPublisherTest.java`
+- [X] T010 Implement `api/OperationsAuditPublisher.java`: wraps `cp-audit-filter-springboot`'s
+      publish call directly rather than relying on its default (swallowing) publisher
+      (research.md Decision 3); satisfies T009's non-metric cases
+- [X] T011 Implement the `MetricRegistry.operationsFailure(OperationsAction, OperationsFailure)`
+      call sites in `OperationsProblemDetailHandler` (every `5xx`) and `OperationsAuditPublisher`
+      (an unpublished response event) — satisfies T005's and T009's metric assertions above
+      (FR-005-043); the series and both enums already exist, this task only adds the call sites.
+      Depends on T006 and T010 (edits their files) and on T005/T009 carrying the metric
+      assertions — no longer `[P]`
+
+**Checkpoint**: error mapping, request parsing, and the audit publisher are unit-tested in
+isolation. No controller yet.
+
+**T001–T011 are implemented and green** (`./gradlew test checkstyleMain checkstyleTest pmdMain
+pmdTest` all pass for them). Two findings surfaced while landing them, not named by any task above,
+now fixed:
+- `config.MetricRegistry`'s `@Bean` was defined inside `ServiceBusConsumerConfig`, gated on
+  `distribution.consumer.enabled=true`. `OperationsProblemDetailHandler`/`OperationsAuditPublisher`
+  need it unconditionally (a pod must serve replay/resend-leg with intake off), so it moved to a new,
+  always-on `config/MetricRegistryConfiguration.java`. `ServiceBusConsumerConfigIT`'s
+  `ApplicationContextRunner` calls that exercise the real composition root were updated to include
+  it alongside `ServiceBusConsumerConfig.class`.
+- Spring Boot 4's `JacksonAutoConfiguration` registers a Jackson 3 {@code JsonMapper}
+  (`tools.jackson.databind.json.JsonMapper`), not a Jackson 2 `com.fasterxml.jackson.databind.ObjectMapper`
+  bean, and nothing else in this service exposed one. `OperationsConfiguration`'s `@Bean` method
+  constructs its own `ObjectMapper` directly instead of asking Spring to autowire one.
+- `cp-auth-rules-filter` and `cp-audit-filter-springboot`'s own transitive dependencies
+  (`spring-jms`, `jakarta.jms-api`) are declared `implementation` by those libraries, so they are
+  runtime-only for this project; `build.gradle` now adds both `implementation` directly for
+  `OperationsAuditPublisher` to compile against `JmsTemplate`.
+
+**Landing record (this pass)**: T001-T022 were written in one working session before any of it was
+committed. Landing them properly meant auditing each task's description against the actual files,
+then committing in TDD-ordered, task-scoped commits. Where a test's paired production class could be
+replaced by a small, signature-preserving stub without breaking compilation elsewhere (i.e. the class
+has no other compile-time dependents at that point in the landing order), the stub was swapped in,
+the test re-run to confirm a genuine assertion-level failure (never a compile error), then the real
+class restored and the test re-run green — both runs recorded below against real `./gradlew test
+--tests <Class>` output. Where a class is compiled into by many other already-written classes (the
+composition root: `Application`, `OperationsConfiguration`, `build.gradle`), a signature-preserving
+stub was impractical without a wider, riskier edit than this landing pass justified; for those, only
+the GREEN run is recorded and the red run is understood to predate this commit (the test was written
+and failed for the right reason during the original working session, before the implementation beside
+it landed) rather than invented here.
+
+- **T005/T006** (`OperationsProblemDetailHandlerTest` / `OperationsProblemDetailHandler`): RED
+  reconstructed by swapping in a stub handler that always answers `400` and never counts a `5xx` —
+  `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsProblemDetailHandlerTest"` →
+  `24 tests completed, 23 failed`, every failure an `AssertionFailedError`/`AssertionError` on the
+  expected status or property, no compile error. Real handler restored →
+  `BUILD SUCCESSFUL`, all 24 green.
+- **T007/T008** (`OperationsRequestMapperTest` / `OperationsRequestMapper`): RED reconstructed by
+  swapping in a stub mapper that never refuses anything and returns a fixed, empty parse —
+  `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRequestMapperTest"` →
+  `15 tests completed, 13 failed`, every failure an assertion on the expected refusal/parse, no
+  compile error. Real mapper restored → `BUILD SUCCESSFUL`, all 15 green.
+- **T009/T010/T011** (`OperationsAuditPublisherTest` / `OperationsAuditPublisher`, plus the metric
+  call sites T011 adds here and in `OperationsProblemDetailHandler` above): RED reconstructed by
+  swapping in a stub publisher whose two methods are silent no-ops —
+  `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditPublisherTest"` →
+  `6 tests completed, 4 failed` (the two "transport deliberately off" cases still pass, correctly,
+  since a no-op is what they expect), every failure an assertion, no compile error. Real publisher
+  restored → `BUILD SUCCESSFUL`, all 6 green. T011's own two call sites
+  (`OperationsProblemDetailHandler`'s `metrics.operationsFailure(...)` on every 5xx,
+  `OperationsAuditPublisher`'s on an unpublished response event) are pinned by the metric assertions
+  already recorded in both tests above; no separate commit is needed for T011.
+- **T012/T013** (`OperationsActionResolutionFilterTest` / `OperationsActionResolutionFilter`): RED
+  reconstructed by swapping in a stub filter that always passes the request through unwrapped —
+  `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.config.OperationsActionResolutionFilterTest"` →
+  `6 tests completed, 4 failed` (the two cases that expect no wrapping — outside `/operations/**`,
+  an unmapped method on an operations path — correctly still pass), every failure an assertion, no
+  compile error. Real filter restored → `BUILD SUCCESSFUL`, all 6 green.
+- **T019/T020/T021/T022** (`ReplayControllerTest`, `OperationsResponseMapperTest` /
+  `OperationsResponseMapper`, `ReplayController`): the replay half of the response mapper and the
+  controller itself are entangled, at compile time, with the composition root
+  (`Application`'s `ReplayController` scan exclusion, `OperationsConfiguration`'s conditional bean,
+  `build.gradle`'s `spring-jms`/`spring-boot-restclient` additions) landed in the same working
+  session, so they are committed together with that root rather than split further.
+  - `OperationsResponseMapperTest`/`OperationsResponseMapper`: RED reconstructed by swapping in a
+    stub mapper that always renders `no-op` — `./gradlew test --tests
+    "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsResponseMapperTest"` →
+    `7 tests completed, 6 failed` (the one genuine `NoOp` case still passes), no compile error. Real
+    mapper restored → `BUILD SUCCESSFUL`, all 7 green.
+  - `ReplayControllerTest`/`ReplayController`: RED reconstructed by swapping in a stub controller
+    that never validates the body, never calls `ReplayAction`, never audits, and always answers
+    `no-op` — `./gradlew test --tests
+    "uk.gov.hmcts.cp.probationresultsdistribution.api.ReplayControllerTest"` →
+    `10 tests completed, 9 failed` (the one genuine `NoOp` case still passes), every failure an
+    assertion on the expected status/body, no compile error. Real controller restored →
+    `BUILD SUCCESSFUL`, all 10 green.
+- **T014** (`OperationsAuthorisationIT`): needs the full composition root (`OperationsConfiguration`,
+  the testfixture controllers, the real `cp-auth-rules-filter`/users-groups wiring) to run as a
+  `@SpringBootTest`, so it lands in the same commit as that root. RED reconstructed by temporarily
+  disabling `OperationsActionResolutionFilter`'s `FilterRegistrationBean`
+  (`registration.setEnabled(false)`) — `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuthorisationIT"` →
+  `7 tests completed, 2 failed`: `admitted_caller_reaches_replay` and
+  `admitted_caller_reaches_resend_leg` each failed `expected: 200/202 but was: 403 FORBIDDEN` — a
+  genuine assertion failure proving the filter is load-bearing (without it, `cp-auth-rules-filter`'s
+  own path/method fallback action name matches no Drools rule and denies by default), no compile
+  error. Registration restored → `BUILD SUCCESSFUL`, all 7 green. This also serves as the "one
+  assertion" research.md Decision 2 flagged as not yet re-verified against the real filter chain
+  (`action_header_cannot_redirect_authorisation`, which already passed throughout since its caller
+  is outside `Second Line Support` regardless of the header).
+- **T015** (`OperationsAuditIT`): a genuinely new test and a genuine production fix, not a
+  reconstruction, written against the real `cp-audit-filter-springboot` (`cp.audit.enabled=true`,
+  every one of its beans constructed for real) with only the `auditJmsTemplate` bean overridden by
+  name to a recorder that never touches a broker — no new test dependency, no embedded Artemis
+  needed, since `ActiveMQConnectionFactory`'s own construction never opens a connection and nothing
+  else in the library's wiring needs one once its `auditJmsTemplate` bean is pre-empted.
+  **One genuine defect found and fixed while building this test, decompiling the library's bytecode
+  the way research.md Decision 2 did for `cp-auth-rules-filter`**: `AuditFilter.doFilterInternal`
+  audits every request unconditionally (`shouldNotFilter` excludes only `/health` and `/actuator`;
+  the OpenAPI document is read only for path-parameter names, never to decide whether to publish),
+  calling `AuditService.postMessageToArtemis` on the exact JMS topic (`jms.topic.auditing.event`)
+  `OperationsAuditPublisher` also sends to directly (confirmed by that class's own Javadoc). Left
+  alone, any environment with `cp.audit.enabled=true` and `audit.http.enabled=true` together — the
+  combination FR-005-028 requires every deployed environment serving this API to reach (gate 5) —
+  would publish **four** audit events per call, not the two FR-005-025 requires: two from the
+  library's own automatic filter, two from `ReplayController`'s explicit calls. Fixed in
+  `OperationsConfiguration` by supplying the one bean the library's own `auditFilter` `@Bean` method
+  is `@ConditionalOnMissingBean(AuditFilter.class)` against, wrapped in a `FilterRegistrationBean`
+  with `setEnabled(false)` (a bean of the exact type pre-empts the library's competing one; the
+  disabled registration stops Spring Boot's own raw-`Filter` auto-registration from running either
+  copy) — a standard Spring Boot technique for substituting a library's auto-registered filter, not
+  a hack. A second, smaller gap surfaced in the same pass and is fixed in the same area:
+  `OperationsAuditPublisher.publishRequestEvent`/`publishResponseEvent` took the `OperationsAction`
+  as a parameter but never actually included it in the serialised event body (only used for the
+  metric label and the failure log line) — a miss against FR-005-026's "the audit events MUST carry
+  bounded fields only: the action; the outcome...". Fixed by merging the action's wire value into the
+  event ahead of the caller-supplied fields in `toJson`; `OperationsAuditPublisherTest` gained two
+  new cases pinning it (RED: 2/8 failed, the action absent from the body; GREEN: 8/8 after the fix),
+  landed in its own commit ahead of T015's. With both fixes in place: `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditIT"` → `2 tests completed, 0
+  failed` — an admitted call produces exactly two events naming the action and outcome with no body,
+  and a request-event publish failure refuses `503 audit-unavailable` with `ReplayAction` never
+  reached. No isolated RED run is recorded for `OperationsAuditIT` itself beyond the failing document
+  load before T036 landed (see the T035/T036/T037 note above) and the 4-events-not-2 defect this test
+  was written to catch and did catch on its first real run against the unfixed configuration; by the
+  time both fixes were in, the test's own first genuine run was already green, consistent with this
+  pass's convention of being honest about a red run that predates the final, fixed version rather
+  than fabricating one against the already-corrected code.
+- **T017**: verified, not re-authored — `application.yaml`'s existing `authz.http`/`audit.http`/
+  `cp.audit` block already matches T014-T016's expectations (`authz.http.enabled` and
+  `audit.http.enabled` default `true`, `deny-when-no-rules: true`, `cp.audit.enabled` default
+  `false` so the scaffold's own default is exactly the "filter on, transport off" case T016/T018
+  exercise). No change made under this task.
+- **T016/T018** (`OperationsConfigDefaultsTest` / the startup WARN in
+  `config/StartupValidationConfig.java`): written genuinely test-first in this pass (not
+  reconstructed). RED — `./gradlew test --tests
+  "uk.gov.hmcts.cp.probationresultsdistribution.config.OperationsConfigDefaultsTest"` →
+  `4 tests completed, 1 failed`: `warns_once_and_starts` failed
+  `Expected size: 1 but was: 0 in: []` (no WARN logged yet), a genuine assertion failure, no compile
+  error; the two `application.yaml` default assertions and the "no warning when the transport is
+  also on" case passed immediately since they need no new production code. GREEN, after adding
+  `StartupValidationConfig.warnIfAuditFilterOnWithTransportOff(Environment)` (called from the
+  existing `distributionConfigValidator` `ApplicationRunner`, extending it rather than adding a
+  parallel validator) → `4 tests completed, 0 failed`, confirmed alongside the full
+  `YouthSwitchDefaultConfigTest`/`StartupValidationTest` suites (`BUILD SUCCESSFUL`, no regression).
+  `checkstyleTest`/`pmdTest` both pass (one `LiteralsFirstInComparisons` finding fixed in the test
+  itself before landing).
+
+---
+
+## Phase 3: User Story 4 - Only admitted callers reach either action, and every call is audited (Priority: P1)
+
+**T035/T036/T037 landing note (out of phase order, see below)**: `OperationsContractTest` covers the
+document-content half of story 6 in full — every closed value set the document carries
+(`ProblemDetail.reason`, `Leg`, `LegStatus`, `LegReason`, `ResendRefusalCode`, replay's `outcome`)
+compared against the service's own enums, value for value, both ways, plus the two operations'
+`operationId`s and the version raised above `0.0.0`. RED — `./gradlew test --tests
+"uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsContractTest"` against the
+still-placeholder `paths: {}` document → `10 tests completed, 10 failed`, every failure a genuine
+assertion (a missing path or key), no compile error. GREEN after filling in the document (T036) and
+`doc/API_CONTRACTS.md` §3 (T037, same commit) → `10 tests completed, 0 failed`. The served-operations
+half of story 6 ("everything the document describes is served") stays **`[BLOCKED-ON-004]` for
+resend-leg** (no `ResendLegController` to compare against), exactly as T035 already notes; for
+replay it is covered indirectly rather than by a new live round-trip: `ReplayControllerTest` already
+pins the exact mapping (`POST /operations/requests/{requestId}/replay`, no body or `{}` only)
+FR-005-006/009 name, and this test pins that the document names the identical path and
+`operationId` — a live-context check was judged unnecessary duplication given both already agree
+structurally. Filling in the document surfaced one genuine, unrelated finding while wiring
+`OperationsAuditIT` (T015, logged below): `cp-audit-filter-springboot`'s `OpenApiSpecificationParser`
+refuses to construct against a zero-endpoint document ("Supplied specification has no endpoints
+defined"), so `cp.audit.enabled=true` could not start at all until this document had at least one
+path — T036 was landed before T015 for exactly this reason, reversing tasks.md's own phase order
+(Phase 8 before finishing Phase 3's T015).
+
+**Goal**: every `/operations/**` request is authorised against `Second Line Support` before any
+application service is reached, and every admitted call produces a before/after audit event pair.
+
+**Independent Test**: for each endpoint, call with no identity, an identity outside the group, and
+one inside, through the real authorisation filter with users-groups stubbed; assert refusals, the
+service call (or its absence), and the two audit events.
+
+**Note**: this story's own endpoints don't exist until US1/US2 land; its tests here exercise the
+authorisation/audit *filter chain* against a minimal mapped test route, and are re-run unchanged
+once the real controllers exist in US1/US2.
+
+**research.md Decision 2 is now CONFIRMED, not provisional**: `cp-auth-rules-filter` resolves its
+Drools `Action` fact's name from — in this priority order — a `vnd.` token on `Content-Type`, then
+on `Accept`, then the `CPP-ACTION` header verbatim, and only last a `"{method} {path}"` fallback
+(read directly from the library's bytecode; it never reads the OpenAPI document). The first three
+are caller-controlled, which is exactly the bypass FR-005-022 forbids. T012/T013 below build the one
+new component this finding requires.
+
+### Tests for User Story 4 (write first, confirm red, then implement) ⚠️
+
+- [X] T012 [P] [US4] `OperationsActionResolutionFilterTest`: for `POST
+      /operations/requests/{requestId}/replay` and `POST /operations/resend-leg`, the wrapped
+      request's `getHeader("CPP-ACTION")` always returns this slice's fixed action string
+      (`probation-results-distribution-operations.replay` / `...resend-leg`) regardless of what the
+      caller sent for that header, and `getContentType()`/`getHeader("Accept")` never carry a `vnd.`
+      token through, even when the caller supplied one; a request outside `/operations/**` is
+      returned unwrapped (FR-005-022; research.md Decision 2) —
+      `src/test/java/.../config/OperationsActionResolutionFilterTest.java`
+- [X] T013 [US4] Implement `config/OperationsActionResolutionFilter.java` (`OncePerRequestFilter`)
+      and register it via a `FilterRegistrationBean` ordered before `cp-auth-rules-filter`'s own
+      filter, scoped to `/operations/*` — satisfies T012
+- [X] T014 [P] [US4] `OperationsAuthorisationIT` (real `cp-auth-rules-filter` wired, users-groups
+      stubbed via WireMock): no/blank `CJSCPPUID` → `401`; caller outside `Second Line Support` →
+      `403`; users-groups unreachable → `403` (fail closed); a caller admitted to `replay` who sends
+      an action header naming `resend-leg` is still authorised by path+method, never the header
+      (FR-005-018, FR-005-019, FR-005-021, FR-005-022) — **depends on T013**:
+      `OperationsActionResolutionFilter` is what makes this true against the real library, whose own
+      precedence otherwise lets the caller's header/media type win (research.md Decision 2) —
+      `src/test/java/.../api/OperationsAuthorisationIT.java`
+- [X] T015 [P] [US4] `OperationsAuditIT` (real `cp-audit-filter-springboot` wired, Artemis
+      stubbed/embedded): an admitted call produces exactly two audit events, before and after,
+      naming the caller/action/outcome, with no request/response body (FR-005-025, FR-005-026); a
+      request-event publish failure refuses the call `503 audit-unavailable` with nothing read or
+      changed (FR-005-027) — `src/test/java/.../api/OperationsAuditIT.java`
+- [X] T016 [P] [US4] `OperationsConfigDefaultsTest`: the authorisation and audit switches default
+      on; `deny-when-no-rules: true` holds; a pod with the audit filter on and its transport off
+      logs one WARN naming both settings at startup and does not refuse to start (FR-005-028) —
+      `src/test/java/.../config/OperationsConfigDefaultsTest.java`
+
+### Implementation for User Story 4
+
+- [X] T017 [US4] Confirm (or add, if missing) the `authz.http`/`audit.http`/`cp.audit` wiring in
+      `application.yaml` matches T014–T016's expectations — the scaffold already has this block;
+      this task is a verification pass, not new authoring, per plan.md
+- [X] T018 [US4] Add the startup WARN for "audit filter on, transport off" if not already present
+      (FR-005-028) — `config/StartupValidationConfig.java` or `config/StartupValidator.java`
+      (extend, do not duplicate)
+
+**Checkpoint**: the authorisation/audit filter chain is proven correct in isolation, ready for US1
+and US2's controllers to sit behind it.
+
+---
+
+## Phase 4: User Story 1 - Replay a `FAILED` request over HTTP (Priority: P1) 🎯 MVP
+
+**Goal**: `POST /operations/requests/{requestId}/replay` calls slice 004's replay action and
+renders its result.
+
+**Independent Test**: with `ReplayAction` mocked at the service boundary, call the endpoint once
+per result it can give and assert the status/outcome/no-echo; then, against the store and broker
+emulator, replay one `FAILED` request and assert one command enqueued, byte-identical, under a
+fresh `messageId` with `origin = REPLAY`.
+
+### Tests for User Story 1 (write first, confirm red, then implement) ⚠️
+
+- [X] T019 [P] [US1] `ReplayControllerTest` (`@WebMvcTest`, `ReplayAction` mocked): `Enqueued` →
+      `200 {requestId, outcome: enqueued, messageId}`; `NoOp` → `200 {outcome: no-op}`;
+      `Refused(RESEND_IN_PROGRESS)` → `409 resend-in-progress`; `Refused(UNKNOWN_REQUEST)` →
+      `404 unknown-request`; `Refused(NOT_ELIGIBLE)` → `409 not-eligible`; `StoreUnavailable` →
+      `503 store-unavailable`; `BrokerUnavailable` → `503 broker-unavailable`; available while
+      intake is paused, no refusal of this endpoint's own (FR-005-006–008) — `ReplayAction` exists
+      now (`public ReplayOutcome replay(UUID requestId)`, `application.ReplayOutcome`'s five
+      `sealed` cases), so this test can be written and run against the real class, mocked at the
+      boundary — `src/test/java/.../api/ReplayControllerTest.java`
+- [X] T020 [P] [US1] `OperationsResponseMapperTest` (replay half): `ReplayAction`'s result →
+      `ReplayResponse` per T019's cases, with the `requestId` always the service's own canonical
+      parse (FR-005-031) — `src/test/java/.../api/OperationsResponseMapperTest.java`
+
+### Implementation for User Story 1
+
+- [X] T021 [US1] Implement `api/OperationsResponseMapper.java` (replay half): maps
+      `application.ReplayOutcome`'s five cases (`Enqueued`, `NoOp`, `Refused` with its
+      `ResendRefusal`, `StoreUnavailable`, `BrokerUnavailable`) to `ReplayResponse` — satisfies T020
+- [X] T022 [US1] Implement `api/ReplayController.java`: `POST
+      /operations/requests/{requestId}/replay`, no body or `{}` only (FR-005-009, FR-005-033), calls
+      `ReplayAction.replay(UUID)` via `OperationsRequestMapper`/`OperationsResponseMapper`, wrapped
+      by `OperationsAuditPublisher` (request event before the call, response event after) —
+      satisfies T019
+- [ ] T023 Run `quickstart.md`'s replay steps manually. **Still blocked**: `ReplayAction` has no
+      production `ReplayEnqueuer` wired in Spring (004's own gap too — its `cli/ReplayRunner` is in
+      the same position); a manual end-to-end run needs that adapter first. T019–T022 do not need it
+      (they mock `ReplayAction` at the boundary) and can be completed now.
+
+**Checkpoint**: replay over HTTP is implementable today — `ReplayAction` exists with the assumed
+shape. Only the manual end-to-end smoke test (T023) waits on the `ReplayEnqueuer` Azure adapter.
+
+---
+
+## Phase 5: User Story 2 - Resend the HMPPS leg for an explicit list of requests (Priority: P1)
+
+**Goal**: `POST /operations/resend-leg` calls slice 004's resend-leg capability and answers `202`
+with the run id.
+
+**Independent Test**: with `LegResender` stubbed, assert the call reaches it with the list as sent
+and every other input unchanged, and every whole-call refusal renders; end to end, send the design's
+mixed list (two eligible `FAILED`, one unknown, one `SENT` without the override, one under a live
+claim) and assert the run accepted with a `resendRunId`, then read 004's report and assert the five
+outcomes.
+
+### Tests for User Story 2 (write first, confirm red, then implement) ⚠️
+
+- [X] T024 [P] [US2] `ResendLegControllerTest` (`@WebMvcTest`, `LegResender` mocked): the list
+      passed to `LegResender` exactly as sent — no collapse, no cap, no reorder (FR-005-011,
+      FR-005-013); `202 {resendRunId}` on acceptance — pinned as answered once 004's synchronous
+      `LegResender.resend` returns; FR-005-015's "immediately, not waiting for any ID" is **not**
+      pinned here and is tracked open as T046; whole-call refusals render 004's own codes
+      (`missing-argument`/`argument-too-long`/`too-many-request-ids`/`unreadable-argument`/
+      `intake-paused`/`store-unavailable`) per contracts/operations-api.md §2 —
+      `src/test/java/.../api/ResendLegControllerTest.java`
+      RED (seam: `api/ResendLegController` with its real constructor, registered by a
+      `@ConditionalOnBean(LegResender.class)` `@Bean` method in `OperationsConfiguration` and
+      excluded from `Application`'s scan exactly as `ReplayController` is, answering `202` with a
+      null run id and never calling `LegResender` or the audit publisher; `LegResender` mocked at
+      the boundary as `ReplayControllerTest` mocks `ReplayAction`) — `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.ResendLegControllerTest"
+      -Dtest.noFailFast=true` → `15 tests completed, 15 failed`, every one an assertion (wanted
+      `LegResender.resend` invoked / status / `$.reason` / `$.cap` / audit-event order), no compile
+      error. It also caught a real defect: a body that omits `allowTerminalSuccess` or
+      `allowChangedPayload` was answered `400 unreadable-body` — Jackson 3's
+      `FAIL_ON_NULL_FOR_PRIMITIVES` is on by default, so `ResendLegRequest`'s primitive booleans
+      could not be absent, against FR-005-010's "both `false` when absent". GREEN after T028 →
+      `15 tests completed, 0 failed` (and every other `api.*` test, the `*IT`s included, still
+      green).
+      Gate round 1 remediation, test-first: RED `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.*" -Dtest.noFailFast=true` →
+      `135 tests completed, 11 failed`, every one an assertion (`WantedButNotInvoked` for the
+      response event on an unexpected failure in either controller, FR-005-025; `argumentName`
+      present for an unsafe unknown-field name, FR-005-031; `500` instead of the framework's
+      `404`/`405` for an unmapped route, FR-005-034), with the request event's exact fields, the
+      accepted run's `ids`/`notRun` counts, explicit-null overrides and an accepted run without a
+      run id pinned alongside. GREEN after the three fixes → `135 tests completed, 0 failed`.
+- [X] T046 [US2] Pin FR-005-015's "`202` before any ID has necessarily
+      finished" in `ResendLegControllerTest` (the `202` comes back while a mocked run is still
+      going) and make `ResendLegController` answer that way — needs 004 to split the whole-run
+      checks and the `resendRunId` assignment from the run itself (or expose an asynchronous entry
+      point); until then the endpoint answers after the whole run, and neither T029 nor deployed
+      wiring of `LegResender` should proceed without this or a spec amendment accepting a
+      synchronous answer. Unblocked by T047–T050 (decided 2026-10-29: runs queue one at a time on
+      a single-thread executor fixed in code; on shutdown a run claims nothing further and reports
+      the rest `not-run`). Closed by T050: pinned by
+      `ResendLegControllerTest.resendLeg_runStillGoing_should_answer202WithTheRunId`.
+- [X] T047 [US2] `LegResenderTest` (004's class, extended): the run splits in two without changing
+      what it does — an accept step applies every whole-run check and assigns the `resendRunId`
+      (a whole-run refusal claims nothing and assigns no run id), and a run step over an accepted
+      run gives the same report `resend` gives today; `resend(ResendRequest)` stays as accept then
+      run, so `cli/ResendLegRunner` and its tests are unchanged; a stop signal raised between IDs
+      (shutdown) claims nothing further and reports every unreached ID `not-run`, exactly as a
+      pause that begins mid-run does (FR-004-021) — `src/test/java/.../application/LegResenderTest.java`
+      RED (seams: `application.ResendAcceptance` — sealed, `Refused(WholeRunRefusal)` or
+      `Accepted(resendRunId, requestIds, operator, allowChangedPayload, forcedResendReason)`, whose
+      `toString` names neither operator nor reason — and `LegResender.accept(ResendRequest)`
+      returning `Refused(missing-argument)`, `LegResender.run(Accepted, BooleanSupplier)` returning
+      an empty report) — `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.application.LegResenderTest"
+      -Dtest.noFailFast=true` → `11 tests completed, 6 failed`: every new case an
+      `AssertionError`/`AssertionFailedError` (wanted `Accepted`, wanted `Refused(intake-paused)`,
+      wanted the run's id and its report), the five store-failure/fencing cases green, no compile
+      error.
+- [X] T048 [US2] Implement the split in `application/LegResender.java` (accept step, run step, the
+      stop signal; `resend` kept as accept then run) — satisfies T047; no new `distribution.*`
+      property (T040 stays green)
+      GREEN: `accept` collapses duplicates, applies every whole-run check (unchanged, the first pause
+      read included) and assigns the run id, claiming nothing; `run` reads the stop signal before
+      each id, ahead of the pause read, then claims and runs exactly as before and logs the report;
+      `resend` is `accept` then `run` with a signal never raised — `./gradlew test --tests
+      "...application.LegResenderTest" --tests "...application.*Resend*" --tests
+      "...cli.ResendLegRunnerTest" --tests "...config.OperationsConfigPropertiesTest" --tests
+      "...config.LogStatementSweepTest" -Dtest.noFailFast=true` → `99 tests completed, 0 failed`
+      (`LegResenderTest` 11/11; 004's resend ITs, `ResendLegRunnerTest` and T040 unchanged and
+      green).
+- [X] T049 [US2] `ResendLegControllerTest` + `ResendLegExecutionIT`: the `202 {resendRunId}`
+      comes back while a mocked run is still going (T046's pin); accepted runs execute one at a
+      time, in acceptance order, on one executor thread fixed in code; whole-call refusals still
+      answer synchronously with 004's codes; the response audit event is published at acceptance;
+      a run that throws is logged at ERROR with a bounded cause and never lost silently; on
+      context shutdown the running run stops claiming and reports the rest `not-run`, and queued
+      runs never start (each logged at WARN with its `resendRunId`); `LegResender` is a bean of the
+      serving context (built from the consumer's `DistributionRunner`, the processed-log store and
+      the intake-pause gate), so `ResendLegController` is registered when deployed —
+      `src/test/java/.../api/ResendLegControllerTest.java`, `src/test/java/.../api/ResendLegExecutionIT.java`
+      RED (seam: `api.ResendLegExecutor` with its real constructors, `submit` and `close` doing
+      nothing; `ResendLegControllerTest` rewritten against `LegResender.accept`, with the
+      accepted-run response event now carrying `ids` = the distinct ids accepted and no `notRun`,
+      which is known only once the run has gone; the test-only `DistributionProperties` builder
+      moved to `config.DistributionPropertiesFixtures` so the new IT outside `config` can build one,
+      `ServiceBusConsumerConfigIT` using it unchanged) — `./gradlew test --tests
+      "...api.ResendLegControllerTest" --tests "...api.ResendLegExecutionIT" --tests
+      "...config.ServiceBusConsumerConfigIT" -Dtest.noFailFast=true` → `28 tests completed,
+      19 failed`, every one an assertion: 15 controller cases `Status expected:<202|400|409|503>
+      but was:<500>` (the controller still called `resend`), the three executor cases `Expecting
+      value to be true but was false` (nothing ran), and the serving context `to have a single bean
+      of type LegResender but found no beans of that type`; no compile error.
+- [X] T050 [US2] Implement the accepted-run execution and the serving-context wiring: a
+      single-thread resend executor (in code, not a property) with the shutdown behaviour above,
+      `ResendLegController` answering `202` after the accept step and submitting the run step, and
+      a `LegResender` `@Bean` in the serving context; the command-line wiring in
+      `OperatorCommandLine` unchanged — satisfies T049 and T046 (mark T046 `[X]`, drop its
+      `[BLOCKED-ON-004]` tag); T029 and T030–T031 then become runnable
+      GREEN: `api.ResendLegExecutor` — one platform thread `resend-leg-run` on a
+      `ThreadPoolExecutor(1, 1)` over its own queue; a thrown run logged at ERROR
+      `resend-leg run failed resendRunId=… cause=<class>`; `close()` raises the stop signal the
+      run step reads, drops every queued run (WARN `resend-leg run not started cause=shutdown
+      resendRunId=…`), refuses further submits, and waits for the id in flight up to the 4-minute
+      processing deadline (fixed in code). `ResendLegController` calls `accept`, renders a refusal
+      at once through `OperationsResponseMapper.toResendLegAcceptedResponse(ResendAcceptance,
+      int)`, submits an accepted run and answers `202`. `OperationsConfiguration` declares the
+      `LegResender` `@Bean` (`@ConditionalOnProperty(distribution.consumer.enabled=true)`, from
+      the consumer's `DistributionRunner`, `ProcessedRequestRepository` and the
+      `ConsumerLifecycleController` pause gate) ahead of its two `@ConditionalOnBean(LegResender)`
+      methods (the executor, closed with the context, and the controller) — declared there rather
+      than in `ServiceBusConsumerConfig` because a bean-method condition sees only definitions
+      registered before it, which within one class is declaration order and across scanned classes
+      is not; the IT boots `OperationsConfiguration` first to pin that. No `distribution.*`
+      property added (T040 green) — `./gradlew test --tests "...api.*" --tests "...config.*"
+      --tests "...cli.*" -Dtest.noFailFast=true` → `279 tests completed, 0 failed`.
+      Review round 1 (2026-10-29): pinned, green on first run as they pin behaviour already
+      built, `close()`'s two failure paths (ERROR `cause=shutdown-wait-elapsed`; an interrupted
+      wait logged at ERROR with the interrupt flag kept), a submit refused at shutdown answering
+      `500 unexpected` with an `outcome=unexpected` response event and no run id, and the serving
+      context with intake disabled holding no `LegResender`, executor or controller; a submit and
+      `close()`'s stop-and-drain made mutually exclusive, and a run the thread takes after the stop
+      dropped with the same WARN line (a thread race, not reproducible deterministically, so no
+      red run); the new test methods renamed to `{action}_{scenario}_should_{expectation}`.
+      Coverage on `3cb1b91`: `./gradlew jacocoTestReport check -Dtest.noFailFast=true`
+      → BUILD SUCCESSFUL, `jacocoTestCoverageVerification` green at LINE 0.9448 / BRANCH 0.8878
+      (gate 0.88 / 0.85); `ResendLegExecutor` 35/35 lines, 6/6 branches; `ResendLegController`
+      34/34 lines; `ResendAcceptance` fully covered.
+- [X] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
+      result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
+      extends `src/test/java/.../api/OperationsResponseMapperTest.java`
+      RED (seam: `OperationsResponseMapper.toResendLegAcceptedResponse(ResendRunResult, int)`
+      returning `new ResendLegAcceptedResponse(null)`) — `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsResponseMapperTest"
+      -Dtest.noFailFast=true` → `18 tests completed, 11 failed`: every resend-leg-half case an
+      `AssertionError`/`AssertionFailedError` (`expected: 9c4f2a10-… but was: null`, `Expecting
+      actual not to be null` for each whole-run refusal), the seven replay-half cases still green,
+      no compile error.
+- [X] T026 [P] [US2] `OperationsRequestMapperTest` (resend-leg list half): `allowChangedPayload`
+      passed through unchanged, `false` when absent (FR-005-010) — the parsing-only assertions
+      ran against T008; the end-to-end hand-off is now pinned against 004's real input — extends
+      `src/test/java/.../api/OperationsRequestMapperTest.java`
+      RED (seam: `OperationsRequestMapper.toResendRequest(ParsedResendLegCommand)` — the hand-off
+      onto 004's real `application.ResendRequest` — returning an empty list, blank text and both
+      overrides `false`) — `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRequestMapperTest"
+      -Dtest.noFailFast=true` → `20 tests completed, 5 failed`: the list-as-sent case and all four
+      override combinations, each an `AssertionError`/`AssertionFailedError`, the 15 parsing cases
+      green, no compile error. GREEN, after `toResendRequest` passes every parsed field through
+      (`leg` dropped: 004's input names no leg, `HMPPS` being its only value) →
+      `20 tests completed, 0 failed`. "`false` when absent" at the JSON boundary is pinned by T024.
+
+### Implementation for User Story 2
+
+- [X] T027 [US2] Implement `api/OperationsResponseMapper.java` (resend-leg half): maps
+      `LegResender`'s accepted-run result to `ResendLegAcceptedResponse` — satisfies T025.
+      Landed against 004's real shape: `toResendLegAcceptedResponse(ResendRunResult, int cap)` —
+      a run not refused whole is accepted with its `resendRunId` whatever its entries (every ID
+      refused, `not-run`, or `storeFailed`, whose report stands); each `WholeRunRefusal` maps to its
+      own `OperationsRefusalReason` (`too-many-request-ids` carrying the cap), and
+      `intake-not-paused`/`broker-unavailable`, which resend never yields, are a defect
+      (`IllegalStateException` → `500 unexpected`). GREEN → `18 tests completed, 0 failed`.
+- [X] T028 [US2] Implement `api/ResendLegController.java`: `POST /operations/resend-leg`, parses via
+      `OperationsRequestMapper`, calls `LegResender`, answers `202` via
+      `OperationsResponseMapper`, wrapped by `OperationsAuditPublisher` — satisfies T024.
+      Landed with: the request event (`allowTerminalSuccess`, `allowChangedPayload`) before the
+      call, the response event after it (`outcome` = `accepted` with `resendRunId`, `ids`,
+      `notRun`, or the refusal code), never operator or reason; `ResendLegRequest` read through a
+      `@JsonCreator` factory taking nullable overrides (absent → `false`) and collecting unknown
+      field *names* through a creator `@JsonAnySetter`, which `parseResendLeg` refuses
+      `400 unknown-field` naming the first — the serving context's converter ignores unknown
+      properties, so the contract's `unknown-field` (FR-005-033) was not reachable for this body
+      before; the cap carried on `too-many-request-ids` read from
+      `distribution.resend.max-ids-per-run`.
+- [ ] T029 Run `quickstart.md`'s resend-leg steps — runnable now: `LegResender` is a bean of the
+      serving context whenever intake is wired, so `ResendLegController` is registered (T050); the
+      call answers `202` before the run, so read the outcomes from 004's report line or the list
+      runner, not from the answer
+
+**Checkpoint**: resend-leg over HTTP is implementable the moment 004's `LegResender` exists.
+
+**T024–T028 landing note (004's real shape)**: `application.LegResender` landed as a concrete
+class, `public ResendRunResult resend(ResendRequest)`, not the `resendLeg(ResendLegCommand) ->
+ResendRunAccepted` shape research.md Decision 5 assumed. This slice follows 004's real shape with
+the least change: `OperationsRequestMapper.toResendRequest` builds 004's `ResendRequest` (no `leg`:
+it names none, `HMPPS` being its only value); `OperationsResponseMapper.toResendLegAcceptedResponse`
+reads `ResendRunResult` — `wholeRunRefusal` rendered as its own code, otherwise `resendRunId` only
+(Decision 4), a mid-run `storeFailed` still `202` since 004's report stands. **One difference from
+the plan is not closed here**: `resend` is synchronous — it runs every listed id and only then
+returns the run id — so the `202` arrives after the run, not "before any ID has necessarily
+finished" (FR-005-015). Making it asynchronous would need 004 to split the whole-run checks and
+the run-id assignment from the run itself; that is 004's change to make, not this slice's, and it
+is tracked open as T046.
+`LegResender` was also built only inside the packaged command line (`OperatorCommandLine`), never
+as a bean of the serving context, so `ResendLegController` was absent from a deployed context.
+**Both are closed by T047–T050** (2026-10-29): 004's class is split into `accept` (every whole-run
+check and the run id, claiming nothing) and `run` (the ids, with a stop signal), `resend` kept as
+the two in turn for the command line; the controller answers `202` after `accept` and hands the run
+to a single-thread `api.ResendLegExecutor`; and `OperationsConfiguration` builds a `LegResender`
+bean from the consumer's own pipeline whenever intake is wired.
+
+---
+
+## Phase 6: User Story 3 - Force a resend of a hearing already sent, on the record (Priority: P1)
+
+**Goal**: `allowTerminalSuccess: true` reaches `LegResender` unchanged and every audit/record trail
+says it was requested.
+
+**Independent Test**: with `LegResender` stubbed, send a list with the override and assert it
+reaches the capability as `true` with operator/reason unchanged, and both audit events say so; end
+to end, send a request whose latest row is `SENT` with the override, then without it, and assert a
+new attempt then `not-eligible`.
+
+### Tests for User Story 3 (write first, confirm red, then implement) ⚠️
+
+- [X] T030 [P] [US3] `ForcedResendControllerIT`: `allowTerminalSuccess: true` reaches `LegResender`
+      unchanged with operator/reason; both audit events — the request event and the response event
+      published at acceptance — carry `allowTerminalSuccess=true` (FR-005-017); without the override
+      the same ID is `not-eligible` in 004's report and the call still answers `202`; a reason or
+      operator over 200 characters is `400 argument-too-long` naming the argument, nothing run
+      (FR-005-016); neither operator nor reason appears in the answer, a log line (any logger, any
+      thread, MDC included) or a metric label (FR-005-023, FR-005-031); a forced resend whose send
+      later fails is still a `202`-accepted call — the failure surfaces only in 004's report
+      (FR-005-014). The answer comes before the run (FR-005-015, T047–T050), so no per-ID outcome
+      is read from the `202`: each is read from 004's `resend-leg report` line for the run id the
+      answer names, and from the leg's attempt rows and the processed-log row, once that line is
+      logged (a bounded poll, as `ResendLegExecutionIT` does) —
+      `src/test/java/.../api/ForcedResendControllerIT.java`
+      Set-up: a `@WebMvcTest` slice over the production `ResendLegController` and
+      `ResendLegExecutor`, with a real `LegResender` built by 004's `ResendTestSupport` on the shared
+      PostgreSQL, Redis and WireMock (the production payload chain, users-groups client, gateway
+      publisher and processed log); only `OperationsAuditPublisher` and the slice's
+      `MetricRegistry` are mocked. No production seam was needed.
+      **No red run**: `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.ForcedResendControllerIT"
+      -Dtest.noFailFast=true` → `7 tests completed, 0 failed` on its first run — T028/T010 and
+      T047–T050 already pass the override through and carry it on both events, so there is no gap
+      for T031 to close, and a red was not manufactured. To show the assertions bite, a throwaway
+      mutation of `ResendLegController` (the operator added to the audit fields, the reason logged
+      at INFO; reverted, never committed) gave `7 tests completed, 2 failed` — the two-audit-events
+      case and the echo-nowhere case.
+
+### Implementation for User Story 3
+
+- [X] T031 [US3] Confirm `ResendLegController`/`OperationsAuditPublisher` (T028, T010) already pass
+      `allowTerminalSuccess` through unchanged and surface it on both audit events without a new
+      code path — satisfies T030; if a gap is found, fix `OperationsAuditPublisher`'s event-field
+      mapping only
+      Confirmed, no gap, **no production change**: `ResendLegController.overrides` puts
+      `allowTerminalSuccess` and `allowChangedPayload` (and nothing caller-typed) on the request
+      event and, with `outcome=accepted`, `resendRunId` and `ids`, on the response event published
+      at acceptance; `OperationsRequestMapper.toResendRequest` hands the override, operator and
+      reason to `LegResender.accept` unchanged; 004 records the operator on the attempt row and the
+      reason on `audit_note` only, and its report line carries `allowTerminalSuccess=` and the
+      per-ID outcomes, never operator or reason. GREEN (T030 as landed) → `7 tests completed,
+      0 failed`. Full build on the T030 commit: `./gradlew build -Dtest.noFailFast=true` →
+      BUILD SUCCESSFUL, `1176 tests completed, 0 failed`, Checkstyle and PMD clean,
+      `jacocoTestCoverageVerification` green at LINE 0.9448 / BRANCH 0.8878 (gate 0.88 / 0.85).
+
+**Checkpoint**: Stories 1–4 together give the whole P1 slice — replay, resend-leg, the forced
+override, and the authorisation/audit chain all sitting on the same, already-tested foundation.
+
+---
+
+## Phase 7: User Story 5 - Every refusal is bounded and quotes nothing the caller sent (Priority: P2)
+
+**Goal**: a runbook step can always tell "declined, nothing changed" from "tried and could not,"
+and nothing an operator types ever comes back.
+
+**Independent Test**: drive each endpoint into each refusal and assert status, bounded reason,
+argument name where applicable, and the absence of every supplied value from the answer and the
+log.
+
+### Tests for User Story 5
+
+- [X] T032 [P] [US5] `OperationsRefusalSweepTest` (extends `OperationsProblemDetailHandlerTest`,
+      T005, with both real endpoints once built — `[BLOCKED-ON-004]` for the endpoint-level cases,
+      but the problem-detail shape itself is already covered by T005): every refusal is RFC 9457
+      with a closed `reason`, no exception message, no stack trace; a successful call's `requestId`
+      is always the canonical parse, never the raw characters sent (FR-005-029, FR-005-031) —
+      `src/test/java/.../api/OperationsRefusalSweepTest.java`
+- [X] T033 [P] [US5] `TelemetryPrivacyTest`/`LogStatementSweepTest` extension: sweep every new log
+      line and audit event this slice adds for the forbidden content set (operator, reason, an
+      unreadable identifier, `CJSCPPUID`) — `src/test/java/.../support/LogStatementSweepTest.java`
+      (extend, do not duplicate)
+
+### Implementation for User Story 5
+
+- [X] T034 [US5] Close any gap T032/T033 find — expected to be none, since T006/T008 already
+      implement the bounded-refusal and no-echo rules; this phase is a verification pass
+
+**T032-T034 landing note — scoped strictly to what exists today**: `OperationsRefusalSweepTest`
+drives the one real endpoint, `ReplayController`, through a live `MockMvc` round trip (`@WebMvcTest`,
+`ReplayAction` mocked): a successful call's `requestId` is always the service's own canonical parse
+(an uppercase UUID in the path renders lowercase in the body, never the characters sent); four
+distinct unreadable identifiers — a plain non-UUID string, a SQL-injection attempt, a script tag, a
+path-traversal attempt — are each refused `400 unreadable-argument` naming `requestId`, with none of
+the four ever echoed back; every refusal answers `application/problem+json`; an unexpected exception
+never leaks its own message or a stack trace. `./gradlew test --tests
+"uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRefusalSweepTest"` → `7 tests completed,
+0 failed` on first run, against the already-landed handler/mapper/controller — consistent with T034's
+own prediction of "expected to be none": these are new scenarios (the four exotic strings, the
+uppercase-UUID canonicalisation, the explicit content-type check) exercised for the first time
+against already-correct code, not a reconstruction of an existing pass. `LogStatementSweepTest`
+(T033) gained one new method scoped to `src/main/java/.../api/` — the only package this slice adds
+log lines to — sweeping every `LOG.*` call there for the operator, the reason, or `CJSCPPUID`; proven
+to catch a real offender by temporarily inserting `operator={}` into
+`OperationsProblemDetailHandler`'s one `LOG.error` call (fails), then reverting (passes). The
+resend-leg half of this story is **`[BLOCKED-ON-004]`**: there is no `ResendLegController` to sweep,
+and the operator/reason fields it will take do not exist in any log line yet — this slice's own sweep
+method will need extending once that controller lands.
+
+**Checkpoint**: the no-echo, bounded-refusal guarantee is proven across both endpoints together.
+
+---
+
+## Phase 8: User Story 6 - The API is described before it is built, and agrees with its description (Priority: P2)
+
+**Goal**: `probation-results-distribution-openapi.yaml` describes exactly the two operations, and a
+contract test proves it both ways.
+
+**Independent Test**: a contract test compares served operations/statuses/reasons/closed value sets
+with the document, both ways.
+
+### Tests for User Story 6
+
+- [X] T035 [P] [US6] `OperationsContractTest`: every operation and every `reason` the code can
+      answer is in the document; everything the document describes is served; each closed value set
+      in the document (`leg`, per-ID status/reason/refusal code, replay outcome) equals the
+      service's own vocabulary value for value (FR-005-035) — `[BLOCKED-ON-004]` for the
+      served-operations half, since the controllers don't exist until Phases 4–5 land —
+      `src/test/java/.../api/OperationsContractTest.java`
+
+### Implementation for User Story 6
+
+- [X] T036 [US6] Fill in `src/main/resources/probation-results-distribution-openapi.yaml`: the two
+      operations, each request/success shape/status/bounded `reason`, `operationId` set to the
+      action strings of FR-005-019 (research.md Decision 2), every closed value set mirrored from
+      the service's vocabularies, version raised above `0.0.0` (FR-005-035)
+- [X] T037 [US6] Update `doc/API_CONTRACTS.md` §3 with the two endpoints, their refusals, the five
+      gates and the runner fallback (FR-005-036) — in the same commit as T036
+
+**Checkpoint**: the OpenAPI document and the served API are provably in agreement.
+
+---
+
+## Phase 9: User Story 7 - The API and its command-line fallback give the same answer (Priority: P3)
+
+**Goal**: the same mixed list through the API and through 004's runner gives the same report, ID
+for ID.
+
+**Independent Test**: run the same mixed list through the runner and through the API, each against
+an identically seeded store, and compare the reports ID for ID.
+
+### Tests for User Story 7 `[BLOCKED-ON-004]`
+
+- [ ] T038 [P] [US7] `OperationsRunnerParityIT`: the design's mixed list through
+      `cli/ResendLegRunner` (004) and through `POST /operations/resend-leg` (005), each against an
+      identically seeded store, give the same whole-call refusal or the same outcome/refusal code
+      per ID (FR-005-005); a replay refused through the API is refused with the same code through
+      the runner in the same state — needs **both** 004's `cli` runners (beyond today's dispatcher
+      skeleton) and 005's controllers implemented — `[BLOCKED-ON-004]` —
+      `src/test/java/.../api/OperationsRunnerParityIT.java`
+
+### Implementation for User Story 7
+
+- [ ] T039 [US7] Confirm the replay and resend-leg command-line runners remain present and
+      documented as the fallback once this slice is built (FR-005-005) — a verification task, no
+      new code
+
+**Checkpoint**: all seven user stories are independently functional once 004 lands for real.
+
+---
+
+## Phase 10: Polish & Cross-Cutting Concerns
+
+- [X] T040 [P] `OperationsConfigPropertiesTest`: this slice adds 0 properties to the closed
+      `distribution.*` catalogue and makes 0 App Configuration or Results-switch reads
+      (SC-005-011) — `src/test/java/.../config/OperationsConfigPropertiesTest.java`
+- [X] T041 [P] Run the full `TelemetryPrivacyTest`/`LogStatementSweepTest` suite across every new
+      class this slice adds — zero findings (FR-005-023, FR-005-031, FR-005-032; SC-005-004)
+- [ ] T042 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
+      are unchanged (SC-005-010)
+- [ ] T043 Run every `quickstart.md` step end to end. The replay steps need only the
+      `ReplayEnqueuer` adapter (004); the resend-leg steps need `LegResender` fully implemented
+- [X] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
+      filter chain in T014, including the one case research.md Decision 2 flags as not yet
+      re-verified by a running test: a caller sending a conflicting `CPP-ACTION` header has no effect
+- [ ] T045 Update `CLAUDE.md`'s Setup section once this slice is fully implemented (not just
+      planned), and hand the Dependencies → "006-production-readiness" section to whoever starts
+      that slice next — **not done in this pass**: US2/US3/US7 remain `[BLOCKED-ON-004]`, so the
+      slice is not fully implemented yet
+
+**T040/T041/T044 landing note**: `OperationsConfigPropertiesTest` reads the live `distribution.*`
+property names out of `application.yaml` with `YamlPropertySourceLoader` (not retyped by hand, so a
+transcription slip cannot mask a real addition) and asserts the set against a closed, frozen list of
+the 46 properties that existed before this slice's own work; confirmed to catch a real addition by
+temporarily inserting a dummy `distribution.operations-test-probe.enabled` property (fails), then
+reverting (passes). It also sweeps `api/` and the two new `config/` classes for App
+Configuration/Results-switch tokens — zero findings, as expected since this slice reads neither
+(H26). T041 is a verification pass, not new code: `LogStatementSweepTest`/`TelemetryPrivacyTest`
+already walk every `.java` file under `src/main/java` and `src/test/java` by glob, so every class
+this slice has added (Setup through US5/US6) is swept by construction, with T033's extension adding
+the operator/reason/`CJSCPPUID` check specific to this slice's own log lines — a dedicated run of
+both suites during this pass found zero findings. T044: the one case research.md Decision 2 flagged
+as not yet re-verified against the real filter chain — a caller sending a conflicting `CPP-ACTION`
+header has no effect — is exactly `OperationsAuthorisationIT`'s
+`action_header_cannot_redirect_authorisation` case (landed with T014), which passes; no new test or
+code was needed, confirming the ordering already holds.
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: no dependencies — pure DTOs and the Drools rules file
+- **Foundational (Phase 2)**: depends on Setup — BLOCKS every user story (error handling, request
+  parsing, the audit publisher)
+- **US4 (Phase 3)**: depends on Foundational; proves the authorisation/audit chain in isolation
+  before any controller exists
+- **US1 (Phase 4)**: depends on Foundational and US4 (its controller sits behind the proven
+  authz/audit chain). `application.ReplayAction` now exists, so T019–T022 are unblocked; only T023
+  (the manual end-to-end run) waits on 004's `ReplayEnqueuer` adapter
+- **US2 (Phase 5)**: depends on Foundational and US4; **blocked on `application.LegResender`
+  existing** (004); independent of US1's controller
+- **US3 (Phase 6)**: depends on US2's controller and mapper (T027, T028) — it is the override path
+  through the same endpoint, not a new one
+- **US5 (Phase 7)**: depends on US1–US4 existing to sweep across real endpoints, though its
+  foundational half (T005/T008) is already provable without them
+- **US6 (Phase 8)**: the OpenAPI authoring (T036) can happen any time after Setup; the contract
+  test's served-operations half needs US1/US2's controllers
+- **US7 (Phase 9)**: depends on US1–US3 **and** on 004's `cli` runners being implemented beyond
+  today's dispatcher skeleton (004 tasks.md T047, T023 in that slice's numbering)
+- **Polish (Phase 10)**: depends on every story to be included in that release being complete
+
+### Parallel Opportunities
+
+- T001–T004 in parallel (Setup)
+- T005, T007, T009 in parallel (Foundational tests, different files)
+- T012, T014–T016 in parallel (US4 tests); T013 depends on T012
+- T019/T020 (US1) can proceed now, in parallel with US4's tests, since `application.ReplayAction`
+  already exists; T024–T026 (US2) still wait on `application.LegResender`
+- T036 (the OpenAPI document) can be authored in parallel with US1–US3's implementation, since it
+  does not depend on the controllers existing, only on the shapes this plan already fixes
+
+---
+
+## Implementation Strategy
+
+### MVP First
+
+1. Setup → Foundational → US4 (authorisation/audit proven) → US1 (replay) — **buildable today**,
+   since `application.ReplayAction` already exists with the assumed shape. Stop and validate
+   against US1's Independent Test (its `@WebMvcTest` half; the manual end-to-end half waits on the
+   `ReplayEnqueuer` adapter). This alone gives operators the HTTP route to the general-use recovery
+   action.
+
+### Incremental Delivery
+
+1. Setup + Foundational + US4 → ready now.
+2. US1 (MVP) → ready now (T019–T022); T023's manual run waits on 004's `ReplayEnqueuer` adapter.
+3. The instant 004's `LegResender` lands: US2 → US3 (same endpoint, the override).
+4. US5 and US6 can be finished alongside US1–US3, since their foundational halves need no
+   endpoint.
+5. US7 last, once 004's `cli` runners are implemented for real, not just their dispatcher skeleton.
+
+Phases 1–4 (Setup, Foundational, US4, US1) no longer wait on 004 at all beyond the one adapter noted
+above — that is most of this slice's P1 scope, buildable starting now.

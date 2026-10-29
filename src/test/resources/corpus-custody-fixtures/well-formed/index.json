@@ -1,0 +1,18 @@
+{
+  "environment": "SYNTHETIC",
+  "captureDateRange": {
+    "from": "2026-01-01",
+    "to": "2026-01-01"
+  },
+  "hearingCount": 1,
+  "casesPerSwitchState": {
+    "ACTIVE": 1,
+    "INACTIVE": 0
+  },
+  "syntheticCount": 1,
+  "excludedCases": [],
+  "comparatorVectorCount": 57,
+  "cases": [
+    { "caseId": "case-custody-demo", "environment": "SYNTHETIC" }
+  ]
+}

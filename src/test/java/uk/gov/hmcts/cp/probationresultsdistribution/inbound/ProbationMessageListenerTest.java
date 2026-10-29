@@ -1,0 +1,439 @@
+package uk.gov.hmcts.cp.probationresultsdistribution.inbound;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.azure.core.util.BinaryData;
+import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
+import com.azure.messaging.servicebus.ServiceBusReceivedMessageContext;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.search.Search;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.GuardDecision;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.IdempotencyGuard;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.RunResult;
+import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.SupportSubmission;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener.Abandon;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener.Complete;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener.DeadLetter;
+import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ProbationMessageListener.Settlement;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
+
+@ExtendWith(MockitoExtension.class)
+@DisplayName("the probation message listener")
+class ProbationMessageListenerTest {
+
+    private static final String BODY = "{\"any\":\"body\"}";
+
+    @Mock
+    private DistributionCommandParser parser;
+    @Mock
+    private IdempotencyGuard guard;
+    @Mock
+    private DistributionRunner runner;
+    @Mock
+    private ProcessedRequestRepository processedRequests;
+
+    private final StoreGate availableStore = new StoreGate() {
+        @Override
+        public boolean storeAvailable() {
+            return true;
+        }
+
+        @Override
+        public void suspendIntake() {
+            // no-op: these unit tests run with the store available
+        }
+    };
+
+    private SimpleMeterRegistry meter;
+    private ProbationMessageListener listener;
+    private DistributionCommand command;
+
+    @BeforeEach
+    void setUp() {
+        meter = new SimpleMeterRegistry();
+        listener = new ProbationMessageListener(parser, guard, runner, processedRequests,
+                new MetricRegistry(meter), availableStore, 5);
+        command = new DistributionCommand("RESULTS", UUID.randomUUID(), UUID.randomUUID(),
+                LocalDate.parse("2026-08-19"), Instant.parse("2026-08-19T16:42:07.512Z"),
+                "Hearing_Resulted", Optional.empty());
+    }
+
+    @Test
+    @DisplayName("dead-letters a contract-invalid body as validation, with no admission")
+    void dead_letters_invalid_body() {
+        when(parser.parse(BODY)).thenThrow(
+                new CommandValidationException(CommandValidationException.Kind.UNKNOWN_FIELD));
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(DeadLetter.class);
+        assertThat(((DeadLetter) settlement).reason()).isEqualTo(DeadLetterReason.VALIDATION);
+        verify(guard, never()).admit(any(), any(), any(), anyLong(), any());
+        assertThat(count("probation_deadlettered_total", "reason", "validation")).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("completes a duplicate of a COMPLETED request with no run")
+    void completes_a_duplicate() {
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.DuplicateComplete());
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(Complete.class);
+        verify(runner, never()).run(any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("abandons a live-claim delivery")
+    void abandons_a_live_claim() {
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Abandon());
+
+        assertThat(listener.decide(BODY, 1L)).isInstanceOf(Abandon.class);
+        verify(runner, never()).run(any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("dead-letters a collision and counts it")
+    void dead_letters_a_collision() {
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any()))
+                .thenReturn(new GuardDecision.DeadLetter(DeadLetterReason.COLLISION));
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(((DeadLetter) settlement).reason()).isEqualTo(DeadLetterReason.COLLISION);
+        assertThat(count("probation_deadlettered_total", "reason", "collision")).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("completes the request both-legs-terminal on a terminal leg")
+    void completes_on_a_terminal_leg() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
+                .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(Complete.class);
+        verify(processedRequests).markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL);
+        assertThat(count("probation_processed_total", "status", "COMPLETED")).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("moves the request to RETRYING and abandons on a parked leg")
+    void retries_on_a_parked_leg() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(new RunResult(
+                AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
+        when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
+                .thenReturn(true);
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(Abandon.class);
+        verify(processedRequests).markRetrying(command.source(), command.requestId(), claim);
+        verify(processedRequests, never()).markCompleted(any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("abandons and counts a stale-runner rejection when the guarded write matched no row")
+    void abandons_on_a_stale_runner() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(
+                new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), false));
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(Abandon.class);
+        verify(processedRequests, never()).markCompleted(any(), any(), any(), any());
+        assertThat(count("probation_stale_runner_rejections_total", null, null)).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("abandons and counts a stale-runner rejection when the request transition matches no row")
+    void abandons_when_the_request_transition_is_stale() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
+                .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(false);
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(Abandon.class);
+        assertThat(count("probation_stale_runner_rejections_total", null, null)).isEqualTo(1.0d);
+        assertThat(count("probation_processed_total", "status", "COMPLETED")).isEqualTo(0.0d);
+    }
+
+    @Test
+    @DisplayName("abandons and counts a stale-runner rejection when the retry transition matches no row")
+    void abandons_when_the_retry_transition_is_stale() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(new RunResult(
+                AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
+        when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
+                .thenReturn(false);
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(Abandon.class);
+        assertThat(count("probation_stale_runner_rejections_total", null, null)).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("abandons a hand-back one delivery below the final permitted delivery")
+    void abandons_below_the_final_permitted_delivery() {
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Abandon());
+
+        // maxDeliveryCount is 5 and Azure counts deliveries from zero (FR-002-048): delivery count 3 is
+        // the fourth delivery, which still has a fifth to come, so it is handed back, not dead-lettered.
+        assertThat(listener.decide(BODY, 3L)).isInstanceOf(Abandon.class);
+        assertThat(count("probation_deadlettered_total", "reason", "exhausted")).isEqualTo(0.0d);
+    }
+
+    @Test
+    @DisplayName("dead-letters exhausted on the final permitted delivery")
+    void dead_letters_exhausted_on_the_final_permitted_delivery() {
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Abandon());
+
+        // Delivery count 4 is the fifth (and final permitted) delivery when maxDeliveryCount is 5 and
+        // Azure counts from zero: the service records its own exhausted reason rather than leaving the
+        // broker to park it under MaxDeliveryCountExceeded.
+        final Settlement settlement = listener.decide(BODY, 4L);
+
+        assertThat(settlement).isInstanceOf(DeadLetter.class);
+        assertThat(((DeadLetter) settlement).reason()).isEqualTo(DeadLetterReason.EXHAUSTED);
+        assertThat(count("probation_deadlettered_total", "reason", "exhausted")).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("processMessage completes the delivery exactly once on a terminal leg")
+    void process_message_completes_once() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
+                .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+
+        listener.processMessage(context);
+
+        verify(context).complete();
+        verify(context, never()).abandon();
+        verify(context, never()).deadLetter(any());
+    }
+
+    @Test
+    @DisplayName("processMessage dead-letters a contract-invalid delivery exactly once")
+    void process_message_dead_letters_invalid() {
+        when(parser.parse(BODY)).thenThrow(
+                new CommandValidationException(CommandValidationException.Kind.UNKNOWN_FIELD));
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+
+        listener.processMessage(context);
+
+        verify(context).deadLetter(any());
+        verify(context, never()).complete();
+        verify(context, never()).abandon();
+    }
+
+    @Test
+    @DisplayName("processMessage never propagates when applying the settlement fails")
+    void process_message_swallows_settlement_application_failure() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
+                .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+        doThrow(new IllegalStateException("the lock was lost")).when(context).complete();
+
+        assertThatCode(() -> listener.processMessage(context)).doesNotThrowAnyException();
+
+        verify(context).complete();
+        // A failed settlement is its own event (FR-002-058): it is counted on
+        // probation_settlement_failures_total, never conflated with an unexpected run failure.
+        assertThat(count("probation_settlement_failures_total", null, null)).isEqualTo(1.0d);
+        assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(0.0d);
+    }
+
+    @Test
+    @DisplayName("processMessage abandons and counts when processing throws unexpectedly")
+    void process_message_abandons_on_unexpected() {
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenThrow(new IllegalStateException("boom"));
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+
+        listener.processMessage(context);
+
+        verify(context).abandon();
+        verify(context, never()).complete();
+        assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("processMessage still settles exactly once when the store precondition itself throws")
+    void process_message_settles_when_the_store_precondition_throws() {
+        final StoreGate throwingStore = new StoreGate() {
+            @Override
+            public boolean storeAvailable() {
+                throw new IllegalStateException("the processed-log probe is unreachable");
+            }
+
+            @Override
+            public void suspendIntake() {
+                // asserted via verify(...) below, not recorded here
+            }
+        };
+        final StoreGate spiedStore = org.mockito.Mockito.spy(throwingStore);
+        final ProbationMessageListener listenerWithThrowingStore = new ProbationMessageListener(
+                parser, guard, runner, processedRequests, new MetricRegistry(meter), spiedStore, 5);
+        // The store precondition throws before the body is ever read, so only the delivery count
+        // (read first) needs stubbing here; contextFor()'s body stub would be an unused stubbing.
+        final ServiceBusReceivedMessageContext context =
+                org.mockito.Mockito.mock(ServiceBusReceivedMessageContext.class);
+        final ServiceBusReceivedMessage message =
+                org.mockito.Mockito.mock(ServiceBusReceivedMessage.class);
+        when(context.getMessage()).thenReturn(message);
+        when(message.getDeliveryCount()).thenReturn(1L);
+
+        assertThatCode(() -> listenerWithThrowingStore.processMessage(context))
+                .doesNotThrowAnyException();
+
+        verify(context).abandon();
+        verify(context, never()).complete();
+        verify(context, never()).deadLetter(any());
+        verify(spiedStore).suspendIntake();
+        assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("hands a SUPPORT delivery's operator, run id and reason to the guard, each sanitised "
+            + "to one line of at most 200 characters (slice 004, FR-004-057)")
+    void support_delivery_carries_its_markers_to_the_guard() {
+        final String runId = "7d1f0c9a-55b2-4c1e-8f3a-9b6e2d4c1a77";
+        final ServiceBusReceivedMessageContext context = contextWithProperties(Map.of(
+                "origin", "SUPPORT", "operator", "local\ndev", "runId", runId,
+                "reason", " " + "r".repeat(250) + " "));
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SUPPORT),
+                any(SupportSubmission.class))).thenReturn(new GuardDecision.DuplicateComplete());
+
+        listener.processMessage(context);
+
+        verify(guard).admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SUPPORT),
+                eq(new SupportSubmission("local dev", runId, "r".repeat(200))));
+        verify(guard, never()).admit(any(), any(), any(), anyLong(), any());
+        verify(context).complete();
+    }
+
+    @Test
+    @DisplayName("records an absent or non-text SUPPORT marker as '-'")
+    void support_delivery_without_markers_records_a_dash() {
+        final ServiceBusReceivedMessageContext context = contextWithProperties(Map.of(
+                "origin", "SUPPORT", "runId", 7));
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SUPPORT),
+                any(SupportSubmission.class))).thenReturn(new GuardDecision.DuplicateComplete());
+
+        listener.processMessage(context);
+
+        verify(guard).admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SUPPORT),
+                eq(new SupportSubmission("-", "-", "-")));
+    }
+
+    @Test
+    @DisplayName("reads no operator marker from a delivery not marked SUPPORT")
+    void replay_delivery_carries_no_markers() {
+        final ServiceBusReceivedMessageContext context = contextWithProperties(Map.of(
+                "origin", "REPLAY", "operator", "someone", "reason", "why"));
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), eq(ReplayRoute.SERVICE)))
+                .thenReturn(new GuardDecision.DuplicateComplete());
+
+        listener.processMessage(context);
+
+        verify(guard, never()).admit(any(), any(), any(), anyLong(), any(), any());
+        verify(context).complete();
+    }
+
+    private ServiceBusReceivedMessageContext contextWithProperties(
+            final Map<String, Object> properties) {
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+        final ServiceBusReceivedMessage message = context.getMessage();
+        when(message.getApplicationProperties()).thenReturn(new HashMap<>(properties));
+        when(message.getMessageId()).thenReturn("RESULTS:" + command.requestId());
+        return context;
+    }
+
+    private ServiceBusReceivedMessageContext contextFor(final String body) {
+        final ServiceBusReceivedMessageContext context =
+                org.mockito.Mockito.mock(ServiceBusReceivedMessageContext.class);
+        final ServiceBusReceivedMessage message =
+                org.mockito.Mockito.mock(ServiceBusReceivedMessage.class);
+        when(context.getMessage()).thenReturn(message);
+        when(message.getBody()).thenReturn(BinaryData.fromString(body));
+        when(message.getDeliveryCount()).thenReturn(1L);
+        return context;
+    }
+
+    private double count(final String name, final String tagKey, final String tagValue) {
+        final Search search = meter.find(name);
+        final Counter counter =
+                tagKey == null ? search.counter() : search.tag(tagKey, tagValue).counter();
+        return counter == null ? 0.0d : counter.count();
+    }
+}

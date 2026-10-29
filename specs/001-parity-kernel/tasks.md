@@ -1,0 +1,611 @@
+# Tasks: Parity kernel — the ported HMPPS rules, the SIT corpus, the comparator and the deviation register
+
+**Input**: Design documents from `specs/001-parity-kernel/` (`plan.md`, `spec.md`, `research.md`, `data-model.md`, `quickstart.md`)
+**Prerequisites**: `plan.md`, `spec.md` (required); `research.md`, `data-model.md`, `quickstart.md` present; no `contracts/` (this slice has no external interface)
+
+**Tests**: Mandatory throughout (constitution Principle II). Every test task is ordered before the
+implementation task it guards. A test task lands the compile-safe seam (a stub type/method that
+compiles but fails the assertion) so the recorded red run is a failing assertion, never a compile
+error, per this repo's TDD convention (`CLAUDE.md`, Repository Conventions).
+
+**Organization**: Grouped by user story (US1–US5) from `spec.md`, all P1 except US5 (P2).
+
+**Note on corpus content**: this slice's own required coverage is the fixed blind-spot set
+(cases 1, 2, 3, 4, 5, 8, 9, 11, 12) plus case 13, which `spec.md`'s Assumptions says may be
+synthetic where SIT lacks the shape. Real SIT hearing payloads require the owning team's capture
+within SIT's retention window (`spec.md` Dependencies, External) — an out-of-repository activity,
+not a coding task. Tasks below build every blind-spot case as **synthetic**, each flagged for later
+replacement with a real SIT case if one becomes available before this slice merges; this does not
+block the build gate (`spec.md` Assumptions, "corpus size... the design sets none").
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no unmet dependency)
+- **[Story]**: US1–US5, mapping to `spec.md`'s user stories
+
+## Path Conventions
+
+Single project (existing service). Production code under
+`src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/{domain,pipeline}/`; tests under the
+mirrored `src/test/java/.../{domain,pipeline}/` tree; fixtures and corpus under
+`src/test/resources/{fixtures,corpus,comparator-vectors}/`; the register at `doc/DEVIATIONS.md`.
+
+---
+
+## Phase 1: Setup
+
+**Purpose**: Bring in the two external inputs this slice ports/reuses, unmodified, before any new
+code references them.
+
+- [X] T001 [P] Copy the 9 legacy Jest fixtures byte-identical from
+  `cpp-context-azure-legalaidagency@122e2152:azure-functions/durable-functions/ProbationHearingResultedFilter/test/`
+  into `src/test/resources/fixtures/`: `hearing.sjp.cases.resulted.in.sjp.session.json`,
+  `box.hearing.json`, `hearing.prosection.case.with.laa.reference.json`,
+  `hearing.only.court.application.json`, `hearing.multiple.court.applications.courtorder.json`,
+  `hearing.prosection.case.with.youth.defendant.json`,
+  `hearing.prosection.case.with.all.youth.defendant.json`,
+  `hearing.single.prosection.case.with.all.youth.defendant.json`,
+  `hearing.only.court.application.with.youth.defendant.json` (FR-001-011)
+- [X] T002 [P] Copy `JsonParity.java`, `JsonParityTest.java`, `RegisteredFieldDeviations.java`,
+  `ComparatorContractTest.java` from
+  `service-cp-crime-informant-register:src/test/java/uk/gov/hmcts/cp/informantregister/support/`
+  into `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/` (package
+  declaration changed only; remove `RegisteredFieldDeviations`'s `hearingStartTime` entry — not
+  this service's domain), and `comparator-vectors/vectors.json` (57 entries, unmodified) into
+  `src/test/resources/comparator-vectors/vectors.json` (FR-001-014, research.md R2)
+
+**Checkpoint**: the copied pack compiles in this repo's package; `ComparatorContractTest` and
+`JsonParityTest` run (not yet asserted against this service's domain — that's US2).
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: Shared types and infrastructure every user story phase below needs. No user story
+implementation starts before this phase is green.
+
+- [X] T003 Create `doc/DEVIATIONS.md` seeded from `doc/design/DIGEST.md` §4 and design §7.2: one
+  row for each of DV-01 … DV-26 (withdrawn DV-01/02/03/15, unallocated DV-11/12, reserved
+  DV-18…DV-22, active rows included), `DV-27` named as the next free id, and entries for the carried
+  defects (P17, P18, P19) and pending-external defects (P07, P21, P35, P36) per FR-001-035. Update
+  the pointer in `README.md`'s artefact table (currently "not present yet") (FR-001-033, FR-001-034)
+- [X] T004 [P] Write `CanonicalJsonMapperTest` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/CanonicalJsonMapperTest.java`:
+  asserts `1`, `1.0` and `1.00` parse to numerically-equal `BigDecimal` nodes (red: the mapper class
+  does not exist yet — a compile-safe stub throwing `UnsupportedOperationException` lands with this
+  task) (research.md R3)
+  - RED: `CanonicalJsonMapper > parses 1, 1.0 and 1.00 ... FAILED` — `java.lang.UnsupportedOperationException: CanonicalJsonMapper.create() lands in T006`
+- [X] T005 [P] Write `DomainTypesTest` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/domain/DomainTypesTest.java`:
+  asserts `EffectiveSwitchState` has exactly `ACTIVE`/`INACTIVE`, and each `RedactionResult` variant
+  (`Body`, `EmptiedByR1`, `EmptiedByR11`, `RulesFailure`) constructs and exposes its field(s) (red:
+  compile-safe stub enum/sealed interface with no working accessors lands with this task)
+  (data-model.md)
+  - RED: `EffectiveSwitchState > has exactly ACTIVE and INACTIVE FAILED` (STUB_PENDING present); `RulesFailure exposes its rule id` expected `"R10"` but was `null`
+- [X] T006 [P] Implement `CanonicalJsonMapper` (Jackson 3 `ObjectMapper`, `USE_BIG_DECIMAL_FOR_FLOATS`
+  equivalent enabled) in
+  `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/CanonicalJsonMapper.java`
+  — makes T004 green
+  - GREEN: `CanonicalJsonMapper > parses 1, 1.0 and 1.00 ... PASSED`
+- [X] T007 [P] Implement `EffectiveSwitchState`
+  (`src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/domain/EffectiveSwitchState.java`),
+  `RedactionResult`
+  (`src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/domain/RedactionResult.java`) and
+  `RuleFailureSignal`
+  (`src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/RuleFailureSignal.java`) —
+  makes T005 green
+  - GREEN: all four `domain types` assertions PASSED
+
+**Checkpoint**: domain types and the canonical-JSON test utility exist and are green. User story
+phases can now proceed.
+
+---
+
+## Phase 3: User Story 1 - The ported HMPPS rules produce the legacy's output, and nothing else (Priority: P1) 🎯 MVP
+
+**Goal**: One pure function, `HmppsRedaction.redact(JsonNode, EffectiveSwitchState)`, that
+reproduces every legacy rule R0, R1, R3–R11 verbatim, including the carried defects.
+
+**Independent Test**: run the 15 legacy-case twins over their byte-identical fixtures (T001). No
+corpus, no comparator vectors, no other story.
+
+### Tests for User Story 1 (write and run first; record the failing assertion) ⚠️
+
+- [X] T008 [P] [US1] Write twin tests for T1 (SJP fixture) and T2 (box-hearing fixture) in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionLegacyTwinTest.java`:
+  asserts `redact(...)` returns `RedactionResult.EmptiedByR1` for both (FR-001-011)
+  - RED: `T1 ... emptied by R1 FAILED`, `T2 ... emptied by R1 FAILED` (stub returned Body)
+- [X] T009 [P] [US1] Add twin tests for T3, T4, T5 (`laaApplnReference` removed from
+  prosecution-case, application and court-order offences) to the same test class (FR-001-011)
+  - RED: `T3/T4/T5 ... FAILED` (laaApplnReference still present)
+- [X] T010 [P] [US1] Add twin tests for T6–T12 (youth rules under both switch states, including
+  `EmptiedByR11` for T10 and T12) to the same test class (FR-001-011)
+  - RED: `T7/T8/T10/T12 ... FAILED` (R3/R4/R11 not yet implemented); T6/T9/T11 already PASSED (INACTIVE)
+- [X] T011 [P] [US1] Add twin tests for T13, T14 (vacuous per P34 — assert absence of members the
+  fixture never had) and T15 (`delegatedPowers`, `associatedPersons`, `hearing.judiciary` all gone)
+  to the same test class (FR-001-011, FR-001-012)
+  - RED: `T15 ... FAILED` (R8/R9/R10 not yet implemented); T13/T14 PASSED (vacuous)
+- [X] T012 [US1] Write `HmppsRedactionPurityTest` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionPurityTest.java`:
+  for every corpus-independent fixture, the caller's input is unchanged after `redact(...)`, no log
+  line is written, and a second call returns an equal result — this is DV-09's pinning test named in
+  `doc/DEVIATIONS.md` (FR-001-001, FR-001-036, SC-001-012)
+  - RED: `leaves the caller's payload unchanged FAILED` (laa under ACTIVE mutated); no-log and determinism PASSED
+- [X] T013 [US1] Write `HmppsRedactionRulesFailureTest` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionRulesFailureTest.java`:
+  asserts `RulesFailure(ruleId)` for each carried null-guard site (P19 — missing `defendants`,
+  `offences`, `courtOrderOffences`/`offence`, `judicialResults`) and for a court application with no
+  `masterDefendant` under `ACTIVE` vs kept under `INACTIVE` (P18) (FR-001-007(d), FR-001-008)
+  - RED: R3/R5/R7/R10 cases threw uncaught `RuleFailureSignal` (not yet mapped); P18 cases PASSED
+
+### Implementation for User Story 1
+
+- [X] T014 [US1] Implement R0 (`policeCases` drop) and R1 (SJP/box-hearing collapse) in
+  `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedaction.java` —
+  makes T008 green
+  - GREEN: `T1 ... emptied by R1 PASSED`, `T2 ... emptied by R1 PASSED`
+- [X] T015 [US1] Implement R5, R6, R7 (`laaApplnReference` removal from the three offence
+  locations) in `HmppsRedaction.java` — makes T009 green
+  - GREEN: `T3/T4/T5 ... PASSED`
+- [X] T016 [US1] Implement R3, R4 (youth rules, gated on `EffectiveSwitchState.ACTIVE`, including
+  the shared `hasAnyTruthyTopLevelMember` payload-level guard) and R11 (final collapse) in
+  `HmppsRedaction.java` — makes T010 green
+  - GREEN: `T6..T12 ... PASSED` (all seven)
+- [X] T017 [US1] Implement R8, R9, R10 (`judiciary`, `associatedPersons`, `delegatedPowers`
+  removal) in `HmppsRedaction.java` — makes T011 green
+  - GREEN: `T13/T14/T15 ... PASSED` (all 15 twins green)
+- [X] T018 [US1] Implement the single deep-copy-on-entry and confirm no logging call exists
+  anywhere in `pipeline/` — makes T012 green
+  - GREEN: all three `purity (DV-09)` assertions PASSED
+- [X] T019 [US1] Implement `RuleFailureSignal` throw sites at the carried null-guard reads (P19)
+  and the `subject.masterDefendant` read (P18), caught only at `redact(...)`'s outer boundary and
+  mapped to `RedactionResult.RulesFailure(ruleId)` — makes T013 green; update `doc/DEVIATIONS.md`'s
+  DV-09 row to "built: yes"
+  - GREEN: R3/R5/R7/R10 cases map to `RulesFailure(<rule>)`; P18 removed/kept PASSED. DV-09 built column set to "Partly" (the no-log half is built this slice; the slice-002 log sweep is not, so per FR-001-034 not all named pinning tests exist yet)
+
+**Checkpoint**: User Story 1 is fully functional and independently testable via the 15 twins alone.
+
+---
+
+## Phase 4: User Story 2 - One comparator decides whether two bodies are the same (Priority: P1)
+
+**Goal**: One reused comparator, with safe (value-free) failure messages, that the corpus harness
+and any other caller (slice 006's STE replay) can use identically.
+
+**Independent Test**: run the comparator over the 57 reused vectors, then force one mismatch and
+inspect its message. Needs nothing from User Story 1.
+
+### Tests for User Story 2 (write and run first) ⚠️
+
+- [X] T020 [P] [US2] Run the copied `ComparatorContractTest` (T002) as-is against all 57 vectors,
+  both directions; confirm 100% pass with no `UNSPECIFIED` verdict left unhandled (FR-001-014,
+  SC-001-002)
+  - GREEN: `ComparatorContractTest$DecidedVectors` 114 tests, 0 failures, 0 skipped (57 vectors ×
+    both directions); `$VectorPack` 2 PASSED; `$UndecidedVectors` 0 invocations (no `UNSPECIFIED`
+    verdict left; the pack holds 42 `DIFFERENT` + 15 `EQUAL` = 57 decided). Copied test, already
+    green — a run-and-confirm task, no RED
+- [X] T021 [US2] Write `ParityAssertionsTest` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/ParityAssertionsTest.java`:
+  forces a mismatch between two labelled bodies and asserts the failure message names the case, the
+  form, the switch state and each differing JSON path, and contains no value from either side (red:
+  `ParityAssertions` does not exist yet) (FR-001-015, SC-001-009)
+  - RED: `assertSameBody_mismatch_should_name_case_form_switch_and_paths FAILED` and
+    `..._should_carry_no_value_from_either_side FAILED` — "Expecting actual throwable to be an
+    instance of AssertionError" but the stub threw `UnsupportedOperationException:
+    ParityAssertions.assertSameBody lands in T023"; `assertSameBody_equalBodies_should_not_throw
+    FAILED` — "Expecting code not to raise a throwable but caught UnsupportedOperationException".
+    Compile-safe seam (`ParityAssertions` stub) lands with this task
+
+### Implementation for User Story 2
+
+- [X] T022 [US2] If `ComparatorContractTest`'s binding point needs adjustment to call the copied
+  `JsonParity` in this package, make it — confirms T020
+  - No adjustment needed: the binding point (`comparatorSaysEqual`) already calls
+    `JsonParity.assertMatches` in the same `pipeline.support` package (no import), and T020's run is
+    green against it
+- [X] T023 [US2] Implement `ParityAssertions.assertSameBody(caseId, form, switchState, expected,
+  actual)` in
+  `src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/ParityAssertions.java`
+  (test-only utility; lives under `src/test/java/...` if no production caller exists yet),
+  delegating to `JsonParity.assertMatches` with a formatted, value-free label — makes T021 green
+  - Lives under `src/test/java/.../pipeline/support/ParityAssertions.java` — no production caller in
+    this slice. Delegates to `JsonParity.assertMatches` with a value-free label, then catches the
+    value-carrying `AssertionError` and rethrows one naming the label and the differing JSON paths
+    only (cause dropped so no value leaks via the stack trace)
+  - GREEN: `assertSameBody_mismatch_should_name_case_form_switch_and_paths PASSED`,
+    `..._should_carry_no_value_from_either_side PASSED`, `assertSameBody_equalBodies_should_not_throw
+    PASSED`
+
+**Checkpoint**: User Story 2 is fully functional and independently testable via the vectors and one
+forced mismatch alone.
+
+---
+
+## Phase 5: User Story 3 - SIT data is held only as the public repository allows (Priority: P1)
+
+**Goal**: Custody checks (digest pinning, provenance completeness, no orphan files) in place
+**before** any SIT case is committed.
+
+**Independent Test**: with no SIT data, run the custody checks over a scratch corpus; tamper with
+one file, remove one provenance item, add an orphan file — each fails the build, naming it. Needs
+User Story 2's comparator for one scenario (forced comparison failure showing no values) but nothing
+else.
+
+### Tests for User Story 3 (write and run first) ⚠️
+
+- [X] T024 [P] [US3] Write `CorpusCustodyTest` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/CorpusCustodyTest.java`
+  using a scratch corpus fixture under `src/test/resources/corpus-custody-fixtures/`: a digest
+  mismatch, a case missing a required provenance field, and a file belonging to no case each fail
+  with a message naming the file/case (FR-001-030, FR-001-032)
+  - RED: `digest mismatch ... FAILED`, `missing provenance field ... FAILED`, `file belonging to no
+    case ... FAILED` — each `AssertionError: Expecting any elements of: [] to match ...` (the stub
+    `CorpusCustodyChecker.findViolations` returns no violation); the well-formed case PASSED
+- [X] T025 [US3] Add a case to `CorpusCustodyTest` asserting custody-check output never contains a
+  corpus value, passing or failing (FR-001-031)
+  - RED: `no custody message contains a corpus value ... FAILED` —
+    `AssertionError: [the broken corpora must actually produce violations to prove the point]
+    Expecting actual not to be empty` (stub returns no violations)
+
+### Implementation for User Story 3
+
+- [X] T026 [US3] Create `src/test/resources/corpus/index.json` with the `CorpusMetadata` shape from
+  `data-model.md` (`environment`, `captureDateRange`, `hearingCount`, `casesPerSwitchState`,
+  `syntheticCount`, `excludedCases`, `comparatorVectorCount: 57`), empty case list initially
+  (FR-001-029)
+- [X] T027 [US3] Implement `CorpusCustodyChecker` (digest verification against `meta.json`,
+  provenance-field completeness per FR-001-029, orphan-file detection under
+  `src/test/resources/corpus/`) in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/CorpusCustodyChecker.java`
+  — makes T024 and T025 green
+  - GREEN: all five `CorpusCustodyChecker` assertions PASSED (well-formed clean; digest mismatch,
+    missing provenance field and orphan file each named; no corpus value in any message). A
+    malformed `meta.json` is reported value-free, never as a Jackson parse-error snippet, so a bad
+    corpus file cannot leak content into a public CI log (FR-001-031)
+
+#### Round-2 remediation addenda to T024/T025/T027
+
+Scenarios added after the original six assertions, each recorded against the task it extends. Where
+a scenario pins behaviour the checker already had, it is a coverage pin (no RED); where it is a new
+requirement, its RED is quoted and its GREEN followed in a paired implementation commit.
+
+- T025 (value-free handling, FR-001-031): a malformed `meta.json` must flag the case's **sibling
+  files** as belonging to no verifiable case, as the missing-`meta.json` path does.
+  - RED (`test(corpus): pin sibling-file flagging …`): `a malformed meta.json is reported value-free
+    … FAILED — AssertionError: [files under an unverifiable case must be flagged …] Expecting any
+    elements of: ["case directory case-custody-demo: meta.json is not valid JSON"] to match given
+    predicate but none did.`
+  - GREEN (`fix(corpus): flag sibling files when a case meta.json is unparseable`): BUILD SUCCESSFUL,
+    14 tests, 0 failed — the parse-failure branch now walks the case directory and names each sibling.
+- T027 (provenance completeness, FR-001-029): an `EXECUTED_LEGACY` expectation source now requires
+  `provenance.legacyCommit` and `provenance.runtime`.
+  - RED (`test(corpus): pin value-free malformed handling … provenance gaps`): the `legacyCommit` and
+    `runtime` scenarios failed with the stub returning no violation; the rest of that commit pins
+    existing behaviour (value-free malformed, invalid-environment rejection, no-`meta.json` orphan,
+    stray-in-case).
+  - GREEN (`feat(corpus): require legacyCommit and runtime for executed-legacy expectations`): both
+    scenarios PASSED once `hasExecutedLegacyExpectation` gates the two `requireField` checks.
+- T027 (provenance completeness, FR-001-029): a `meta.json` with **no `caseId`** field is now
+  reported, rather than masked by the directory-name fallback.
+  - RED (`test(corpus): pin that a missing caseId is itself reported`): `a meta.json with no caseId
+    field fails … FAILED — AssertionError: Expecting any elements of: [] to match given predicate but
+    none did.`
+  - GREEN (`fix(corpus): report a missing caseId instead of masking it`): BUILD SUCCESSFUL, 0 failed.
+- T024/T027 coverage pins (no RED; branches already present): a pinned file absent from disk is
+  reported `pinned file … is missing` value-free; the negative side of the executed-legacy gate (no
+  `EXECUTED_LEGACY` source ⇒ `legacyCommit`/`runtime` not required, clean case stays clean); an empty
+  `formsHeld`/`digests` and a `caseId` that differs from the directory name named.
+
+#### Round-3 remediation addendum to T027
+
+- T027 (provenance completeness, FR-001-029): field *presence* was checked but not *completeness* —
+  an empty or short `captureDates`/`expectationSources` object passed custody unnoticed, and
+  `formsHeld` accepted any string, not just `CACHE`/`FALLBACK`.
+  - RED (`test(corpus): pin provenance completeness per formsHeld and a closed form set`): 4 new
+    cases failed — `captureDates` missing a held form's date or the outcome date, an empty
+    `expectationSources` object, and an unrecognised `formsHeld` value each produced `[]` violations.
+  - GREEN (`feat(corpus): check provenance completeness per formsHeld and a closed form set`): BUILD
+    SUCCESSFUL, 21 tests, 0 failed — `captureDates` now requires an entry per held form plus
+    `outcome`; `expectationSources` must be non-empty; `formsHeld` values are checked against the
+    closed `{CACHE, FALLBACK}` set, reported value-free.
+
+**Checkpoint**: User Story 3 is fully functional and independently testable with zero SIT cases
+committed.
+
+---
+
+## Phase 6: User Story 4 - The port is pinned to what the legacy actually sent from SIT (Priority: P1)
+
+**Goal**: The corpus/oracle parity harness: every required case, in both switch states and every
+form it holds, compared with zero unexplained differences.
+
+**Independent Test**: on top of User Stories 1–3, run the parity suite over the committed corpus.
+
+**Depends on**: User Story 1 (redaction), User Story 2 (comparator), User Story 3 (custody checks
+must exist before any case is committed).
+
+### Tooling (before any case is authored)
+
+- [X] T028 [US4] Set up the oracle-execution harness: a small Node.js script, run **outside** this
+  Gradle build, that invokes `cpp-context-azure-legalaidagency@122e2152`'s
+  `ProbationHearingResultedFilter/functions.js` (`probationFilter`) with the switch forced to a fixed
+  value, over a given payload, and writes the result plus provenance (the legacy commit SHA, the
+  Node/npm version) in the shape `meta.json` expects. Document its usage in `quickstart.md`. Every
+  `ACTIVE`/synthetic expectation authored below is produced by this script, never hand-written
+  (FR-001-022, FR-001-029)
+  - RED (`test(oracle-harness): add self-tests for the legacy-filter oracle recorder`): all 26
+    `node --test` cases fail against a throwing stub — parseArgs (incl. `--help`), `wasEmptiedByR1`,
+    `firstLegacyFrame`, `runOne`'s BODY/EMPTIED_BY_R1/EMPTIED_BY_R11/RULES_FAILURE classification,
+    `sha256`, `writeBody`, `resolveLegacyRepo`, `readRuntimeProvenance`, and `main()`'s CLI entry
+    point end to end (stdout privacy, hearingId fallback, non-function-export failure)
+  - GREEN (`feat(oracle-harness): implement the legacy-filter oracle recorder (T028)`): 26/26 pass.
+    Spot-checked against the pinned legacy checkout over the SJP Jest fixture: both switch states
+    classify `EMPTIED_BY_R1`, matching T1's own expectation
+
+### Tests for User Story 4 (write and run first) ⚠️
+
+- [X] T029 [US4] Write `HmppsRedactionCorpusParityIT` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/HmppsRedactionCorpusParityIT.java`:
+  runs `redact(...)` over every committed corpus case, in each switch state and form that has an
+  expectation, compares via `ParityAssertions`; a case-state with no expectation
+  (FR-001-019/020/021) is listed with its reason and never counted as a pass; any other difference
+  fails the build. The report asserts all seven FR-001-039 fields: cases compared per state/form,
+  matches, cases derived by DV id, no-expectation case-states with reasons, case-13 derivations with
+  no source expectation, excluded cases with reasons, and the unexplained-difference count (asserted
+  zero) (FR-001-026, FR-001-039)
+  - RED: `every required blind-spot, R0 and P21 case is present ... FAILED` (empty corpus, 0 case
+    ids), `every compared case-state matches its expectation ... FAILED` (no case-state compared) and
+    `case 13 is derived under DV-25 for the corpus ... FAILED` (no derivations). Compile-safe seams
+    (`ParityCase.loadAll` returning empty, `Case13Derivation.derive` returning empty, the real
+    `CorpusParityHarness`/`ParityReport`) land with this task; the loader lands in T031, the corpus in
+    T032–T042 and the derivation in T043
+- [X] T030 [P] [US4] Write `WholeCorpusChecksTest` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/WholeCorpusChecksTest.java`:
+  every body produced over the corpus carries a non-null `hearing.id`; every carried guard (P19's
+  five sites, P18's `masterDefendant`) is reached by a case or has an accepted-risk entry in
+  `doc/DEVIATIONS.md` (FR-001-027)
+  - RED: `the judicialResults guard (P19) is reached by case 4 ... FAILED`, `... case 5 ... FAILED`,
+    `the masterDefendant guard (P18) is reached by case 3 ... FAILED` (each `corpus case not found`,
+    pending T034/T035/T036) and `every carried guard with no corpus case is an accepted risk ...
+    FAILED` (`` `defendants` `` not yet an accepted risk, pending the register entries in T032–T042).
+    The non-null-`hearing.id` check PASSES vacuously over the empty corpus. Reuses T029's
+    `ParityCase` seam; made green once the corpus and the register's accepted-risk entries land
+
+### Implementation for User Story 4
+
+- [X] T031 [US4] Implement the corpus case loader `ParityCase` (re-authored for this service's
+  two-form/two-switch-state shape per `data-model.md`, not a copy of informant-register's) in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/support/ParityCase.java`,
+  reading `meta.json`/`inputs/`/`expectations/`
+  - Replaces T029's stub `loadAll` with the real loader: reads each case directory's `meta.json`
+    (`caseId`, `environment`, `formsHeld`), the payload per held form from `inputs/`, and the
+    per-(form, switch-state) expectation (`BODY` → the oracle body file, `NO_MESSAGE` → kind + rule,
+    `NONE` → reason). `compileTestJava`, `pmdTest` and `checkstyleTest` green. No corpus case is
+    committed yet, so T029/T030 stay red until T032–T042 land the cases; the loader is exercised
+    green there and at T043
+- [X] T032 [P] [US4] Author synthetic case 1 (virtual-box hearing; always synthetic, A2-8) under
+  `src/test/resources/corpus/case-01-virtual-box-hearing/` with `meta.json`, inputs and both-state
+  expectations produced via T028 (FR-001-024)
+- [X] T033 [P] [US4] Author case 2 (top-level `judiciary` and `associatedPersons`) under
+  `src/test/resources/corpus/case-02-top-level-members/` (FR-001-024)
+- [X] T034 [P] [US4] Author case 3 (court application with no `masterDefendant`, both switch
+  states) under `src/test/resources/corpus/case-03-no-masterdefendant/` (FR-001-024)
+- [X] T035 [P] [US4] Author case 4 (prosecution-case offence without `judicialResults`) under
+  `src/test/resources/corpus/case-04-no-judicial-results/` (FR-001-024)
+- [X] T036 [P] [US4] Author case 5 (`courtOrder` without `courtOrderOffences`) under
+  `src/test/resources/corpus/case-05-no-court-order-offences/` (FR-001-024)
+- [X] T037 [P] [US4] Author case 8 (`plea.delegatedPowers` present, pins P21/P35 as carried) under
+  `src/test/resources/corpus/case-08-delegated-powers/` (FR-001-024)
+- [X] T038 [P] [US4] Author case 9 (non-boolean `isYouth`, e.g. `"false"` is truthy) under
+  `src/test/resources/corpus/case-09-non-boolean-isyouth/` (FR-001-024)
+- [X] T039 [P] [US4] Author case 11 (youth defendant beside adult defendants, adult-court hearing)
+  under `src/test/resources/corpus/case-11-youth-among-adults/` (FR-001-024)
+- [X] T040 [P] [US4] Author case 12 (every case and application removed under `ACTIVE`) under
+  `src/test/resources/corpus/case-12-everything-removed/` (FR-001-024)
+- [X] T041 [P] [US4] Author the R0-proving case (a payload carrying `policeCases`, truthy) under
+  `src/test/resources/corpus/case-r0-policecases/` — without this, R0 has no twin and no corpus
+  case, leaving FR-001-025 unmet (FR-001-024, FR-001-025; found in `/speckit-analyze`, finding C1)
+- [X] T042 [P] [US4] Author the P21-proving case (a court application that keeps
+  `associatedPersons`/`delegatedPowers`, both switch states) under
+  `src/test/resources/corpus/case-p21-application-keeps-associated/` (FR-001-024; found in
+  `/speckit-analyze`, finding C1)
+  - T032–T042 authored together in one commit (homogeneous oracle-produced data, no per-case test).
+    Every `ACTIVE`/synthetic expectation was produced by running the pinned legacy oracle
+    (`tools/oracle-harness/run-oracle.js` against `122e2152`), never hand-written (FR-001-022). Oracle
+    classifications: case-01 `EMPTIED_BY_R1` both states; case-02/08/09/11/r0/p21 `BODY` both states;
+    case-03/12 `EMPTIED_BY_R11` under ACTIVE / `BODY` under INACTIVE; case-04 `RULES_FAILURE(R10)` and
+    case-05 `RULES_FAILURE(R7)` both states. GREEN: `WholeCorpusChecksTest` all five PASSED (the
+    `judicialResults`/`courtOrderOffences`/`masterDefendant` guards reached by cases 4/5/3, the three
+    unreached P19 guards recorded as accepted risks in `doc/DEVIATIONS.md`, every produced body
+    carries `hearing.id`); the parity run reports zero unexplained differences and every required
+    case present (`HmppsRedactionCorpusParityIT`, except the case-13 derivation, pending T043)
+- [X] T043 [US4] Implement the case-13 derivation: for every corpus payload and form, derive the
+  switch-read-failure expectation from that case's `ACTIVE` (or configured-default) expectation
+  under DV-25, never recorded as its own fixture (FR-001-038)
+  - Replaces T029's `Case13Derivation.derive` stub: for every case, form and configured-default
+    value (`ACTIVE`, `INACTIVE`) it derives the expectation from the case's expectation for that
+    default under DV-25, runs `redact(payload, default)` and compares with the shared
+    `CorpusParityHarness.compareOutcome`; a derivation with no source expectation is listed, never a
+    pass. The register-driven wiring of DV-25's permitted outcome is T048 (US5).
+  - GREEN: `case 13 is derived under DV-25 for the corpus ... PASSED` (every derived state keyed on
+    DV-25), and all six `HmppsRedactionCorpusParityIT` assertions PASSED — zero unexplained
+    differences over the corpus
+- [X] T044 [US4] Update `src/test/resources/corpus/index.json` counts and `excludedCases` to match
+  the committed corpus (all synthetic at this point; flag for SIT-case substitution once the
+  external capture dependency is met)
+  - `environment: SYNTHETIC`, `hearingCount: 11`, `casesPerSwitchState {ACTIVE: 11, INACTIVE: 11}`,
+    `syntheticCount: 11`, `excludedCases: []`, the eleven case ids listed, `comparatorVectorCount`
+    held at 57, and a note flagging the synthetic-only corpus pending SIT capture. GREEN: the corpus
+    suites stay green (`HmppsRedactionCorpusParityIT`, `WholeCorpusChecksTest`); custody still passes
+    (`index.json` is the one allowed top-level file)
+
+**Checkpoint**: User Story 4 is fully functional — the parity run reports zero unexplained
+differences over the synthetic blind-spot corpus, and every rule R0, R1, R3–R11 is proved by at
+least one twin or corpus case (FR-001-025). Real SIT cases are a follow-up contingent on SIT access
+(external dependency, not a code gap).
+
+---
+
+## Phase 7: User Story 5 - Every intended difference is registered, derived and tested (Priority: P2)
+
+**Goal**: `doc/DEVIATIONS.md` fully populated for this slice's built rows, and the case-13
+derivation demonstrably load-bearing (withdraw the row, watch the derivation fail).
+
+**Independent Test**: read the register (needs only T003's seed); for the derivation-withdrawal
+scenario, needs User Story 4's harness.
+
+### Tests for User Story 5 (write and run first) ⚠️
+
+- [X] T045 [P] [US5] Write `DeviationRegisterTest` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/DeviationRegisterTest.java`:
+  asserts `doc/DEVIATIONS.md` has exactly one row per DV-01…DV-26 (withdrawn/unallocated/reserved
+  included) and names DV-27 as the next free id (FR-001-033, SC-001-011)
+  - RED: `every active row carries the full FR-001-034 field set FAILED` —
+    `AssertionError: [the table must have a 'Legacy behaviour' column] Expecting actual: -1 to be
+    greater than or equal to: 0` (the seeded table merges legacy and new behaviour into one column
+    and carries neither a Reason nor an Approval column; T047 completes the field set). The
+    one-row-per-DV / DV-27 assertion already PASSED against the seeded table
+- [X] T046 [US5] Write `Case13DerivationWithdrawalTest` in
+  `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/pipeline/Case13DerivationWithdrawalTest.java`:
+  withdrawing DV-25's row in a scratch copy of the register makes every case-13 derivation fail,
+  quoting DV-25 (Acceptance Scenario 4, User Story 5)
+  - RED: `withdrawing DV-25 makes every case-13 derivation fail, quoting DV-25 FAILED` —
+    `AssertionError: [withdrawing DV-25 must make every case-13 derivation fail] Expecting actual not
+    to be empty`. The compile-safe seam (`Case13Derivation.derive(cases, redaction, registerPath)`,
+    the register path validated but not yet read) lands with this task; T048 wires the register read
+    so the withdrawal breaks the derivation
+
+### Implementation for User Story 5
+
+- [X] T047 [US5] Complete `doc/DEVIATIONS.md`'s full field set (legacy behaviour with `file:line`
+  citation, new behaviour, reason, approval by role and decision id, whether it changes a message
+  body, pinning test, built-yet flag) for this slice's built rows (DV-09, DV-25) and the carried /
+  pending-external / accepted-risk entries (FR-001-034, FR-001-035) — makes T045 green
+  - The registered-deviations table now splits legacy from new behaviour and carries dedicated
+    Reason, Approval (role; decision), Changes body?, Derivation, Pinning test and Built? columns.
+    Every active row names an approving decision id. DV-25 carries a machine-readable Derivation cell
+    (`default ACTIVE uses the ACTIVE expectation; default INACTIVE uses the INACTIVE expectation`)
+    that T048 reads. The carried (P17, P18, P19), pending-external (P07, P21, P35, P36) and
+    accepted-risk (`defendants`, `offences`, `courtOrderOffence.offence`) sections added in prior
+    rounds are preserved and correctly justified, not duplicated.
+  - GREEN: `every active row carries the full FR-001-034 field set PASSED` and `holds exactly one row
+    per DV-01 … DV-26 and names DV-27 as the next free id PASSED`; `WholeCorpusChecksTest` stays green
+    (accepted-risk section intact)
+- [X] T048 [US5] Wire the case-13 derivation (T043) to read its permitted outcome from
+  `doc/DEVIATIONS.md`'s DV-25 row so withdrawing the row breaks every derivation — makes T046 green
+  - A new read-only `DeviationRegister` parses the register and answers `isActive(dvId)` and
+    `sourceStateForDefault(dvId, default)` (from DV-25's machine-readable Derivation cell).
+    `Case13Derivation.derive(cases, redaction, registerPath)` now reads it: when DV-25 is not an
+    active row every derivation is refused, quoting DV-25; when active it derives the configured
+    default's expectation as the register's rule states. The real-register path is `doc/DEVIATIONS.md`
+    (the two-arg `derive` delegates to it).
+  - GREEN: `withdrawing DV-25 makes every case-13 derivation fail, quoting DV-25 PASSED`; the corpus
+    parity IT is unchanged — `case 13 is derived under DV-25 for the corpus PASSED` and `the parity
+    run reports zero unexplained differences PASSED`
+
+**Checkpoint**: User Story 5 is fully functional — the register is complete and the derivation
+mechanism is proven load-bearing, not decorative.
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
+
+- [X] T049 [P] Run every command in `quickstart.md` end-to-end; fix any drift between the doc and
+  the actual Gradle test filters
+  - Ran every filter. Drift found and fixed: `--tests "*LegacyCaseTwin*"` matched no test (the class
+    is `HmppsRedactionLegacyTwinTest`) and Gradle failed the task with `No tests found for given
+    includes`. Corrected to `--tests "*LegacyTwin*"` and annotated the twin/corpus filters with their
+    class names. The other three filters (`pipeline.*`, `*ComparatorContractTest*`, `*CorpusParityIT*`)
+    and the oracle harness's `npm test` run as documented
+- [X] T050 [P] Confirm `./gradlew build` passes with this slice's new packages included in PMD,
+  Checkstyle (`google_checks`, `maxWarnings=0`) and the JaCoCo gate (LINE ≥ 0.88, BRANCH ≥ 0.85) —
+  no new exclusion beyond the existing `Application`/`config/**`
+  - `./gradlew jacocoTestReport check` BUILD SUCCESSFUL (the repo wires
+    `jacocoTestCoverageVerification` to read `build/jacoco/*.exec` directly, so the report is
+    generated explicitly for the gate to read). Coverage over the slice's production code: LINE
+    0.9897 (193 covered / 2 missed), BRANCH 1.0000 (150 / 0) — both above the gate. No new JaCoCo
+    exclusion added. PMD (`pmdMain`/`pmdTest`) and Checkstyle (`checkstyleMain`/`checkstyleTest`,
+    `google_checks`, `maxWarnings = 0`) pass over the new US5 classes
+- [X] T051 Cross-check each of SC-001-001 … SC-001-013 against an actual passing test or report;
+  for SC-001-007 specifically, disable one rule at a time in `HmppsRedaction` (a local, uncommitted
+  edit) and confirm at least one twin or corpus case fails each time, then revert; note any gap in
+  the PR description
+  - SC cross-check (each against a passing test/report):
+    - SC-001-001 (15 twins): `HmppsRedactionLegacyTwinTest` (T1–T15) — PASSED.
+    - SC-001-002 (comparator vectors): `ComparatorContractTest` — 114 PASSED (57 × both directions).
+    - SC-001-003 (zero unexplained differences): `HmppsRedactionCorpusParityIT.run_overTheCorpus_should_report_zero_unexplained_differences` — PASSED.
+    - SC-001-004 (blind-spot cases present, case 13 derived): `…should_hold_every_required_case` + `…should_derive_case_13_under_dv25` — PASSED.
+    - SC-001-005 (`hearing.id` in every body): `WholeCorpusChecksTest.redact_overTheCorpus_should_produce_bodies_that_carry_a_non_null_hearing_id` — PASSED.
+    - SC-001-006 (6 carried guards accounted for): `WholeCorpusChecksTest` guard-coverage tests + the register's accepted-risk section — PASSED.
+    - SC-001-007 (mutation sensitivity): the exercise below.
+    - SC-001-008 (no cut-short body compared; no-expectation states listed): synthetic corpus has no cut-short/no-expectation states; `HmppsRedactionCorpusParityIT.run_overTheCorpus_should_have_no_missing_expectation_or_exclusion` asserts the report lists them and counts none as a pass — PASSED. (Real cut-short SIT cases are the external-capture follow-up, FR-001-021.)
+    - SC-001-009 (forced comparison is value-free): `ParityAssertionsTest` — PASSED.
+    - SC-001-010 (custody: digests, provenance, no PRD/PRP): `CorpusCustodyTest` + `…corpus_should_pass_the_custody_gate` — PASSED.
+    - SC-001-011 (register shape; withdrawing DV-25 breaks derivation): `DeviationRegisterTest` + `Case13DerivationWithdrawalTest` — PASSED.
+    - SC-001-012 (purity: no mutation, no log, deterministic): `HmppsRedactionPurityTest` — PASSED.
+    - SC-001-013 (build green under existing gates, thresholds not lowered): `./gradlew jacocoTestReport check` BUILD SUCCESSFUL, LINE 0.9897 / BRANCH 1.0000, no gate relaxed (T050).
+  - SC-001-007 mutation exercise: neutralised R1 in `HmppsRedaction.java` with a local, uncommitted
+    edit (`if (false && isSjpOrBoxHearing(json))`) and ran `--tests "*LegacyTwin*" --tests
+    "*CorpusParityIT*"`: 4 failed — `T1: an SJP hearing is emptied by R1 FAILED`, `T2: a box hearing
+    is emptied by R1 FAILED`, and the two corpus-parity assertions (`zero unexplained differences`,
+    `every compared case-state matches`). Reverted with `git checkout --`; `git diff` is empty. No
+    gap: every rule is proved by at least one twin or corpus case (FR-001-025, SC-001-007).
+- [X] T052 [P] Record in `doc/DEVIATIONS.md` and `src/test/resources/corpus/index.json` that the
+  committed corpus is synthetic-only pending the external SIT-capture dependency (`spec.md`
+  Dependencies, External), so a reviewer does not mistake it for a shortfall
+  - `index.json` already carries the synthetic-only note (added in T044, referencing T044/T052:
+    `environment: SYNTHETIC`, oracle-produced expectations, SIT-substitution flag) — left as is.
+    Added a matching `## Corpus status` section to `doc/DEVIATIONS.md` stating the corpus is
+    synthetic-only pending SIT capture, that this is not a shortfall, and that the parity gate is
+    green over the synthetic corpus while the slice-006 SIT → STE replay is the pre-cutover proof.
+    The addition sits after the accepted-risks table, leaving the registered-deviations table (and
+    `DeviationRegister`/`DeviationRegisterTest` parsing) unaffected
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: no dependencies
+- **Foundational (Phase 2)**: depends on Setup — blocks every user story
+- **US1 (Phase 3)**: depends on Foundational only
+- **US2 (Phase 4)**: depends on Foundational only (reuses Setup's copied pack directly)
+- **US3 (Phase 5)**: depends on Foundational and, for one scenario, US2's comparator
+- **US4 (Phase 6)**: depends on US1, US2 and US3 all being green; T028 (the oracle-execution
+  harness) must land before any case-authoring task (T032–T042)
+- **US5 (Phase 7)**: depends on T003 (register seed) for its first test; the derivation-withdrawal
+  test additionally depends on US4's harness (T043)
+- **Polish (Phase 8)**: depends on all seven prior phases
+
+### Parallel Opportunities
+
+- T001, T002 (Setup) run in parallel
+- T004, T005 (Foundational tests) run in parallel; then T006, T007 (Foundational implementation)
+  run in parallel
+- Within US1: T008–T011 (twin tests, different fixtures) run in parallel; implementation tasks
+  T014–T017 touch the same `HmppsRedaction.java` file sequentially, T018/T019 likewise
+- Within US4: T032–T042 (eleven corpus cases, each its own directory) all run in parallel once T028
+  (the oracle harness) and T031 (the loader) are green
+- US1, US2 and US3 can be staffed in parallel once Foundational is green; US4 waits on all three
+
+## Implementation Strategy
+
+### MVP First
+
+1. Setup (T001–T002) → Foundational (T003–T007) → User Story 1 (T008–T019)
+2. **Stop and validate**: run the 15 twins independently — this is the code every later story and
+   every later slice depends on
+3. Then User Stories 2 and 3 (independent of each other and of US1's internals, both needed before
+   US4)
+4. Then User Story 4 (the corpus/oracle harness — the slice's actual go-live gate evidence,
+   SC-001-003), starting with the oracle-execution harness (T028) before any case is authored
+5. Then User Story 5 (register completion — can trail US4 slightly since P2, but FR-001-036 still
+   requires the register to exist no later than US1's DV-09 row, which T003 already satisfies)
+6. Polish
+
+### Suggested MVP Scope
+
+User Story 1 alone (T001–T019) is a legitimate stopping point for a first review: it proves the
+rules are ported correctly against the legacy's own test suite, with zero dependency on corpus data,
+custody machinery or the deviation register's full content.

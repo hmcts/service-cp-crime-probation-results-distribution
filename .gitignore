@@ -35,6 +35,7 @@ applicationinsights-agent-*.jar
 */.DS_Store
 
 # Local-only tool state (the team-shared agents, rules and skills under .claude/ ARE tracked)
+.agents/
 .claude/settings.local.json
 .claude/projects/
 .claude/todos/
