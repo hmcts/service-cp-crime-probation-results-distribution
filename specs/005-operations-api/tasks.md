@@ -399,14 +399,14 @@ mixed list (two eligible `FAILED`, one unknown, one `SENT` without the override,
 claim) and assert the run accepted with a `resendRunId`, then read 004's report and assert the five
 outcomes.
 
-### Tests for User Story 2 (write first, confirm red, then implement) ⚠️ `[BLOCKED-ON-004]`
+### Tests for User Story 2 (write first, confirm red, then implement) ⚠️
 
-- [ ] T024 [P] [US2] `ResendLegControllerTest` (`@WebMvcTest`, `LegResender` mocked): the list
+- [X] T024 [P] [US2] `ResendLegControllerTest` (`@WebMvcTest`, `LegResender` mocked): the list
       passed to `LegResender` exactly as sent — no collapse, no cap, no reorder (FR-005-011,
       FR-005-013); `202 {resendRunId}` on acceptance, immediately, not waiting for any ID
       (FR-005-015); whole-call refusals render 004's own codes
       (`missing-argument`/`argument-too-long`/`too-many-request-ids`/`unreadable-argument`/
-      `intake-paused`/`store-unavailable`) per contracts/operations-api.md §2 — `[BLOCKED-ON-004]` —
+      `intake-paused`/`store-unavailable`) per contracts/operations-api.md §2 —
       `src/test/java/.../api/ResendLegControllerTest.java`
       RED (seam: `api/ResendLegController` with its real constructor, registered by a
       `@ConditionalOnBean(LegResender.class)` `@Bean` method in `OperationsConfiguration` and
@@ -419,7 +419,9 @@ outcomes.
       error. It also caught a real defect: a body that omits `allowTerminalSuccess` or
       `allowChangedPayload` was answered `400 unreadable-body` — Jackson 3's
       `FAIL_ON_NULL_FOR_PRIMITIVES` is on by default, so `ResendLegRequest`'s primitive booleans
-      could not be absent, against FR-005-010's "both `false` when absent".
+      could not be absent, against FR-005-010's "both `false` when absent". GREEN after T028 →
+      `15 tests completed, 0 failed` (and every other `api.*` test, the `*IT`s included, still
+      green).
 - [X] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
       result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
       extends `src/test/java/.../api/OperationsResponseMapperTest.java`
@@ -444,7 +446,7 @@ outcomes.
       (`leg` dropped: 004's input names no leg, `HMPPS` being its only value) →
       `20 tests completed, 0 failed`. "`false` when absent" at the JSON boundary is pinned by T024.
 
-### Implementation for User Story 2 `[BLOCKED-ON-004]`
+### Implementation for User Story 2
 
 - [X] T027 [US2] Implement `api/OperationsResponseMapper.java` (resend-leg half): maps
       `LegResender`'s accepted-run result to `ResendLegAcceptedResponse` — satisfies T025.
@@ -454,13 +456,37 @@ outcomes.
       own `OperationsRefusalReason` (`too-many-request-ids` carrying the cap), and
       `intake-not-paused`/`broker-unavailable`, which resend never yields, are a defect
       (`IllegalStateException` → `500 unexpected`). GREEN → `18 tests completed, 0 failed`.
-- [ ] T028 [US2] Implement `api/ResendLegController.java`: `POST /operations/resend-leg`, parses via
+- [X] T028 [US2] Implement `api/ResendLegController.java`: `POST /operations/resend-leg`, parses via
       `OperationsRequestMapper`, calls `LegResender`, answers `202` via
-      `OperationsResponseMapper`, wrapped by `OperationsAuditPublisher` — satisfies T024 — **cannot
-      compile until `application.LegResender` exists**
+      `OperationsResponseMapper`, wrapped by `OperationsAuditPublisher` — satisfies T024.
+      Landed with: the request event (`allowTerminalSuccess`, `allowChangedPayload`) before the
+      call, the response event after it (`outcome` = `accepted` with `resendRunId`, `ids`,
+      `notRun`, or the refusal code), never operator or reason; `ResendLegRequest` read through a
+      `@JsonCreator` factory taking nullable overrides (absent → `false`) and collecting unknown
+      field *names* through a creator `@JsonAnySetter`, which `parseResendLeg` refuses
+      `400 unknown-field` naming the first — the serving context's converter ignores unknown
+      properties, so the contract's `unknown-field` (FR-005-033) was not reachable for this body
+      before; the cap carried on `too-many-request-ids` read from
+      `distribution.resend.max-ids-per-run`.
 - [ ] T029 Run `quickstart.md`'s resend-leg steps once `application.LegResender` lands
 
 **Checkpoint**: resend-leg over HTTP is implementable the moment 004's `LegResender` exists.
+
+**T024–T028 landing note (004's real shape)**: `application.LegResender` landed as a concrete
+class, `public ResendRunResult resend(ResendRequest)`, not the `resendLeg(ResendLegCommand) ->
+ResendRunAccepted` shape research.md Decision 5 assumed. This slice follows 004's real shape with
+the least change: `OperationsRequestMapper.toResendRequest` builds 004's `ResendRequest` (no `leg`:
+it names none, `HMPPS` being its only value); `OperationsResponseMapper.toResendLegAcceptedResponse`
+reads `ResendRunResult` — `wholeRunRefusal` rendered as its own code, otherwise `resendRunId` only
+(Decision 4), a mid-run `storeFailed` still `202` since 004's report stands. **One difference from
+the plan is not closed here**: `resend` is synchronous — it runs every listed id and only then
+returns the run id — so the `202` arrives after the run, not "before any ID has necessarily
+finished" (FR-005-015). Making it asynchronous would need 004 to split the whole-run checks and
+the run-id assignment from the run itself; that is 004's change to make, not this slice's.
+`LegResender` is also still built only inside the packaged command line (`OperatorCommandLine`),
+never as a bean of the serving context, so `ResendLegController` — registered, like
+`ReplayController`, by a `@ConditionalOnBean(LegResender.class)` `@Bean` method — is absent from a
+deployed context until 004 wires it (T029 waits on that too).
 
 ---
 

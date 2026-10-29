@@ -55,9 +55,15 @@ public final class OperationsRequestMapper {
      *
      * @param raw the request as sent
      * @return the parsed command, list order and duplicates preserved
-     * @throws OperationsRefusalException the first whole-call refusal found
+     * @throws OperationsRefusalException the first whole-call refusal found: {@code unknown-field}
+     *                                     naming the first field the contract does not name, then
+     *                                     each argument's own refusal
      */
     public ParsedResendLegCommand parseResendLeg(final ResendLegRequest raw) {
+        if (!raw.unknownFields().isEmpty()) {
+            throw OperationsRefusalException.ofArgument(OperationsRefusalReason.UNKNOWN_FIELD,
+                    raw.unknownFields().getFirst());
+        }
         final List<UUID> requestIds = parseRequestIds(raw.requestIds());
         final Leg leg = parseLeg(raw.leg());
         final String operator = requireBoundedText(raw.operator(), OPERATOR);
