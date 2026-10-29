@@ -617,16 +617,32 @@ new attempt then `not-eligible`.
 
 ### Tests for User Story 3 (write first, confirm red, then implement) ⚠️
 
-- [ ] T030 [P] [US3] `ForcedResendControllerIT`: `allowTerminalSuccess: true` reaches `LegResender`
-      unchanged with operator/reason; both audit events say the override was requested
-      (FR-005-017); without the override the same ID renders `not-eligible` and the call still
-      succeeds (`202`); a reason or operator over 200 characters is `400 argument-too-long`
-      (FR-005-016); neither operator nor reason appears in the answer, a log line, or a metric label
-      (FR-005-023, FR-005-031); a forced resend whose send later fails is still a `202`-accepted
-      call — the failure surfaces only in 004's report (FR-005-014) — unblocked by T047–T050; since
-      the answer now comes before the run, "renders `not-eligible`" is read from 004's report line,
-      not from the `202` —
+- [X] T030 [P] [US3] `ForcedResendControllerIT`: `allowTerminalSuccess: true` reaches `LegResender`
+      unchanged with operator/reason; both audit events — the request event and the response event
+      published at acceptance — carry `allowTerminalSuccess=true` (FR-005-017); without the override
+      the same ID is `not-eligible` in 004's report and the call still answers `202`; a reason or
+      operator over 200 characters is `400 argument-too-long` naming the argument, nothing run
+      (FR-005-016); neither operator nor reason appears in the answer, a log line (any logger, any
+      thread, MDC included) or a metric label (FR-005-023, FR-005-031); a forced resend whose send
+      later fails is still a `202`-accepted call — the failure surfaces only in 004's report
+      (FR-005-014). The answer comes before the run (FR-005-015, T047–T050), so no per-ID outcome
+      is read from the `202`: each is read from 004's `resend-leg report` line for the run id the
+      answer names, and from the leg's attempt rows and the processed-log row, once that line is
+      logged (a bounded poll, as `ResendLegExecutionIT` does) —
       `src/test/java/.../api/ForcedResendControllerIT.java`
+      Set-up: a `@WebMvcTest` slice over the production `ResendLegController` and
+      `ResendLegExecutor`, with a real `LegResender` built by 004's `ResendTestSupport` on the shared
+      PostgreSQL, Redis and WireMock (the production payload chain, users-groups client, gateway
+      publisher and processed log); only `OperationsAuditPublisher` and the slice's
+      `MetricRegistry` are mocked. No production seam was needed.
+      **No red run**: `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.ForcedResendControllerIT"
+      -Dtest.noFailFast=true` → `7 tests completed, 0 failed` on its first run — T028/T010 and
+      T047–T050 already pass the override through and carry it on both events, so there is no gap
+      for T031 to close, and a red was not manufactured. To show the assertions bite, a throwaway
+      mutation of `ResendLegController` (the operator added to the audit fields, the reason logged
+      at INFO; reverted, never committed) gave `7 tests completed, 2 failed` — the two-audit-events
+      case and the echo-nowhere case.
 
 ### Implementation for User Story 3
 
