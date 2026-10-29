@@ -41,12 +41,13 @@ public final class OperationsRequestMapper {
      * {@code operator} or {@code reason}.
      *
      * @param body the deserialised body, or {@code null}/empty when none was sent
-     * @throws OperationsRefusalException {@code unknown-field} naming the first field present
+     * @throws OperationsRefusalException {@code unknown-field}, naming one field present when its
+     *                                     name is a plain bounded identifier
      */
     public void validateReplayBody(final Map<String, Object> body) {
         if (body != null && !body.isEmpty()) {
             final String firstField = body.keySet().iterator().next();
-            throw OperationsRefusalException.ofArgument(OperationsRefusalReason.UNKNOWN_FIELD, firstField);
+            throw OperationsRefusalException.unknownField(firstField);
         }
     }
 
@@ -56,13 +57,13 @@ public final class OperationsRequestMapper {
      * @param raw the request as sent
      * @return the parsed command, list order and duplicates preserved
      * @throws OperationsRefusalException the first whole-call refusal found: {@code unknown-field}
-     *                                     naming the first field the contract does not name, then
-     *                                     each argument's own refusal
+     *                                     (naming one field the contract does not name when its name
+     *                                     is a plain bounded identifier), then each argument's own
+     *                                     refusal
      */
     public ParsedResendLegCommand parseResendLeg(final ResendLegRequest raw) {
         if (!raw.unknownFields().isEmpty()) {
-            throw OperationsRefusalException.ofArgument(OperationsRefusalReason.UNKNOWN_FIELD,
-                    raw.unknownFields().getFirst());
+            throw OperationsRefusalException.unknownField(raw.unknownFields().getFirst());
         }
         final List<UUID> requestIds = parseRequestIds(raw.requestIds());
         final Leg leg = parseLeg(raw.leg());

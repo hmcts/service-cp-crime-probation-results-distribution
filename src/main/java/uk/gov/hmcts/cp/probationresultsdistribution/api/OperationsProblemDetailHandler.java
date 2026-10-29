@@ -80,7 +80,8 @@ public class OperationsProblemDetailHandler {
         if (ex.getCause() instanceof UnrecognizedPropertyException unrecognised) {
             problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
             problem.setProperty(REASON, OperationsRefusalReason.UNKNOWN_FIELD.wireValue());
-            problem.setProperty(ARGUMENT_NAME, unrecognised.getPropertyName());
+            OperationsRefusalException.unknownField(unrecognised.getPropertyName()).argumentName()
+                    .ifPresent(name -> problem.setProperty(ARGUMENT_NAME, name));
         } else {
             problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
             problem.setProperty(REASON, OperationsRefusalReason.UNREADABLE_BODY.wireValue());

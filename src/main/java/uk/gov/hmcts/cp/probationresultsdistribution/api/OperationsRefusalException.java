@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.api;
 import java.io.Serial;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * One bounded operations-API refusal (FR-005-029 to FR-005-032): a closed {@link
@@ -14,6 +15,7 @@ public final class OperationsRefusalException extends RuntimeException {
 
     @Serial
     private static final long serialVersionUID = 1L;
+    private static final Pattern ECHOABLE_FIELD_NAME = Pattern.compile("[A-Za-z][A-Za-z0-9_]{0,63}");
 
     private final transient OperationsRefusalReason refusalReason;
     private final transient String argument;
@@ -50,6 +52,21 @@ public final class OperationsRefusalException extends RuntimeException {
         Objects.requireNonNull(reason, "reason");
         Objects.requireNonNull(argumentName, "argumentName");
         return new OperationsRefusalException(reason, argumentName, null);
+    }
+
+    /**
+     * A {@code 400 unknown-field} (FR-005-033). The field's name is chosen by the caller, so it is
+     * named only when it is a plain, bounded identifier — a letter, then up to 63 letters, digits
+     * or underscores — and left out otherwise, so that no caller-chosen text of any length or
+     * character set is echoed back (FR-005-029, FR-005-031).
+     *
+     * @param fieldName the name of the field the contract does not name, as sent
+     * @return the exception
+     */
+    public static OperationsRefusalException unknownField(final String fieldName) {
+        final String named = fieldName != null && ECHOABLE_FIELD_NAME.matcher(fieldName).matches()
+                ? fieldName : null;
+        return new OperationsRefusalException(OperationsRefusalReason.UNKNOWN_FIELD, named, null);
     }
 
     /**

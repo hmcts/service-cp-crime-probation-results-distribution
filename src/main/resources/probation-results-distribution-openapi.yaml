@@ -335,7 +335,10 @@ components:
         argumentName:
           type: string
           nullable: true
-          description: The argument's name, on a 400 about one argument only — never its value
+          description: >-
+            The argument's name, on a 400 about one argument only — never its value. On
+            unknown-field it is present only when the caller's field name is a plain identifier
+            (a letter, then up to 63 letters, digits or underscores), and absent otherwise
         cap:
           type: integer
           nullable: true

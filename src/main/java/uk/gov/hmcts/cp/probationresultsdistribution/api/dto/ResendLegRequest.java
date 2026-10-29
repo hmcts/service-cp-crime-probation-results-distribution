@@ -28,7 +28,8 @@ import java.util.Map;
  * @param allowTerminalSuccess the forced-resend override, {@code false} when absent (FR-005-017)
  * @param allowChangedPayload  the changed-payload override, {@code false} when absent
  *                             (FR-005-010)
- * @param unknownFields        the names of any fields the contract does not name, in body order
+ * @param unknownFields        the names of any fields the contract does not name, in no
+ *                             guaranteed order (Jackson buffers creator any-setter properties)
  */
 public record ResendLegRequest(List<String> requestIds, String leg, String operator, String reason,
                                 boolean allowTerminalSuccess, boolean allowChangedPayload,
