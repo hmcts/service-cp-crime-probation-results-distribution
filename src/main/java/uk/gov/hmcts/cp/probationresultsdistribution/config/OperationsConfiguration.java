@@ -16,6 +16,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditPublisher
 import uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRequestMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsResponseMapper;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.ReplayController;
+import uk.gov.hmcts.cp.probationresultsdistribution.api.ResendLegController;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction;
 
 /**
@@ -94,6 +96,33 @@ public class OperationsConfiguration {
                                       final OperationsResponseMapper responseMapper,
                                       final OperationsAuditPublisher auditPublisher) {
         return new ReplayController(replayAction, requestMapper, responseMapper, auditPublisher);
+    }
+
+    /**
+     * Registers {@link ResendLegController} once a {@link LegResender} bean exists, for the same
+     * reason and in the same way as {@link #replayController}: slice 004 builds its {@link
+     * LegResender} today only inside the packaged command line ({@code OperatorCommandLine}), never
+     * as a bean of the serving context, so until it is wired here this controller is absent from
+     * the context rather than failing it.
+     *
+     * @param legResender    slice 004's resend-leg capability, once it is wired
+     * @param requestMapper  the request mapper
+     * @param responseMapper the response mapper
+     * @param auditPublisher the audit publisher
+     * @param properties     the service's typed configuration, for
+     *                       {@code distribution.resend.max-ids-per-run}
+     * @return the controller
+     */
+    /* default */
+    @Bean
+    @ConditionalOnBean(LegResender.class)
+    ResendLegController resendLegController(final LegResender legResender,
+                                            final OperationsRequestMapper requestMapper,
+                                            final OperationsResponseMapper responseMapper,
+                                            final OperationsAuditPublisher auditPublisher,
+                                            final DistributionProperties properties) {
+        return new ResendLegController(legResender, requestMapper, responseMapper, auditPublisher,
+                properties.resend().maxIdsPerRun());
     }
 
     /**

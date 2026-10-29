@@ -5,6 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.ReplayController;
+import uk.gov.hmcts.cp.probationresultsdistribution.api.ResendLegController;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.OperatorCommandLine;
 
 /**
@@ -26,8 +27,9 @@ import uk.gov.hmcts.cp.probationresultsdistribution.config.OperatorCommandLine;
  * on. {@code cp-auth-rules-filter}'s package root is {@code uk.gov.moj.cpp.authz}, outside either
  * tree.
  *
- * <p>{@link ReplayController} is excluded from this scan and registered instead by an explicit,
- * {@code @ConditionalOnBean}-gated {@code @Bean} method in {@code config.OperationsConfiguration}.
+ * <p>{@link ReplayController} and {@link ResendLegController} are excluded from this scan and
+ * registered instead by explicit, {@code @ConditionalOnBean}-gated {@code @Bean} methods in
+ * {@code config.OperationsConfiguration}.
  * A class-level {@code @Conditional} on a component-scanned {@code @RestController} is evaluated
  * during the scan itself, before sibling {@code @Configuration} classes (including test-only
  * {@code @TestConfiguration} ones supplying a stand-in {@link
@@ -37,7 +39,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.config.OperatorCommandLine;
  */
 @SpringBootApplication
 @ComponentScan(excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE,
-        classes = ReplayController.class))
+        classes = {ReplayController.class, ResendLegController.class}))
 public class Application {
 
     /**

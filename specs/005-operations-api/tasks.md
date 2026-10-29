@@ -408,6 +408,18 @@ outcomes.
       (`missing-argument`/`argument-too-long`/`too-many-request-ids`/`unreadable-argument`/
       `intake-paused`/`store-unavailable`) per contracts/operations-api.md §2 — `[BLOCKED-ON-004]` —
       `src/test/java/.../api/ResendLegControllerTest.java`
+      RED (seam: `api/ResendLegController` with its real constructor, registered by a
+      `@ConditionalOnBean(LegResender.class)` `@Bean` method in `OperationsConfiguration` and
+      excluded from `Application`'s scan exactly as `ReplayController` is, answering `202` with a
+      null run id and never calling `LegResender` or the audit publisher; `LegResender` mocked at
+      the boundary as `ReplayControllerTest` mocks `ReplayAction`) — `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.ResendLegControllerTest"
+      -Dtest.noFailFast=true` → `15 tests completed, 15 failed`, every one an assertion (wanted
+      `LegResender.resend` invoked / status / `$.reason` / `$.cap` / audit-event order), no compile
+      error. It also caught a real defect: a body that omits `allowTerminalSuccess` or
+      `allowChangedPayload` was answered `400 unreadable-body` — Jackson 3's
+      `FAIL_ON_NULL_FOR_PRIMITIVES` is on by default, so `ResendLegRequest`'s primitive booleans
+      could not be absent, against FR-005-010's "both `false` when absent".
 - [X] T025 [P] [US2] `OperationsResponseMapperTest` (resend-leg half): `LegResender`'s accepted-run
       result → `ResendLegAcceptedResponse` carrying only `resendRunId` (research.md Decision 4) —
       extends `src/test/java/.../api/OperationsResponseMapperTest.java`
