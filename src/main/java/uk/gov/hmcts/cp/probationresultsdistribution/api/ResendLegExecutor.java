@@ -27,9 +27,16 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendAcceptance
  * <p>On {@link #close()} (the serving context shutting down) the running run finishes the id in
  * flight, then claims nothing further and reports the rest {@code not-run}, exactly as
  * {@link LegResender} does for a pause that begins mid-run; every queued run is dropped without
- * starting, each logged at WARN with its {@code resendRunId}; and nothing more is accepted. The wait
- * for the id in flight is bounded by the processing deadline (4 minutes), past which it is logged
- * at ERROR and left to the claim lease.
+ * starting, each logged at WARN with its {@code resendRunId}; and nothing more is accepted. A submit
+ * and the stop-and-drain step of {@code close()} exclude each other, and a run the thread takes once
+ * the stop is raised is dropped the same way, so no run starts after the stop. The wait for the id
+ * in flight is bounded by the processing deadline (4 minutes), past which it is logged at ERROR and
+ * left to the claim lease (PT4M30S). That wait can be longer than the pod's termination grace
+ * period, a deployment setting outside this repository: if the pod is killed first, the id in
+ * flight is likewise left to the claim lease, which is the backstop either way.
+ *
+ * <p>A run that throws is logged only; no metric counts it, as none is specified for it (design
+ * §10.1): the ERROR line is the alert source.
  */
 public final class ResendLegExecutor implements AutoCloseable {
 
@@ -67,7 +74,7 @@ public final class ResendLegExecutor implements AutoCloseable {
      * @param accepted the run the accept step accepted
      * @throws IllegalStateException once the executor is shutting down
      */
-    public void submit(final ResendAcceptance.Accepted accepted) {
+    public synchronized void submit(final ResendAcceptance.Accepted accepted) {
         if (stopping.get()) {
             throw new IllegalStateException("the resend-leg executor is shutting down");
         }
@@ -79,14 +86,7 @@ public final class ResendLegExecutor implements AutoCloseable {
      */
     @Override
     public void close() {
-        stopping.set(true);
-        final List<Runnable> dropped = new ArrayList<>();
-        queue.drainTo(dropped);
-        for (final Runnable run : dropped) {
-            LOG.warn("resend-leg run not started cause=shutdown resendRunId={}",
-                    ((AcceptedRun) run).accepted.resendRunId());
-        }
-        executor.shutdown();
+        stopAndDrain();
         try {
             if (!executor.awaitTermination(shutdownWait.toMillis(), TimeUnit.MILLISECONDS)) {
                 LOG.error("resend-leg run still in flight at shutdown cause=shutdown-wait-elapsed");
@@ -96,6 +96,21 @@ public final class ResendLegExecutor implements AutoCloseable {
             LOG.error("resend-leg shutdown wait interrupted cause={}",
                     interrupted.getClass().getSimpleName());
         }
+    }
+
+    /** Raises the stop, drops every queued run and shuts the thread down, exclusive of submit. */
+    private synchronized void stopAndDrain() {
+        stopping.set(true);
+        final List<Runnable> dropped = new ArrayList<>();
+        queue.drainTo(dropped);
+        for (final Runnable run : dropped) {
+            logNotStarted(((AcceptedRun) run).accepted);
+        }
+        executor.shutdown();
+    }
+
+    private static void logNotStarted(final ResendAcceptance.Accepted accepted) {
+        LOG.warn("resend-leg run not started cause=shutdown resendRunId={}", accepted.resendRunId());
     }
 
     /** One accepted run, queued with its run id so a dropped one can still be named. */
@@ -112,6 +127,11 @@ public final class ResendLegExecutor implements AutoCloseable {
         // A run has no caller left to rethrow to: its failure is logged with a bounded cause, and
         // the next queued run still executes.
         public void run() {
+            if (stopping.get()) {
+                // Taken off the queue after the stop was raised but before the drain reached it.
+                logNotStarted(accepted);
+                return;
+            }
             try {
                 legResender.run(accepted, stopping::get);
             } catch (final RuntimeException failure) {
