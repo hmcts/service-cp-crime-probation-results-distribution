@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -181,8 +182,125 @@ class LegResenderTest {
         }
     }
 
+    @Nested
+    @DisplayName("the run split into an accept step and a run step")
+    class AcceptThenRun {
+
+        @Test
+        @DisplayName("accept applies the whole-run checks, assigns a run id and claims nothing")
+        void accept_assigns_a_run_id_and_claims_nothing() {
+            when(pauseGate.pausedByOperator()).thenReturn(false);
+
+            final ResendAcceptance acceptance = resender().accept(new ResendRequest(
+                    List.of(ID_2, ID_1, ID_2), "an-operator\n", "a\treason", true, true));
+
+            assertThat(acceptance).isInstanceOfSatisfying(ResendAcceptance.Accepted.class,
+                    accepted -> {
+                        assertThat(accepted.resendRunId()).isNotNull();
+                        assertThat(accepted.requestIds()).containsExactly(ID_2, ID_1);
+                        assertThat(accepted.operator()).isEqualTo("an-operator");
+                        assertThat(accepted.allowChangedPayload()).isTrue();
+                        assertThat(accepted.forcedResendReason()).contains("a reason");
+                        assertThat(accepted.toString()).doesNotContain("an-operator", "reason=");
+                    });
+            verify(store, never()).claimResend(any(), any(), any(), any(), any(), any());
+            verify(runner, never()).runResend(any(), any(), anyBoolean());
+        }
+
+        @Test
+        @DisplayName("without the override, accept carries no forced-resend reason")
+        void accept_without_the_override_carries_no_reason() {
+            when(pauseGate.pausedByOperator()).thenReturn(false);
+
+            final ResendAcceptance acceptance = resender().accept(request(ID_1));
+
+            assertThat(acceptance).isInstanceOfSatisfying(ResendAcceptance.Accepted.class,
+                    accepted -> assertThat(accepted.forcedResendReason()).isEmpty());
+        }
+
+        @Test
+        @DisplayName("a whole-run refusal at accept claims nothing and assigns no run id")
+        void accept_refusal_claims_nothing() {
+            when(pauseGate.pausedByOperator()).thenReturn(true);
+
+            final ResendAcceptance acceptance = resender().accept(request(ID_1, ID_2));
+
+            assertThat(acceptance)
+                    .isEqualTo(new ResendAcceptance.Refused(WholeRunRefusal.INTAKE_PAUSED));
+            verify(store, never()).claimResend(any(), any(), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("the run step over an accepted run gives the report resend gives, under its run id")
+        void run_step_gives_the_resend_report() {
+            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
+                    .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
+            when(runner.runResend(any(), any(), anyBoolean())).thenReturn(sent(true));
+            final LegResender resender = resender();
+            final ResendAcceptance.Accepted accepted =
+                    accepted(resender, request(ID_1));
+
+            final ResendRunResult result = resender.run(accepted, () -> false);
+
+            assertThat(result.wholeRunRefusal()).isEmpty();
+            assertThat(result.resendRunId()).contains(accepted.resendRunId());
+            assertThat(result.entries()).containsExactly(new ResendRunResult.Entry(ID_1,
+                    new ResendEntryOutcome.Ran(LegStatus.SENT, Optional.empty())));
+            verify(store).claimResend(eq("RESULTS"), eq(ID_1), eq(accepted.resendRunId()),
+                    eq("an-operator"), any(), eq(Optional.empty()));
+        }
+
+        @Test
+        @DisplayName("a stop raised between ids claims nothing further and reports the rest not-run")
+        void stop_between_ids_reports_the_rest_not_run() {
+            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
+                    .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
+            final LegResender resender = resender();
+            final ResendAcceptance.Accepted accepted =
+                    accepted(resender, request(ID_1, ID_2));
+            final AtomicBoolean stop = new AtomicBoolean();
+            when(runner.runResend(any(), any(), anyBoolean())).thenAnswer(invocation -> {
+                stop.set(true);
+                return sent(true);
+            });
+
+            final ResendRunResult result = resender.run(accepted, stop::get);
+
+            assertThat(result.entries()).containsExactly(
+                    new ResendRunResult.Entry(ID_1,
+                            new ResendEntryOutcome.Ran(LegStatus.SENT, Optional.empty())),
+                    new ResendRunResult.Entry(ID_2, new ResendEntryOutcome.NotRun()));
+            assertThat(result.storeFailed()).isFalse();
+            verify(store, never()).claimResend(eq("RESULTS"), eq(ID_2), any(), any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("a stop raised before the first id claims nothing at all")
+        void stop_before_the_first_id_claims_nothing() {
+            when(pauseGate.pausedByOperator()).thenReturn(false);
+            final LegResender resender = resender();
+            final ResendAcceptance.Accepted accepted =
+                    accepted(resender, request(ID_1, ID_2));
+
+            final ResendRunResult result = resender.run(accepted, () -> true);
+
+            assertThat(result.resendRunId()).contains(accepted.resendRunId());
+            assertThat(result.notRun()).containsExactly(ID_1, ID_2);
+            verify(store, never()).claimResend(any(), any(), any(), any(), any(), any());
+        }
+    }
+
     private LegResender resender() {
         return new LegResender(pauseGate, store, runner, metrics, 100);
+    }
+
+    private static ResendAcceptance.Accepted accepted(final LegResender resender,
+                                                      final ResendRequest request) {
+        final ResendAcceptance acceptance = resender.accept(request);
+        assertThat(acceptance).isInstanceOf(ResendAcceptance.Accepted.class);
+        return (ResendAcceptance.Accepted) acceptance;
     }
 
     private static ResendRequest request(final UUID... ids) {

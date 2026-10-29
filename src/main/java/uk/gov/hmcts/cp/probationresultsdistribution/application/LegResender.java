@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +28,13 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
  * store read (FR-004-019–FR-004-021). Duplicates are collapsed first. The ids then run one after
  * another (research.md Decision 4); before each, the pause is read again, and once a pause has begun
  * no further id is claimed and the rest are reported {@code not-run}.
+ *
+ * <p>The run is split in two (slice 005, FR-005-015): {@link #accept} applies every whole-run check
+ * and assigns the {@code resendRunId}, claiming nothing, and {@link #run} takes an accepted run's
+ * ids one after another. {@link #resend} is the two in turn, as the command line calls it. The run
+ * step also reads a plain stop signal before each id, ahead of the pause read: once it is raised
+ * (the serving context shutting down) the run claims nothing further and reports the rest
+ * {@code not-run}, exactly as a pause that begins mid-run does.
  *
  * <p>Each id is checked and claimed in its own transaction ({@link ProcessedRequestRepository
  * #claimResend}), in the fixed refusal order {@code unknown-request} → {@code request-claimed} →
@@ -83,25 +91,56 @@ public final class LegResender {
     }
 
     /**
-     * Runs resend-leg over an explicit list of ids.
+     * Runs resend-leg over an explicit list of ids: the accept step, then, unless the run was
+     * refused whole, the run step with no stop signal.
      *
      * @param request the run's input
      * @return the run's report, or its whole-run refusal
      */
     public ResendRunResult resend(final ResendRequest request) {
+        return switch (accept(request)) {
+            case ResendAcceptance.Refused refused -> ResendRunResult.refusedWhole(refused.refusal());
+            case ResendAcceptance.Accepted accepted -> run(accepted, () -> false);
+        };
+    }
+
+    /**
+     * The accept step: collapses duplicates, applies every whole-run check and, when none refuses
+     * the run, assigns its {@code resendRunId}. Nothing is claimed or written here.
+     *
+     * @param request the run's input
+     * @return the run refused whole, or accepted with its run id
+     */
+    public ResendAcceptance accept(final ResendRequest request) {
         final List<UUID> distinct = new ArrayList<>(new LinkedHashSet<>(request.requestIds()));
         final Optional<WholeRunRefusal> refusal = refusalOf(request, distinct);
-        final ResendRunResult result;
+        final ResendAcceptance acceptance;
         if (refusal.isPresent()) {
             LOG.warn("resend-leg refused reason={}", refusal.get().value());
-            result = ResendRunResult.refusedWhole(refusal.get());
+            acceptance = new ResendAcceptance.Refused(refusal.get());
         } else {
             final Optional<String> forcedResendReason = request.allowTerminalSuccess()
                     ? Optional.of(sanitised(request.reason())) : Optional.empty();
-            result = run(distinct, sanitised(request.operator()), request.allowChangedPayload(),
+            acceptance = new ResendAcceptance.Accepted(UUID.randomUUID(), distinct,
+                    sanitised(request.operator()), request.allowChangedPayload(),
                     forcedResendReason);
-            logReport(result);
         }
+        return acceptance;
+    }
+
+    /**
+     * The run step: checks, claims and runs each accepted id in turn and logs the run's report.
+     * Before each id the stop signal is read, then the pause; once either says stop, no further id
+     * is claimed and the rest are reported {@code not-run} (FR-004-021).
+     *
+     * @param accepted      a run the accept step accepted
+     * @param stopRequested raised when the run must claim nothing further, for example at shutdown
+     * @return the run's report
+     */
+    public ResendRunResult run(final ResendAcceptance.Accepted accepted,
+                               final BooleanSupplier stopRequested) {
+        final ResendRunResult result = runIds(accepted, stopRequested);
+        logReport(result);
         return result;
     }
 
@@ -132,22 +171,28 @@ public final class LegResender {
 
     // One report entry per distinct id is the report itself (FR-004-039).
     @SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
-    private ResendRunResult run(final List<UUID> distinct, final String operator,
-                                final boolean allowChangedPayload,
-                                final Optional<String> forcedResendReason) {
-        final RunState state = new RunState(UUID.randomUUID(), forcedResendReason);
+    private ResendRunResult runIds(final ResendAcceptance.Accepted accepted,
+                                   final BooleanSupplier stopRequested) {
+        final RunState state = new RunState(accepted.resendRunId(), accepted.forcedResendReason(),
+                stopRequested);
         final List<ResendRunResult.Entry> entries = new ArrayList<>();
-        for (final UUID requestId : distinct) {
+        for (final UUID requestId : accepted.requestIds()) {
             final ResendEntryOutcome outcome = stopClaiming(state, requestId)
                     ? new ResendEntryOutcome.NotRun()
-                    : runOne(requestId, state, operator, allowChangedPayload);
+                    : runOne(requestId, state, accepted.operator(), accepted.allowChangedPayload());
             entries.add(new ResendRunResult.Entry(requestId, outcome));
         }
         return new ResendRunResult(Optional.empty(), Optional.of(state.resendRunId),
-                allowChangedPayload, forcedResendReason.isPresent(), entries, state.storeFailed);
+                accepted.allowChangedPayload(), accepted.forcedResendReason().isPresent(), entries,
+                state.storeFailed);
     }
 
     private boolean stopClaiming(final RunState state, final UUID requestId) {
+        if (!state.stopped && state.stopRequested.getAsBoolean()) {
+            LOG.warn("resend-leg stopped claiming reason=stop-requested requestId={} resendRunId={}",
+                    requestId, state.resendRunId);
+            state.stopped = true;
+        }
         if (!state.stopped) {
             try {
                 state.stopped = pauseGate.pausedByOperator();
@@ -262,19 +307,22 @@ public final class LegResender {
     }
 
     /**
-     * One run's id, the forced-resend reason when the override was requested, and its mutable
-     * progress: whether claiming has stopped, whether the store failed.
+     * One run's id, the forced-resend reason when the override was requested, its stop signal, and
+     * its mutable progress: whether claiming has stopped, whether the store failed.
      */
     private static final class RunState {
 
         private final UUID resendRunId;
         private final Optional<String> forcedResendReason;
+        private final BooleanSupplier stopRequested;
         private boolean stopped;
         private boolean storeFailed;
 
-        private RunState(final UUID resendRunId, final Optional<String> forcedResendReason) {
+        private RunState(final UUID resendRunId, final Optional<String> forcedResendReason,
+                         final BooleanSupplier stopRequested) {
             this.resendRunId = resendRunId;
             this.forcedResendReason = forcedResendReason;
+            this.stopRequested = stopRequested;
         }
     }
 }

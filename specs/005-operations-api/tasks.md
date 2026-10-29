@@ -440,16 +440,35 @@ outcomes.
       synchronous answer. Unblocked by T047–T050 (decided 2026-10-29: runs queue one at a time on
       a single-thread executor fixed in code; on shutdown a run claims nothing further and reports
       the rest `not-run`)
-- [ ] T047 [US2] `LegResenderTest` (004's class, extended): the run splits in two without changing
+- [X] T047 [US2] `LegResenderTest` (004's class, extended): the run splits in two without changing
       what it does — an accept step applies every whole-run check and assigns the `resendRunId`
       (a whole-run refusal claims nothing and assigns no run id), and a run step over an accepted
       run gives the same report `resend` gives today; `resend(ResendRequest)` stays as accept then
       run, so `cli/ResendLegRunner` and its tests are unchanged; a stop signal raised between IDs
       (shutdown) claims nothing further and reports every unreached ID `not-run`, exactly as a
       pause that begins mid-run does (FR-004-021) — `src/test/java/.../application/LegResenderTest.java`
-- [ ] T048 [US2] Implement the split in `application/LegResender.java` (accept step, run step, the
+      RED (seams: `application.ResendAcceptance` — sealed, `Refused(WholeRunRefusal)` or
+      `Accepted(resendRunId, requestIds, operator, allowChangedPayload, forcedResendReason)`, whose
+      `toString` names neither operator nor reason — and `LegResender.accept(ResendRequest)`
+      returning `Refused(missing-argument)`, `LegResender.run(Accepted, BooleanSupplier)` returning
+      an empty report) — `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.application.LegResenderTest"
+      -Dtest.noFailFast=true` → `11 tests completed, 6 failed`: every new case an
+      `AssertionError`/`AssertionFailedError` (wanted `Accepted`, wanted `Refused(intake-paused)`,
+      wanted the run's id and its report), the five store-failure/fencing cases green, no compile
+      error.
+- [X] T048 [US2] Implement the split in `application/LegResender.java` (accept step, run step, the
       stop signal; `resend` kept as accept then run) — satisfies T047; no new `distribution.*`
       property (T040 stays green)
+      GREEN: `accept` collapses duplicates, applies every whole-run check (unchanged, the first pause
+      read included) and assigns the run id, claiming nothing; `run` reads the stop signal before
+      each id, ahead of the pause read, then claims and runs exactly as before and logs the report;
+      `resend` is `accept` then `run` with a signal never raised — `./gradlew test --tests
+      "...application.LegResenderTest" --tests "...application.*Resend*" --tests
+      "...cli.ResendLegRunnerTest" --tests "...config.OperationsConfigPropertiesTest" --tests
+      "...config.LogStatementSweepTest" -Dtest.noFailFast=true` → `99 tests completed, 0 failed`
+      (`LegResenderTest` 11/11; 004's resend ITs, `ResendLegRunnerTest` and T040 unchanged and
+      green).
 - [ ] T049 [US2] `ResendLegControllerTest` + `ResendLegExecutionIT`: the `202 {resendRunId}`
       comes back while a mocked run is still going (T046's pin); accepted runs execute one at a
       time, in acceptance order, on one executor thread fixed in code; whole-call refusals still
