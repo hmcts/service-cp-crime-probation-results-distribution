@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
@@ -211,6 +212,71 @@ class ResendLegExecutionIT {
             assertThatThrownBy(() -> executor.submit(accepted(ID_1)))
                     .isInstanceOf(IllegalStateException.class);
         }
+
+        @Test
+        @DisplayName("a run still in flight when the shutdown wait runs out is logged at ERROR")
+        // close() is the call under test, made explicitly rather than by try-with-resources.
+        @SuppressWarnings("PMD.CloseResource")
+        void close_shutdownWaitElapses_should_logErrorWithBoundedCause() throws InterruptedException {
+            final LegResender resender = mock(LegResender.class);
+            final CountDownLatch inFlight = new CountDownLatch(1);
+            final CountDownLatch release = new CountDownLatch(1);
+            when(resender.run(any(), any())).thenAnswer(invocation -> {
+                inFlight.countDown();
+                assertThat(release.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+                return null;
+            });
+            final ResendLegExecutor executor = new ResendLegExecutor(resender, Duration.ofMillis(50));
+            try {
+                executor.submit(accepted(ID_1));
+                assertThat(inFlight.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+
+                executor.close();
+
+                assertThat(lines(Level.ERROR)).anySatisfy(line -> assertThat(line)
+                        .contains("resend-leg run still in flight at shutdown",
+                                "cause=shutdown-wait-elapsed"));
+            } finally {
+                release.countDown();
+            }
+        }
+
+        @Test
+        @DisplayName("an interrupted shutdown wait is logged at ERROR and the interrupt flag is kept")
+        // close() is the call under test, made explicitly rather than by try-with-resources.
+        @SuppressWarnings("PMD.CloseResource")
+        void close_waitInterrupted_should_logErrorAndRestoreInterruptFlag() throws InterruptedException {
+            final LegResender resender = mock(LegResender.class);
+            final CountDownLatch inFlight = new CountDownLatch(1);
+            final CountDownLatch release = new CountDownLatch(1);
+            when(resender.run(any(), any())).thenAnswer(invocation -> {
+                inFlight.countDown();
+                assertThat(release.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+                return null;
+            });
+            final AtomicBoolean stillInterrupted = new AtomicBoolean();
+            final ResendLegExecutor executor = new ResendLegExecutor(resender,
+                    Duration.ofSeconds(WAIT_SECONDS));
+            try {
+                executor.submit(accepted(ID_1));
+                assertThat(inFlight.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+
+                final Thread closing = Thread.ofPlatform().start(() -> {
+                    Thread.currentThread().interrupt();
+                    executor.close();
+                    stillInterrupted.set(Thread.currentThread().isInterrupted());
+                });
+                closing.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+
+                assertThat(closing.isAlive()).isFalse();
+                assertThat(stillInterrupted).isTrue();
+                assertThat(lines(Level.ERROR)).anySatisfy(line -> assertThat(line)
+                        .contains("resend-leg shutdown wait interrupted",
+                                "cause=InterruptedException"));
+            } finally {
+                release.countDown();
+            }
+        }
     }
 
     @Nested
@@ -226,6 +292,18 @@ class ResendLegExecutionIT {
                 assertThat(context).hasSingleBean(LegResender.class);
                 assertThat(context).hasSingleBean(ResendLegExecutor.class);
                 assertThat(context).hasSingleBean(ResendLegController.class);
+            });
+        }
+
+        @Test
+        @DisplayName("with intake disabled there is no LegResender, no executor and no ResendLegController")
+        void servingContext_intakeDisabled_should_registerNoResendLegBeans() {
+            EndToEndTestSupport.startSharedContainers();
+            servingContext().withPropertyValues("distribution.consumer.enabled=false").run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).doesNotHaveBean(LegResender.class);
+                assertThat(context).doesNotHaveBean(ResendLegExecutor.class);
+                assertThat(context).doesNotHaveBean(ResendLegController.class);
             });
         }
     }
