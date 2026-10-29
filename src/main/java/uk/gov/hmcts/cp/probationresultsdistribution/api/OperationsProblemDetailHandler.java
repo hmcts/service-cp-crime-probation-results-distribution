@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.api;
 
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException;
+import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import org.slf4j.Logger;
@@ -9,8 +10,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsFailure;
@@ -104,6 +107,21 @@ public class OperationsProblemDetailHandler {
         problem.setProperty(REASON, OperationsRefusalReason.UNSUPPORTED_CONTENT_TYPE.wireValue());
         problem.setInstance(instanceFor(request));
         return problem;
+    }
+
+    /**
+     * Leaves an unmapped path or method to the framework (FR-005-034): rethrowing the very exception
+     * this advice was offered makes Spring MVC carry on with its default resolution, so the answer
+     * is the framework's own {@code 404} or {@code 405} (its {@code Allow} header included), on
+     * the error body {@code application.yaml} strips of the stack trace and the path — never
+     * {@link #handleUnexpected}'s {@code 500 unexpected}, and never counted as a failure.
+     *
+     * @param ex the framework's no-handler or method-not-supported failure
+     * @throws ServletException always, the same exception, for the framework to answer
+     */
+    @ExceptionHandler({NoResourceFoundException.class, HttpRequestMethodNotSupportedException.class})
+    public void handleUnmappedRoute(final ServletException ex) throws ServletException {
+        throw ex;
     }
 
     /**
