@@ -54,6 +54,93 @@ class LogStatementSweepTest {
             "audit", "comm" + "and", "user" + "Id", "user_" + "id", "bo" + "dy", "pay" + "load",
             "CJSCPP" + "UID");
 
+    /**
+     * Every main source slice 004 adds or changes outside the two packages it owns whole ({@code
+     * cli/}, {@code adapter/servicebus/}), derived from the slice's commits (FR-004-041,
+     * SC-004-009). A source renamed or removed fails the sweep rather than silently leaving it.
+     */
+    private static final List<String> SLICE_004_SOURCES = List.of(
+            "Application.java",
+            "adapter/payload/SharedTimes.java",
+            "adapter/persistence/OutboundLogAdapter.java",
+            "application/CommandEnqueuer.java",
+            "application/DeadLetterReader.java",
+            "application/DistributionRunner.java",
+            "application/DlqCompletedListing.java",
+            "application/DlqCompletedListingQuery.java",
+            "application/GuardDecision.java",
+            "application/IdempotencyGuard.java",
+            "application/IntakeControlOutcome.java",
+            "application/IntakePauseAction.java",
+            "application/IntakePauseGate.java",
+            "application/LegResender.java",
+            "application/OutboundLog.java",
+            "application/OutcomeMetrics.java",
+            "application/PurgeQueueAction.java",
+            "application/PurgeQueueOutcome.java",
+            "application/QueuePurger.java",
+            "application/ReplayAction.java",
+            "application/ReplayEnqueuer.java",
+            "application/ReplayOutcome.java",
+            "application/RequestIdRecipe.java",
+            "application/RequestListing.java",
+            "application/RequestListingQuery.java",
+            "application/RequestListingRequest.java",
+            "application/ResendAcceptance.java",
+            "application/ResendEntryOutcome.java",
+            "application/ResendRequest.java",
+            "application/ResendRunResult.java",
+            "application/RollbackCloseInFlightAction.java",
+            "application/RollbackCloseInFlightOutcome.java",
+            "application/SharedTimeCheck.java",
+            "application/SubmitHearingAction.java",
+            "application/SubmitHearingOutcome.java",
+            "application/SubmitHearingRequest.java",
+            "config/DistributionProperties.java",
+            "config/MetricRegistry.java",
+            "config/OperatorCommandLine.java",
+            "config/PipelineClients.java",
+            "config/ServiceBusConsumerConfig.java",
+            "config/StartupValidator.java",
+            "domain/ResendAttempt.java",
+            "domain/RunnerOutcome.java",
+            "domain/SupportSubmission.java",
+            "domain/WholeRunRefusal.java",
+            "inbound/ConsumerLifecycleController.java",
+            "inbound/DeadLetterQueuePeeker.java",
+            "inbound/ProbationMessageListener.java",
+            "persistence/IntakeControlRepository.java",
+            "persistence/JdbcIntakeControlRepository.java",
+            "persistence/JdbcProcessedRequestRepository.java",
+            "persistence/JdbcRequestListingRepository.java",
+            "persistence/JdbcRollbackFencingRepository.java",
+            "persistence/OutboundMessageRepository.java",
+            "persistence/ProcessedRequestRepository.java",
+            "persistence/RequestListingRepository.java",
+            "persistence/RollbackFencingRepository.java");
+    private static final List<String> SLICE_004_PACKAGES =
+            List.of(MAIN + "cli", MAIN + "adapter/servicebus");
+    /**
+     * An identifier naming forbidden content: one that starts with the operator, a userId, an audit
+     * note, a body, a payload, CJSCPPUID, a stored command or a reason's text ({@code
+     * allowChangedPayloadRequested} names a flag, not a payload, and does not start with one).
+     */
+    private static final Pattern FORBIDDEN_IDENTIFIER = Pattern.compile(
+            "(?<![A-Za-z0-9_])(?:oper" + "ator|user_?" + "id|audit|bo" + "dy|pay" + "load|CJSCPP"
+                    + "UID|storedComm" + "and|reasonT" + "ext)", Pattern.CASE_INSENSITIVE);
+    /** The stored command read whole from a claim or a row. */
+    private static final String COMMAND_ACCESSOR = ".comm" + "and()";
+    /** A reason accessor whose value is not a bounded code's wire value: the operator's text. */
+    private static final Pattern FREE_REASON = Pattern.compile(
+            "\\.rea" + "son\\(\\)(?!\\.(?:value|wireValue)\\(\\))");
+    /**
+     * A whole request, acceptance, claim or command logged by its toString: the name used as a
+     * value, not as the receiver of an accessor.
+     */
+    private static final Pattern WHOLE_RECORD = Pattern.compile(
+            "(?<![\\w.])(?:request|accepted|acceptance|claim|claimed|comm" + "and|submission)"
+                    + "(?![\\w.(])");
+
     private static final String OPERATOR_TOKEN = "oper" + "ator";
     private static final String REASON_TOKEN = "rea" + "son";
     private static final String CJSCPPUID_TOKEN = "CJSCPP" + "UID";
@@ -140,6 +227,53 @@ class LogStatementSweepTest {
         }
         assertThat(offenders).as("listing sources reaching for content they must never print")
                 .isEmpty();
+    }
+
+    @Test
+    @DisplayName("no log line of any class slice 004 adds reaches for the operator, a reason's text, "
+            + "a stored command, a body, a payload, an audit note or a userId (FR-004-041, SC-004-009)")
+    void no_slice_004_log_line_reaches_for_forbidden_content() {
+        final List<Path> sources = new ArrayList<>();
+        for (final String source : SLICE_004_SOURCES) {
+            final Path file = Path.of(MAIN + source);
+            assertThat(file).as("a slice 004 source the sweep names").isRegularFile();
+            sources.add(file);
+        }
+        final List<Path> owned = javaSources(SLICE_004_PACKAGES.toArray(String[]::new));
+        assertThat(owned).as("the slice 004 packages the sweep walks").hasSizeGreaterThan(10);
+        sources.addAll(owned);
+        final List<String> offenders = new ArrayList<>();
+        int logCalls = 0;
+        for (final Path file : sources) {
+            final Matcher logCall = LOG_CALL.matcher(read(file));
+            while (logCall.find()) {
+                logCalls++;
+                // The format strings are fixed text; what a line can leak is in its arguments.
+                final String arguments = STRING_LITERAL.matcher(logCall.group(1)).replaceAll("\"\"")
+                        .replaceAll("\\s+", "");
+                forbiddenArgumentIn(arguments).ifPresent(token ->
+                        offenders.add(file + " log line: " + token + " in " + arguments));
+            }
+        }
+        assertThat(logCalls).as("log calls the sweep reached").isGreaterThan(100);
+        assertThat(offenders).as("slice 004 log lines reaching for content they must never carry")
+                .isEmpty();
+    }
+
+    private static Optional<String> forbiddenArgumentIn(final String arguments) {
+        final Matcher identifier = FORBIDDEN_IDENTIFIER.matcher(arguments);
+        Optional<String> found = identifier.find() ? Optional.of(identifier.group())
+                : Optional.empty();
+        if (found.isEmpty() && arguments.contains(COMMAND_ACCESSOR)) {
+            found = Optional.of(COMMAND_ACCESSOR);
+        }
+        if (found.isEmpty() && FREE_REASON.matcher(arguments).find()) {
+            found = Optional.of("a reason accessor that is not a bounded code");
+        }
+        if (found.isEmpty() && WHOLE_RECORD.matcher(arguments).find()) {
+            found = Optional.of("a whole record logged by its toString");
+        }
+        return found;
     }
 
     private static Optional<String> forbiddenIn(final String text) {

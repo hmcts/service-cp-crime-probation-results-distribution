@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
@@ -17,6 +18,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.HttpStatusBucket;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.Leg;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.WireValued;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 
@@ -51,10 +54,55 @@ class ClosedLabelSetIT {
         final Set<String> allowed = vocabularyValues();
         allowed.addAll(Set.of("true", "false", "none", "database", "operator", "COMPLETED", "FAILED"));
         final Set<String> emitted = meters.getMeters().stream().flatMap(meter -> meter.getId().getTags()
-                .stream().map(Tag::getValue)).collect(java.util.stream.Collectors.toSet());
+                .stream().map(Tag::getValue)).collect(Collectors.toSet());
         assertThat(emitted).isNotEmpty().allMatch(allowed::contains);
         assertThat(emitted).noneMatch(value -> value.matches(".*[0-9a-f]{8}-[0-9a-f-]{27,}.*")
                 || value.contains("user") || value.contains(" "));
+    }
+
+    @Test
+    @DisplayName("slice 004's labels — forced, the replay route, the resend refusal code and the "
+            + "operator pause — are closed and bounded (FR-004-041, SC-004-009)")
+    void slice_004_labels_are_closed_and_bounded() {
+        final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        final MetricRegistry metrics = new MetricRegistry(meters);
+        for (final LegStatus status : LegStatus.values()) {
+            for (final AttemptOrigin origin : AttemptOrigin.values()) {
+                metrics.legOutcome(Leg.HMPPS, status, Optional.empty(), origin, true, BodyShape.values()[0],
+                        HttpStatusBucket.values()[0]);
+            }
+        }
+        for (final ReplayRoute route : ReplayRoute.values()) {
+            metrics.replays(route);
+        }
+        for (final ResendRefusal refusal : ResendRefusal.values()) {
+            metrics.resendRefusal(refusal);
+        }
+        metrics.recordOperatorPause(true);
+        metrics.replayDeferred();
+
+        final Set<String> allowed = vocabularyValues();
+        Arrays.stream(ReplayRoute.values()).map(ReplayRoute::wireValue).forEach(allowed::add);
+        Arrays.stream(ResendRefusal.values()).map(ResendRefusal::wireValue).forEach(allowed::add);
+        allowed.addAll(Set.of("true", "false", "none", "database", "operator"));
+        final Set<String> emitted = meters.getMeters().stream().flatMap(meter -> meter.getId().getTags()
+                .stream().map(Tag::getValue)).collect(Collectors.toSet());
+        assertThat(emitted).isNotEmpty().allMatch(allowed::contains);
+        assertThat(emitted).noneMatch(value -> value.matches(".*[0-9a-f]{8}-[0-9a-f-]{27,}.*")
+                || value.contains("user") || value.contains(" "));
+        assertThat(tagValues(meters, "probation_replays_total", "route"))
+                .containsExactlyInAnyOrderElementsOf(Arrays.stream(ReplayRoute.values())
+                        .map(ReplayRoute::wireValue).toList());
+        assertThat(tagValues(meters, "probation_resend_refusals_total", "reason"))
+                .containsExactlyInAnyOrderElementsOf(Arrays.stream(ResendRefusal.values())
+                        .map(ResendRefusal::wireValue).toList());
+        assertThat(tagValues(meters, "probation_leg_outcomes_total", "forced")).containsExactly("true");
+    }
+
+    private static Set<String> tagValues(final SimpleMeterRegistry meters, final String name,
+                                         final String key) {
+        return meters.find(name).meters().stream().map(meter -> meter.getId().getTag(key))
+                .collect(Collectors.toSet());
     }
 
     private static Set<String> vocabularyValues() {

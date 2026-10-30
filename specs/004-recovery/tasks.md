@@ -1493,8 +1493,44 @@ fixed test-first in its own commit:
 
 ## Phase 11: Polish & Cross-Cutting Concerns
 
-- [ ] T072 [P] Run the full `TelemetryPrivacyTest`/`LogStatementSweepTest` suite across every new
+- [X] T072 [P] Run the full `TelemetryPrivacyTest`/`LogStatementSweepTest` suite across every new
       class this slice adds (not just T064's listings) — zero findings (FR-004-041; SC-004-009)
+      The class list was derived from the slice's commits (`git log --grep=004-recovery` since
+      `fad7d35`, every main source added or changed, plus `ResendAcceptance`, which slice 005 split
+      out of 004's `LegResender`): 72 sources across `cli/`, `adapter/servicebus/`, `application/`,
+      `config/`, `domain/`, `inbound/`, `persistence/`. The existing sweeps reached them only in
+      part — the console/stack-trace and payload/body/userId sweeps walk every source, but the
+      operator/reason/command rules covered T064's eleven listing sources alone, and
+      `ClosedLabelSetIT` emitted none of 004's labels — so each was extended, no new class:
+      `config/LogStatementSweepTest` `no_slice_004_log_line_reaches_for_forbidden_content` (every
+      log call of the named sources and of `cli/` and `adapter/servicebus/` walked whole, its
+      arguments with the format text stripped: no identifier starting with the operator, a userId,
+      an audit note, a body, a payload, `CJSCPPUID`, a stored command or a reason's text, no
+      `.command()`, no `.reason()` that is not a bounded code's `value()`/`wireValue()`, no whole
+      request/acceptance/claim/command logged by its `toString`; a named source that no longer
+      exists fails the sweep); `config/TelemetryPrivacyTest`
+      `slice_004_runners_never_print_supplied_text` (every line under the service's root logger,
+      attached exception messages included, while resend-leg runs over the real `LegResender` to
+      `unknown-request`, `not-run`, `sent`, `claimed-incomplete`, `intake-paused`,
+      `argument-too-long` and `unreadable-argument`, submit-hearing over the real
+      `SubmitHearingAction` to `enqueued`, `broker-unavailable`, `payload-unavailable` and
+      `unreadable-argument`, and replay to `unreadable-argument`, each with a canary operator,
+      reason, id or exception message — no line carries a canary); and `config/ClosedLabelSetIT`
+      `slice_004_labels_are_closed_and_bounded` (`forced=true` leg outcomes, every `ReplayRoute`
+      on `probation_replays_total{route}`, every `ResendRefusal` on
+      `probation_resend_refusals_total{reason}`, the operator-pause gauge and the replay-deferred
+      counter emit only vocabulary values).
+      Characterisation over landed code, so no red run of its own: GREEN on first run, zero
+      findings — `LogStatementSweepTest` 5/5, `TelemetryPrivacyTest` 3/3, `ClosedLabelSetIT` 2/2.
+      Shown falsifiable by three reverted mutations: logging the whole `SubmitHearingRequest` in
+      `SubmitHearingRunner`'s refusal failed the static sweep (`SubmitHearingRunner.java log line: a
+      whole record logged by its toString in REFUSED,refusal.get().value()+""+request`) and the
+      runtime sweep (`Expecting no elements of: ...`); adding `request.operator()` to
+      `LegResender`'s whole-run refusal line failed both (`LegResender.java log line: operator in
+      ...` and `"resend-leg refused reason=intake-paused by=CANARY-operator-name"`); tagging
+      `probation_replays_total` with `route.name()` failed the label case (`Expecting all elements
+      of: [...] to match given predicate but this element did not: ... ["SUPPORT", "SERVICE",
+      "COPY"]`).
 - [ ] T073 [P] Confirm `SchemaVocabularyIT` (T005) and slice 002's existing instance both pass
       together after this slice's migration — no SQL/Java vocabulary drift
 - [ ] T074 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
