@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.config;
 import com.azure.messaging.servicebus.ServiceBusClientBuilder;
 import com.azure.messaging.servicebus.ServiceBusErrorSource;
 import com.azure.messaging.servicebus.ServiceBusProcessorClient;
+import com.azure.messaging.servicebus.ServiceBusSenderClient;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -26,9 +27,12 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.CachedHearin
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ChainedHearingPayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ResultsQueryExternalHearingClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusCommandEnqueuer;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusReplayEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IdempotencyGuard;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestFingerprint;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.ConsumerLifecycleController;
@@ -207,6 +211,31 @@ public class ServiceBusConsumerConfig {
                     LOG.error("Service Bus processor error", context.getException());
                 })
                 .buildProcessorClient();
+    }
+
+    /**
+     * The one sender on {@code probation.requests} the serving context holds, for the replay
+     * action's enqueue (design §4.8 action 2; H9), with the consumer's credential rule; closed with
+     * the context. Building it opens no link: the first send does.
+     *
+     * @param connectionString the emulator's connection string, local and CI only
+     * @param namespace        the namespace, for workload identity
+     * @param queueName        the queue
+     * @return the sender
+     */
+    /* default */ @Bean(destroyMethod = "close")
+    ServiceBusSenderClient probationRequestsSender(
+            @Value("${distribution.servicebus.connection-string:}") final String connectionString,
+            @Value("${distribution.servicebus.namespace:}") final String namespace,
+            @Value("${distribution.servicebus.queue-name}") final String queueName) {
+        return PipelineClients.serviceBus(connectionString, namespace).sender()
+                .queueName(queueName)
+                .buildClient();
+    }
+
+    /* default */ @Bean
+    ReplayEnqueuer replayEnqueuer(final ServiceBusSenderClient probationRequestsSender) {
+        return new ServiceBusReplayEnqueuer(new ServiceBusCommandEnqueuer(probationRequestsSender));
     }
 
     /* default */ @Bean

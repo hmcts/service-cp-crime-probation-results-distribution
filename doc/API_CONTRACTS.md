@@ -267,12 +267,13 @@ structure is kept only as an extension point.
 
 ## 3. Operations API — `/operations/**`
 
-**Status: decided for replay and resend-leg (H9). Both controllers are built; resend-leg is
-served over slice 004's `application.LegResender`. One caveat remains, slice 004's (its T021): no
-production `ReplayEnqueuer` adapter exists yet, so no `ReplayAction` bean is wired and the replay
-controller, registered only when one is, is not served in a deployed context; the packaged
-command line does not dispatch `replay` either, so `java -jar app.jar replay` waits on the same
-wiring.** The document is filled in at
+**Status: decided for replay and resend-leg (H9). Both controllers are built and served
+whenever intake is wired: resend-leg over slice 004's `application.LegResender`, replay over its
+`application.ReplayAction` with the production `ServiceBusReplayEnqueuer` (slice 004's T078),
+which re-sends the stored command byte for byte under a fresh `messageId`, marked only with the
+application property `origin = REPLAY`, through the one `probation.requests` sender. The packaged
+command line dispatches `replay` too (`java -jar app.jar replay --request-id <uuid>`), over the
+sender `submit-hearing` uses.** The document is filled in at
 `src/main/resources/probation-results-distribution-openapi.yaml` (version above the `0.0.0`
 placeholder), read by `cp-audit-filter-springboot` to resolve the paths it audits and asserted
 against the served API, both ways, by `OperationsContractTest`. The API sits behind the estate's

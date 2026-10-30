@@ -23,6 +23,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunn
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IntakePauseGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 
 /**
@@ -81,6 +82,24 @@ public class OperationsConfiguration {
     /* default */ @Bean
     OperationsResponseMapper operationsResponseMapper() {
         return new OperationsResponseMapper();
+    }
+
+    /**
+     * Slice 004's replay action as a bean of the serving context (T078; design §4.8 action 2; H9),
+     * built from the consumer's processed-log store and the production replay enqueuer over the
+     * serving context's {@code probation.requests} sender ({@code ServiceBusConsumerConfig}), so it
+     * exists exactly when intake is wired. Declared ahead of {@link #replayController} for the
+     * reason {@link #legResender} gives.
+     *
+     * @param store    the processed-log store
+     * @param enqueuer the production replay enqueuer
+     * @return the action
+     */
+    /* default */
+    @Bean
+    @ConditionalOnProperty(name = "distribution.consumer.enabled", havingValue = "true")
+    ReplayAction replayAction(final ProcessedRequestRepository store, final ReplayEnqueuer enqueuer) {
+        return new ReplayAction(store, enqueuer);
     }
 
     /**

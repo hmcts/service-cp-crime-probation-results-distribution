@@ -20,11 +20,12 @@ no longer blocked on a nonexistent class** and are unmarked below. **`applicatio
 now exists too, split into an accept step and a run step, and is a bean of the serving context
 whenever intake is wired** (T047–T050, 2026-10-29), so `ResendLegController` is registered when
 deployed and answers `202` before the run (T046 closed); US2's T029 and US3's T030–T031 are
-runnable, and US7's remaining `[BLOCKED-ON-004]` tags are that story's own to revisit. One gap remains even
-for US1: `ReplayAction` has no production `ReplayEnqueuer` wired in Spring yet (004's own
-`cli/ReplayRunner` has the same gap), so a *manual, end-to-end* run (T023) still can't happen until
-that adapter lands — the `@WebMvcTest` controller tests (which mock `ReplayAction` at the boundary)
-are unaffected by that gap and can be written and run for real now.
+runnable, and US7's remaining `[BLOCKED-ON-004]` tags are that story's own to revisit. The one gap
+US1 had — `ReplayAction` with no production `ReplayEnqueuer` wired in Spring, and `replay` not
+dispatched by 004's packaged command line — is closed by 004's T078: `ReplayAction`, and with it
+`ReplayController`, is a bean of the serving context whenever intake is wired, and
+`java -jar app.jar replay` runs `cli/ReplayRunner`. The manual end-to-end run (T023) is now
+unblocked and still to do.
 Per the lesson already learned once this session (004's own `ReplayRoute`/`ResendRefusalReason`
 duplicating classes that turned out to already exist on this branch): **do not stub, fake or
 pre-define `LegResender` here.** Where a task needs it to compile, write the test against the
@@ -381,13 +382,13 @@ fresh `messageId` with `origin = REPLAY`.
       `ReplayAction.replay(UUID)` via `OperationsRequestMapper`/`OperationsResponseMapper`, wrapped
       by `OperationsAuditPublisher` (request event before the call, response event after) —
       satisfies T019
-- [ ] T023 Run `quickstart.md`'s replay steps manually. **Still blocked**: `ReplayAction` has no
-      production `ReplayEnqueuer` wired in Spring (004's own gap too — its `cli/ReplayRunner` is in
-      the same position); a manual end-to-end run needs that adapter first. T019–T022 do not need it
-      (they mock `ReplayAction` at the boundary) and can be completed now.
+- [ ] T023 Run `quickstart.md`'s replay steps manually. **Unblocked by 004's T078**: the
+      production `ServiceBusReplayEnqueuer` is wired, `ReplayAction`/`ReplayController` are beans
+      whenever intake is wired, and the packaged command line dispatches `replay`; the manual run
+      itself is still to do. T019–T022 never needed it (they mock `ReplayAction` at the boundary).
 
-**Checkpoint**: replay over HTTP is implementable today — `ReplayAction` exists with the assumed
-shape. Only the manual end-to-end smoke test (T023) waits on the `ReplayEnqueuer` Azure adapter.
+**Checkpoint**: replay over HTTP is built and wired (004's T078 supplied the `ReplayEnqueuer`
+adapter); only the manual end-to-end smoke test (T023) remains.
 
 ---
 
@@ -808,6 +809,9 @@ an identically seeded store, and compare the reports ID for ID.
       command line (`config/OperatorCommandLine` handles `resend-leg` but not `replay`) and no
       production `ReplayEnqueuer` adapter exists, as 004's T021 records; this test pins the runner
       class against the API, not `java -jar app.jar replay`, which waits on that wiring.
+      **Closed by 004's T078**: `replay` is now dispatched by the packaged command line over the
+      production `ServiceBusReplayEnqueuer` (pinned by `PackagedReplayCommandIT`); this test keeps
+      its recording double, since every replay refusal it compares is decided before the enqueue.
 
 ### Implementation for User Story 7
 
@@ -870,8 +874,8 @@ an identically seeded store, and compare the reports ID for ID.
       BRANCH 0.9142 (1108/1212). Two earlier attempts at the same run failed only on the Service
       Bus emulator's `50002` throttling (`DatabaseOutageIT`, then `DlqResubmissionReplayIT`), the
       environment flakiness recorded above.
-- [ ] T043 Run every `quickstart.md` step end to end. The replay steps need only the
-      `ReplayEnqueuer` adapter (004); the resend-leg steps need `LegResender` fully implemented
+- [ ] T043 Run every `quickstart.md` step end to end. The replay steps' `ReplayEnqueuer` adapter
+      is now wired (004's T078); the resend-leg steps need `LegResender` fully implemented
 - [X] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
       filter chain in T014, including the one case research.md Decision 2 flags as not yet
       re-verified by a running test: a caller sending a conflicting `CPP-ACTION` header has no effect
@@ -909,8 +913,9 @@ code was needed, confirming the ordering already holds.
 - **US4 (Phase 3)**: depends on Foundational; proves the authorisation/audit chain in isolation
   before any controller exists
 - **US1 (Phase 4)**: depends on Foundational and US4 (its controller sits behind the proven
-  authz/audit chain). `application.ReplayAction` now exists, so T019–T022 are unblocked; only T023
-  (the manual end-to-end run) waits on 004's `ReplayEnqueuer` adapter
+  authz/audit chain). `application.ReplayAction` now exists, so T019–T022 are unblocked; T023
+  (the manual end-to-end run) is unblocked too, now that 004's T078 wired the `ReplayEnqueuer`
+  adapter, and is still to do
 - **US2 (Phase 5)**: depends on Foundational and US4; **blocked on `application.LegResender`
   existing** (004); independent of US1's controller
 - **US3 (Phase 6)**: depends on US2's controller and mapper (T027, T028) — it is the override path
@@ -941,14 +946,14 @@ code was needed, confirming the ordering already holds.
 
 1. Setup → Foundational → US4 (authorisation/audit proven) → US1 (replay) — **buildable today**,
    since `application.ReplayAction` already exists with the assumed shape. Stop and validate
-   against US1's Independent Test (its `@WebMvcTest` half; the manual end-to-end half waits on the
-   `ReplayEnqueuer` adapter). This alone gives operators the HTTP route to the general-use recovery
+   against US1's Independent Test (its `@WebMvcTest` half; the manual end-to-end half, now that 004's T078 wired the
+   `ReplayEnqueuer` adapter, is T023's). This alone gives operators the HTTP route to the general-use recovery
    action.
 
 ### Incremental Delivery
 
 1. Setup + Foundational + US4 → ready now.
-2. US1 (MVP) → ready now (T019–T022); T023's manual run waits on 004's `ReplayEnqueuer` adapter.
+2. US1 (MVP) → ready now (T019–T022); T023's manual run is unblocked by 004's T078 and still to do.
 3. The instant 004's `LegResender` lands: US2 → US3 (same endpoint, the override).
 4. US5 and US6 can be finished alongside US1–US3, since their foundational halves need no
    endpoint.

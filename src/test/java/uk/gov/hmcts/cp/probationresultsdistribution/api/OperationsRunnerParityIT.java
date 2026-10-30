@@ -61,9 +61,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunnerOutcome;
  *
  * <p>Both doors are built over the same production classes: a real {@link LegResender} from {@link
  * ResendTestSupport} on the shared PostgreSQL, Redis and WireMock, its pause read switchable here,
- * and a real {@link ReplayAction} over the JDBC processed log. Replay has no production {@link
- * ReplayEnqueuer} wired in Spring yet (004's gap), so a recording double stands in for the broker;
- * every replay refusal is decided before the enqueue, so the double never decides an outcome. The
+ * and a real {@link ReplayAction} over the JDBC processed log. A recording {@link ReplayEnqueuer}
+ * double stands in for the broker (the production adapter is pinned on its own by 004's T078
+ * tests); every replay refusal is decided before the enqueue, so the double never decides an
+ * outcome. The
  * runner's per-id outcomes are its own {@code resend-leg id} lines; the API's are 004's {@code
  * resend-leg report} line for the run its {@code 202} names.
  */

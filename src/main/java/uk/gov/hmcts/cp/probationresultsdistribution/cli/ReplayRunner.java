@@ -1,11 +1,13 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.cli;
 
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunnerOutcome;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
 
 /**
  * The {@code replay} command-line runner (design §4.8 action 2; slice 004, FR-004-042;
@@ -30,33 +32,53 @@ public final class ReplayRunner {
     }
 
     /**
+     * Checks the {@code replay} arguments whole, before any context, store or broker is opened
+     * ({@code contracts/cli-runners.md} §1): a missing or blank {@code --request-id} is
+     * {@code missing-argument}, one that is not a UUID {@code unreadable-argument}.
+     *
+     * @param args the full command-line arguments, including the leading action name
+     * @return the refusal, or empty when the arguments can be run
+     */
+    public static Optional<WholeRunRefusal> checkArguments(final String... args) {
+        final String raw = valueOf(args, REQUEST_ID_FLAG);
+        final Optional<WholeRunRefusal> refusal;
+        if (raw == null || raw.isBlank()) {
+            refusal = Optional.of(WholeRunRefusal.MISSING_ARGUMENT);
+        } else if (parse(raw).isEmpty()) {
+            refusal = Optional.of(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        } else {
+            refusal = Optional.empty();
+        }
+        return refusal;
+    }
+
+    /**
      * Runs the {@code replay} action over the process arguments.
      *
      * @param args the full command-line arguments, including the leading action name
      * @return the bounded runner outcome
      */
     public RunnerOutcome run(final String... args) {
-        final String raw = valueOf(args, REQUEST_ID_FLAG);
+        final Optional<WholeRunRefusal> refusal = checkArguments(args);
         final RunnerOutcome outcome;
-        if (raw == null || raw.isBlank()) {
-            LOG.warn("replay refused missing-argument: --request-id");
+        if (refusal.isPresent()) {
+            LOG.warn("replay refused {}: --request-id", refusal.get().value());
             outcome = RunnerOutcome.REFUSED;
         } else {
-            outcome = runWithRequestId(raw);
+            outcome = render(action.replay(parse(valueOf(args, REQUEST_ID_FLAG)).orElseThrow()));
         }
         return outcome;
     }
 
-    private RunnerOutcome runWithRequestId(final String raw) {
-        final RunnerOutcome outcome;
-        UUID requestId = null;
+    private static Optional<UUID> parse(final String raw) {
+        Optional<UUID> parsed;
         try {
-            requestId = UUID.fromString(raw);
+            parsed = Optional.of(UUID.fromString(raw));
         } catch (final IllegalArgumentException notAUuid) {
-            LOG.warn("replay refused unreadable-argument: --request-id");
+            // Not a UUID: the caller refuses unreadable-argument; the text is never echoed.
+            parsed = Optional.empty();
         }
-        outcome = requestId == null ? RunnerOutcome.REFUSED : render(action.replay(requestId));
-        return outcome;
+        return parsed;
     }
 
     private static RunnerOutcome render(final ReplayOutcome outcome) {

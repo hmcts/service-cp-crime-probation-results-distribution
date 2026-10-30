@@ -18,11 +18,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
  *
  * <p>Excluded from {@code Application}'s component scan and registered instead by an explicit,
  * {@code @ConditionalOnBean(ReplayAction.class)}-gated {@code @Bean} method in {@code
- * config.OperationsConfiguration}: a {@link ReplayAction} bean exists only once both its own
- * dependencies do — {@code ProcessedRequestRepository} (today still wired only inside the
- * intake-gated {@code ServiceBusConsumerConfig}, a pre-existing coupling this endpoint's needs
- * expose but does not fix here) and a production {@code ReplayEnqueuer} (004's gap, not yet built).
- * Until both land, this controller is absent from the context rather than failing it.
+ * config.OperationsConfiguration}: a {@link ReplayAction} bean exists exactly when intake is
+ * wired, built there from the intake-gated {@code ServiceBusConsumerConfig}'s {@code
+ * ProcessedRequestRepository} and production {@code ReplayEnqueuer} (004's T078). With intake off,
+ * this controller is absent from the context rather than failing it.
  */
 @RestController
 public class ReplayController {

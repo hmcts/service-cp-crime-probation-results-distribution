@@ -302,10 +302,10 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       FR-004-020 (missing → `missing-argument`, not a UUID → `unreadable-argument`, before any
       store/cache/broker read), calls `ReplayAction`, prints the bounded outcome and exit code per
       `contracts/cli-runners.md` §1. The class and its own test (`ReplayRunnerTest`) are done and
-      green; **not yet wired into `RunnerDispatcher`/`Application.main` or into a Spring
-      `@Configuration`** (no `ReplayEnqueuer` Azure adapter exists yet either — `ReplayAction` has no
-      production implementation of that port wired up). The runner cannot actually be invoked from
-      the built jar until that composition-root wiring lands.
+      green. **Now wired (T078)**: `config/OperatorCommandLine` dispatches `replay` to this runner,
+      over the production `adapter/servicebus/ServiceBusReplayEnqueuer` and submit-hearing's
+      `probation.requests` sender, so `java -jar app.jar replay --request-id <uuid>` runs it from the
+      built jar; the serving context registers `ReplayAction` whenever intake is wired.
 - [X] T022 [US1] [P] `OutcomeMetricsTest` (US1 half): every replay outcome increments
       `probation_leg_outcomes_total{origin="replay", forced="false"}` and
       `probation_replays_total{route}`; logs carry `runOrigin`, `route`, status, reason, HTTP status,
@@ -332,7 +332,9 @@ command byte-for-byte, fresh `messageId`, `origin=REPLAY`), one POST, the row re
       is exercised end to end by the automated IT
       `RequestDedupeIT.failed_request_copy_at_first_delivery_is_admitted_as_replay` (real Service Bus
       emulator + Postgres + WireMock gateway), which is green. Left open for the pass that wires the
-      composition root; flagged in open_points.
+      composition root; flagged in open_points. **The wiring has since landed (T078)**: the packaged
+      jar takes `replay`, pinned by `PackagedReplayCommandIT`; the manual quickstart run itself is
+      T075's.
 
 **Checkpoint**: User Story 1 is fully functional and independently testable — the MVP.
 
@@ -533,6 +535,9 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       unpaused purge refuses with exit 1. Microsoft's [native batch-delete feature](https://learn.microsoft.com/en-us/azure/service-bus-messaging/batch-delete)
       performs cutoff selection on the broker. A supported integration and a successful purge
       smoke test are required before this task can be checked off.
+      The same CLI composition root now dispatches `replay` as well (T078, closing the gap T021
+      and T023 recorded against this root), pinned by `PackagedReplayCommandIT` beside
+      `PackagedIntakeCommandsIT`.
 
 **Checkpoint**: intake pause is durable and the pause/resume/rollback commands are executable.
 Purge remains unavailable; 006's rollback runbook cannot treat the purge step as implemented.
@@ -1575,7 +1580,7 @@ fixed test-first in its own commit:
 - [ ] T077 Update `CLAUDE.md`'s Setup section once this slice merges to `main`, and hand the
       Dependencies → "005-operations-api" and "006-production-readiness" sections (plan.md,
       `contracts/cli-runners.md`) to whoever starts those slices next
-- [ ] T078 [US1] Build the production `ReplayEnqueuer` adapter and wire replay in both composition
+- [X] T078 [US1] Build the production `ReplayEnqueuer` adapter and wire replay in both composition
       roots, closing the gap T021 left (FR-004-015, FR-004-017; design §4.8 action 2, A2-48; H9).
       Unblocks T075 and slice 005's T023 and the replay half of its T043. Reuse T068's send-only
       `CommandEnqueuer` port and `adapter/servicebus/ServiceBusCommandEnqueuer` rather than a
@@ -1596,6 +1601,51 @@ fixed test-first in its own commit:
       `ReplayAction`/`ReplayController` are registered when intake is wired and absent when it is
       not — `src/main/java/.../adapter/servicebus/`, `src/main/java/.../config/`,
       `src/test/java/.../adapter/servicebus/`
+      **Done.** `adapter/servicebus/ServiceBusReplayEnqueuer` wraps the `CommandEnqueuer` port
+      (no second sender): it hands `ServiceBusCommandEnqueuer` one `OutgoingCommand` carrying the
+      stored command unchanged, the fresh `messageId` `ReplayAction` gives, the hearing id as
+      `correlationId`, and exactly one application property, `origin = REPLAY`
+      (`contentType = application/json` is the command enqueuer's own); a
+      `CommandEnqueueException` comes back out as `ReplayEnqueueException`, its cause kept.
+      CLI root: `OperatorCommandLine` dispatches `replay` (its arguments checked whole before any
+      context by the new `ReplayRunner.checkArguments` — `missing-argument` /
+      `unreadable-argument`, the same codes and log lines the runner already printed), and a lazy
+      `commandReplayRunner` builds `ReplayAction` over `JdbcProcessedRequestRepository` and the
+      adapter over `commandSender`, the sender `submit-hearing` already uses, closed with the
+      context; replay opens no cache and reads no intake state. Serving root:
+      `ServiceBusConsumerConfig` (intake-gated) adds `probationRequestsSender`
+      (`destroyMethod = "close"`) and the `replayEnqueuer` bean, and `OperationsConfiguration`
+      declares `replayAction` (`@ConditionalOnProperty distribution.consumer.enabled=true`) ahead of
+      `replayController`, the `legResender` pattern, so `ReplayController` is served exactly when
+      intake is wired. Exit codes and the contract (`contracts/cli-runners.md` §1) are unchanged.
+      Docs: `doc/API_CONTRACTS.md` §3's status line, T021/T023/T037 here and slice 005's
+      header, T023, T038 and T043 notes say replay is wired; T023/T043 (005) and T075 stay open,
+      manual runs still to do. `LogStatementSweepTest`'s slice-004 source list gains
+      `config/OperationsConfiguration.java` and `api/ReplayController.java` (the adapter is in
+      `adapter/servicebus/`, swept whole).
+      Tests: `ServiceBusReplayEnqueuerTest` (unit: body bytes, `messageId`, `correlationId`, the one
+      `origin = REPLAY` property, the exception mapping), `ServiceBusReplayEnqueuerIT` (emulator:
+      the message as received, body bytes compared, application properties exactly
+      `{origin=REPLAY}`; a closed sender → `ReplayEnqueueException`), `PackagedReplayCommandIT`
+      (beside `PackagedIntakeCommandsIT`: `java -jar app.jar replay --request-id` over a seeded
+      `FAILED` request while intake is paused → exit 0, the stored command on the queue byte for
+      byte under the printed `REPLAY:<uuid>`, request still `FAILED`; a missing or unreadable id →
+      exit 1 before any store is opened, never echoed) and `config/ReplayWiringIT` (serving
+      context: sender, enqueuer, `ReplayAction` and `ReplayController` beans with intake wired, none
+      without; the sender closed with the context).
+      RED (compile-safe seam: the adapter's `enqueue` a no-op): `./gradlew test --tests
+      '*ServiceBusReplayEnqueuerTest' --tests '*ServiceBusReplayEnqueuerIT' --tests
+      '*PackagedReplayCommandIT' --tests '*ReplayWiringIT' -Dtest.noFailFast=true` →
+      `10 tests completed, 8 failed`, every one an `AssertionError`: the unit cases `Expected size: 1
+      but was: 0` and `Expecting code to raise a throwable`; the emulator cases `the replayed
+      command was not on the queue` and `Expecting code to raise a throwable`; the packaged cases
+      `operator command refused reason=unreadable-argument` (exit 1, `replay` not dispatched) where
+      0 / `missing-argument` were expected; the wiring cases `hasSingleBean` failing for the absent
+      sender/enqueuer/`ReplayAction`/`ReplayController`. The two that passed on the red run — the
+      unreadable-id refusal and the intake-off absence — held already.
+      GREEN: the same four classes plus `ReplayRunnerTest`, `TelemetryPrivacyTest`,
+      `LogStatementSweepTest`, `ServiceBusConsumerConfigIT`, `ResendLegExecutionIT`,
+      `ReplayControllerTest` and `OperationsAuditIT` → `49 tests completed, 0 failed`.
 
 ---
 

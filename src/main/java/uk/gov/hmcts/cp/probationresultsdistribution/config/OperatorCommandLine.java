@@ -34,6 +34,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.CachedHearin
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ChainedHearingPayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.OutboundLogAdapter;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusCommandEnqueuer;
+import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusReplayEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DlqCompletedListingQuery;
@@ -42,12 +43,14 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.IntakePauseGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.PurgeQueueAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.QueuePurger;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestListingQuery;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RollbackCloseInFlightAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.SubmitHearingAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.DlqCompletedListingRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.PauseIntakeRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.PurgeQueueRunner;
+import uk.gov.hmcts.cp.probationresultsdistribution.cli.ReplayRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.RequestListingRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.ResendLegRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.ResumeIntakeRunner;
@@ -67,11 +70,13 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageR
 
 /**
  * Composes one operator command without scanning the server, consumer or scheduled jobs. The
- * no-argument intake commands, {@code resend-leg}, the two listings and {@code submit-hearing}
- * share this root; a command's clients — {@code resend-leg}'s pipeline (the payload cache, the
- * results-query and users-groups clients, the gateway publisher), the dead-letter receiver of
- * {@code list-dlq-completed}, the cache and sender of {@code submit-hearing} — are built lazily,
- * only when that command is dispatched, after the {@code distribution.*} startup validation.
+ * no-argument intake commands, {@code replay}, {@code resend-leg}, the two listings and
+ * {@code submit-hearing} share this root; a command's clients — {@code resend-leg}'s pipeline (the
+ * payload cache, the results-query and users-groups clients, the gateway publisher), the
+ * dead-letter receiver of {@code list-dlq-completed}, the cache of {@code submit-hearing}, and the
+ * {@code probation.requests} sender {@code submit-hearing} and {@code replay} share — are built
+ * lazily, only when that command is dispatched, after the {@code distribution.*} startup
+ * validation.
  */
 public final class OperatorCommandLine {
 
@@ -82,6 +87,7 @@ public final class OperatorCommandLine {
     private static final String LIST_REQUESTS = "list-requests";
     private static final String LIST_DLQ_COMPLETED = "list-dlq-completed";
     private static final String SUBMIT_HEARING = "submit-hearing";
+    private static final String REPLAY = "replay";
     private static final String QUEUE_NAME = "distribution.servicebus.queue-name";
 
     private OperatorCommandLine() {
@@ -105,6 +111,8 @@ public final class OperatorCommandLine {
             exitCode = checkedThenRun(RequestListingRunner.checkArguments(args), args);
         } else if (args.length > 0 && SUBMIT_HEARING.equals(args[0])) {
             exitCode = checkedThenRun(SubmitHearingRunner.checkArguments(args), args);
+        } else if (args.length > 0 && REPLAY.equals(args[0])) {
+            exitCode = checkedThenRun(ReplayRunner.checkArguments(args), args);
         } else {
             LOG.warn("operator command refused reason=unreadable-argument");
             exitCode = RunnerOutcome.REFUSED.exitCode();
@@ -328,8 +336,9 @@ public final class OperatorCommandLine {
         }
 
         /**
-         * A sender on {@code probation.requests} for submit-hearing's enqueue: built only when that
-         * command is dispatched, after the startup validation, with the consumer's credential rule.
+         * A sender on {@code probation.requests} for submit-hearing's and replay's enqueue, the one
+         * sender both share: built only when one of them is dispatched, after the startup
+         * validation, with the consumer's credential rule, and closed with the context.
          */
         /* default */
         @Bean(destroyMethod = "close")
@@ -361,6 +370,26 @@ public final class OperatorCommandLine {
                     new ServiceBusCommandEnqueuer(commandSender), UUID::randomUUID));
         }
 
+        /**
+         * The replay runner (design §4.8 action 2; H9): the processed-log read and the production
+         * replay enqueuer over submit-hearing's sender, which re-sends the stored command byte for
+         * byte under a fresh {@code messageId}, marked {@code origin = REPLAY}. It reads no intake
+         * state — replay is available while intake is paused — and opens no cache.
+         */
+        /* default */
+        @Bean
+        @Lazy
+        ReplayRunner commandReplayRunner(final JdbcClient jdbc,
+                final PlatformTransactionManager transactions,
+                final DistributionProperties commandDistributionProperties,
+                final ServiceBusSenderClient commandSender) {
+            final JdbcProcessedRequestRepository store = new JdbcProcessedRequestRepository(jdbc,
+                    new TransactionTemplate(transactions),
+                    commandDistributionProperties.claim().lease());
+            return new ReplayRunner(new ReplayAction(store,
+                    new ServiceBusReplayEnqueuer(new ServiceBusCommandEnqueuer(commandSender))));
+        }
+
         /* default */ @Bean
         RunnerDispatcher commandDispatcher(final IntakeControlRepository repository,
                                            final IntakePauseGate gate, final QueuePurger purger,
@@ -369,6 +398,7 @@ public final class OperatorCommandLine {
                                            final ObjectProvider<ResendLegRunner> resendLeg,
                                            final ObjectProvider<DlqCompletedListingRunner> dlq,
                                            final ObjectProvider<SubmitHearingRunner> submit,
+                                           final ObjectProvider<ReplayRunner> replay,
                                            final OperatorArguments operatorArguments) {
             final IntakePauseAction intake = new IntakePauseAction(repository);
             final PauseIntakeRunner pause = new PauseIntakeRunner(intake);
@@ -385,7 +415,8 @@ public final class OperatorCommandLine {
                     RESEND_LEG, () -> resendLeg.getObject().run(operatorArguments.asArray()),
                     LIST_REQUESTS, () -> listRequests.run(operatorArguments.asArray()),
                     LIST_DLQ_COMPLETED, () -> dlq.getObject().run(),
-                    SUBMIT_HEARING, () -> submit.getObject().run(operatorArguments.asArray())));
+                    SUBMIT_HEARING, () -> submit.getObject().run(operatorArguments.asArray()),
+                    REPLAY, () -> replay.getObject().run(operatorArguments.asArray())));
         }
 
     }
