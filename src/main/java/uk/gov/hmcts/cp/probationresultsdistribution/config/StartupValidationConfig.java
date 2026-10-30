@@ -48,8 +48,10 @@ public class StartupValidationConfig {
     private static void warnIfAuditFilterOnWithTransportOff(final Environment environment) {
         final boolean auditFilterOn = environment.getProperty("audit.http.enabled", Boolean.class,
                 Boolean.FALSE);
+        // Unset reads as on, as cp-audit-filter-springboot's auto-configuration and the operations
+        // API's audit publisher read it (OperationsConfiguration#operationsAuditPublisher).
         final boolean auditTransportOn = environment.getProperty("cp.audit.enabled", Boolean.class,
-                Boolean.FALSE);
+                Boolean.TRUE);
         if (auditFilterOn && !auditTransportOn) {
             LOG.warn("the operations API's HTTP audit filter is on (audit.http.enabled={}) but its "
                             + "JMS transport is off (cp.audit.enabled={}): admitted calls will be "

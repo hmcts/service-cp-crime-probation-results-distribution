@@ -122,6 +122,22 @@ class OperationsConfigDefaultsTest {
             assertThat(appender.list).noneMatch(
                     event -> event.getFormattedMessage().contains("audit.http.enabled=true"));
         }
+
+        @Test
+        @DisplayName("no WARN when the transport switch is unset: the library and the publisher read it as on")
+        void no_warning_when_transport_switch_is_unset() throws Exception {
+            appender.start();
+            configLogger.addAppender(appender);
+            final MockEnvironment environment = new MockEnvironment()
+                    .withProperty("audit.http.enabled", "true");
+            final ApplicationRunner runner = new StartupValidationConfig()
+                    .distributionConfigValidator(validProperties(), environment);
+
+            runner.run(new DefaultApplicationArguments());
+
+            assertThat(appender.list).noneMatch(
+                    event -> event.getFormattedMessage().contains("audit.http.enabled=true"));
+        }
     }
 
     private static DistributionProperties validProperties() {
