@@ -918,7 +918,7 @@ public class EndToEndTestSupport {
     private static Optional<ServiceBusReceivedMessage> scanDeadLetter(
             final ServiceBusReceiverClient dlq, final String messageId) {
         long sequence = 0L;
-        List<ServiceBusReceivedMessage> page = dlq.peekMessages(100, sequence).stream().toList();
+        List<ServiceBusReceivedMessage> page = peekPage(dlq, sequence);
         while (!page.isEmpty()) {
             for (final ServiceBusReceivedMessage message : page) {
                 if (messageId.equals(message.getMessageId())) {
@@ -926,9 +926,19 @@ public class EndToEndTestSupport {
                 }
                 sequence = message.getSequenceNumber() + 1;
             }
-            page = dlq.peekMessages(100, sequence).stream().toList();
+            page = peekPage(dlq, sequence);
         }
         return Optional.empty();
+    }
+
+    /**
+     * One page of the dead-letter sub-queue, waiting out the emulator's namespace throttling
+     * (error 50002), which the whole-queue scans above can provoke under the full suite's load.
+     */
+    private static List<ServiceBusReceivedMessage> peekPage(
+            final ServiceBusReceiverClient dlq, final long sequence) {
+        return EmulatorThrottleRetry.call(
+                () -> dlq.peekMessages(100, sequence).stream().toList(), EmulatorThrottleRetry::sleep);
     }
 
     /**
