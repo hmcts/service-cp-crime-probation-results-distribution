@@ -1531,8 +1531,21 @@ fixed test-first in its own commit:
       `probation_replays_total` with `route.name()` failed the label case (`Expecting all elements
       of: [...] to match given predicate but this element did not: ... ["SUPPORT", "SERVICE",
       "COPY"]`).
-- [ ] T073 [P] Confirm `SchemaVocabularyIT` (T005) and slice 002's existing instance both pass
+- [X] T073 [P] Confirm `SchemaVocabularyIT` (T005) and slice 002's existing instance both pass
       together after this slice's migration — no SQL/Java vocabulary drift
+      Confirmed 2026-10-30, no code change: T005's cases live in slice 002's own
+      `persistence/SchemaVocabularyIT` (extended, not duplicated), so one run over a database
+      Flyway migrates through `V3__add_intake_control.sql` exercises both. `SchemaVocabularyIT`
+      12/12 PASSED — slice 002's `OutboundMessageValueSets` 6/6 (every `LegStatus`, `LegReason`,
+      `PayloadSource`, `YouthSwitchRecordedValue`, `AttemptOrigin` — `resend` and `replay`
+      included — and `Leg` accepted, unknowns refused), `ProcessedRequestValueSets` 2/2 (every
+      `CompletionReason`, `recovered` included, and every `FailureReason`, `rolled-back` included),
+      `NoteForms` 2/2 (the seven forms, `override=force-resend` and
+      `override=allow-changed-payload` among them) and 004's `IntakeControlSingleRow` 2/2; with
+      `OutboundMessageSchemaIT` 11/11, `ProcessedRequestSchemaIT` 7/7 and `OutboundBodySchemaIT`
+      5/5 alongside. The slice's own new value sets (`WholeRunRefusal`, `RunnerOutcome`, and the
+      reused `ReplayRoute`/`ResendRefusal`) are never stored, so they have no SQL counterpart to
+      drift from.
 - [ ] T074 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
       are unchanged (SC-004-013)
 - [ ] T075 Run every `quickstart.md` step end to end in one sitting against a fresh local stack
