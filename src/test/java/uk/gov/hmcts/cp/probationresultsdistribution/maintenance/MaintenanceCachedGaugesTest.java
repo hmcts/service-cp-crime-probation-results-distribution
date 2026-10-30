@@ -12,6 +12,7 @@ import java.time.ZoneOffset;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.MaintenanceFailureCause;
@@ -141,7 +142,9 @@ class MaintenanceCachedGaugesTest {
     }
 
     // A gauge whose state object is only weakly referenced reads NaN once a collection has run; the
-    // explicit collection is the only way to prove the state is held, so this test asks for one.
+    // explicit collection is the only way to prove the state is held, so this test asks for one. A
+    // JVM that ignores System.gc() (-XX:+DisableExplicitGC) cannot run the proof, so the test is
+    // skipped there rather than failing on something other than the behaviour under test.
     @SuppressWarnings("PMD.DoNotCallGarbageCollectionExplicitly")
     private static void collectGarbage() throws InterruptedException {
         final WeakReference<Object> sentinel = new WeakReference<>(new Object());
@@ -149,7 +152,8 @@ class MaintenanceCachedGaugesTest {
             System.gc();
             TimeUnit.MILLISECONDS.sleep(10);
         }
-        assertThat(sentinel.get()).as("a garbage collection ran").isNull();
+        Assumptions.assumeTrue(sentinel.get() == null,
+                "no garbage collection ran: the JVM ignores System.gc()");
     }
 
     @Test
