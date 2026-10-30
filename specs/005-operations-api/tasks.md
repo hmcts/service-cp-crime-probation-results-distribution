@@ -825,7 +825,9 @@ an identically seeded store, and compare the reports ID for ID.
       `ReplayEnqueuer` exists — 004's open T021 gap — so `java -jar app.jar replay` (quickstart
       step 2's comparison, and T043) waits on that wiring; and `doc/API_CONTRACTS.md` §3's status
       line still says resend-leg "waits on slice 004's `application.LegResender`", which T047–T050
-      have since closed.
+      have since closed. **Fixed in gate round 1** (docs-only): the status line now records
+      resend-leg's controller as served over `LegResender`, keeping the replay
+      `ReplayEnqueuer`/command-line dispatch gap (004's T021) as the one caveat.
 
 **Checkpoint**: all seven user stories are independently functional once 004 lands for real.
 
@@ -857,7 +859,17 @@ an identically seeded store, and compare the reports ID for ID.
       `strongReference(true)` — GREEN, with `BodyRetentionRecoveryIT` and `DefaultPartitionGaugeIT`
       → 10 tests, 0 failed. Final full build on that commit: `./gradlew build
       -Dtest.noFailFast=true` → BUILD SUCCESSFUL, 1186 tests, 0 failed, Checkstyle and PMD clean,
-      `jacocoTestCoverageVerification` green at LINE 0.9448 / BRANCH 0.8878 (gate 0.88 / 0.85).
+      `jacocoTestCoverageVerification` green (gate 0.88 / 0.85).
+      **Coverage re-measured (gate round 1)**: the LINE 0.9448 / BRANCH 0.8878 first quoted here
+      were read from a stale `jacocoTestReport.xml` (2026-10-29, the `3cb1b91` run above, which
+      predates this range; `build` never runs `jacocoTestReport`) and are withdrawn. Re-run in
+      CI's order on `7e3fb23`: `./gradlew jacocoTestReport check -Dtest.noFailFast=true` → BUILD
+      SUCCESSFUL, 1188 tests, 0 failed, a fresh report (2026-10-30 10:42). Its whole-report
+      totals are LINE 0.9465 / BRANCH 0.8878; over the gate's own scope (`Application` and
+      `config/**` excluded, as `jacocoTestCoverageVerification` counts) LINE 0.9786 (3478/3554) /
+      BRANCH 0.9142 (1108/1212). Two earlier attempts at the same run failed only on the Service
+      Bus emulator's `50002` throttling (`DatabaseOutageIT`, then `DlqResubmissionReplayIT`), the
+      environment flakiness recorded above.
 - [ ] T043 Run every `quickstart.md` step end to end. The replay steps need only the
       `ReplayEnqueuer` adapter (004); the resend-leg steps need `LegResender` fully implemented
 - [X] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
