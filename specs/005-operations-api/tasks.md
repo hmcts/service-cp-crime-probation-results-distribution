@@ -756,15 +756,42 @@ for ID.
 **Independent Test**: run the same mixed list through the runner and through the API, each against
 an identically seeded store, and compare the reports ID for ID.
 
-### Tests for User Story 7 `[BLOCKED-ON-004]`
+### Tests for User Story 7
 
-- [ ] T038 [P] [US7] `OperationsRunnerParityIT`: the design's mixed list through
+- [X] T038 [P] [US7] `OperationsRunnerParityIT`: the design's mixed list through
       `cli/ResendLegRunner` (004) and through `POST /operations/resend-leg` (005), each against an
       identically seeded store, give the same whole-call refusal or the same outcome/refusal code
       per ID (FR-005-005); a replay refused through the API is refused with the same code through
       the runner in the same state — needs **both** 004's `cli` runners (beyond today's dispatcher
-      skeleton) and 005's controllers implemented — `[BLOCKED-ON-004]` —
+      skeleton) and 005's controllers implemented —
       `src/test/java/.../api/OperationsRunnerParityIT.java`
+      Unblocked: 004's `cli/ResendLegRunner` and `cli/ReplayRunner` are real (argument checks,
+      the call into `LegResender`/`ReplayAction`, bounded per-ID and refusal lines), not skeletons.
+      Set-up: a `@WebMvcTest` slice over the production `ResendLegController`, `ReplayController`
+      and `ResendLegExecutor`, with a real `LegResender` built by 004's `ResendTestSupport` (its
+      pause read switchable by the test) and a real `ReplayAction` over the JDBC processed log;
+      each runner is built over the same bean. Replay has no production `ReplayEnqueuer` wired in
+      Spring yet, so a recording double stands in for the broker — every replay refusal is decided
+      before the enqueue. The mixed list (two eligible `FAILED`, one `SENT` without the override,
+      one under a live request claim, one unknown) is seeded twice, and the runner's own
+      `resend-leg id` lines are compared position for position with 004's `resend-leg report`
+      line for the run the API's `202` names: `SENT, SENT, not-eligible, request-claimed,
+      unknown-request` through both, two sends per door. Whole-call parity: `intake-paused`,
+      `too-many-request-ids` (101 ids) and `argument-too-long` (a 201-character operator), nothing
+      run. Replay parity: `unknown-request`, `not-eligible`, `resend-in-progress`, and `no-op` /
+      `enqueued` (each under a fresh identity) through both. No production seam was needed.
+      **No red run**: `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsRunnerParityIT"
+      -Dtest.noFailFast=true` → `9 tests completed, 0 failed` on its first run — both doors already
+      call the same capability, so there is no gap to close and a red was not manufactured. To show
+      the assertions bite, a throwaway mutation (`ResendLegRunner` always passing the forced
+      override; `OperationsResponseMapper` rendering replay's `not-eligible` as
+      `resend-in-progress`; reverted, never committed) gave `9 tests completed, 2 failed` — the
+      mixed-list case and the replay `not-eligible` case.
+      **Gap kept open (004's, not this slice's)**: `replay` is not yet dispatched by the packaged
+      command line (`config/OperatorCommandLine` handles `resend-leg` but not `replay`) and no
+      production `ReplayEnqueuer` adapter exists, as 004's T021 records; this test pins the runner
+      class against the API, not `java -jar app.jar replay`, which waits on that wiring.
 
 ### Implementation for User Story 7
 
