@@ -48,6 +48,8 @@ public class OperationsConfiguration {
 
     /** The bean name {@code cp-audit-filter-springboot} gives its audit transport's template. */
     private static final String AUDIT_JMS_TEMPLATE = "auditJmsTemplate";
+    /** The value every switch this configuration is conditional on takes when it is on. */
+    private static final String SWITCH_ON = "true";
 
     /**
      * The operations API's audit publisher. Whether a call is audited is decided by the audit
@@ -122,7 +124,7 @@ public class OperationsConfiguration {
      */
     /* default */
     @Bean
-    @ConditionalOnProperty(name = "distribution.consumer.enabled", havingValue = "true")
+    @ConditionalOnProperty(name = "distribution.consumer.enabled", havingValue = SWITCH_ON)
     ReplayAction replayAction(final ProcessedRequestRepository store, final ReplayEnqueuer enqueuer) {
         return new ReplayAction(store, enqueuer);
     }
@@ -171,7 +173,7 @@ public class OperationsConfiguration {
      */
     /* default */
     @Bean
-    @ConditionalOnProperty(name = "distribution.consumer.enabled", havingValue = "true")
+    @ConditionalOnProperty(name = "distribution.consumer.enabled", havingValue = SWITCH_ON)
     LegResender legResender(final IntakePauseGate pauseGate, final ProcessedRequestRepository store,
                             final DistributionRunner runner, final MetricRegistry metrics,
                             final DistributionProperties properties) {
@@ -234,6 +236,14 @@ public class OperationsConfiguration {
      * registered as an active servlet filter (see
      * {@link #estateAuditFilterRegistration(AuditFilter)}).
      *
+     * <p>Gated on the same two switches the library's own {@code auditFilter} method is: its
+     * auto-configuration class on {@code cp.audit.enabled} (on when unset) and the method on {@code
+     * audit.http.enabled=true}. Never on {@code @ConditionalOnBean} of the library's services: a
+     * user configuration's bean conditions are evaluated before any auto-configuration has
+     * registered its beans, so such a condition never matched, this bean was never defined, and the
+     * library built and registered its own filter, which published two more events per call, the
+     * resend-leg one carrying the request body with the caller's operator and reason (005 T052).
+     *
      * @param auditService                  the library's own publish mechanism (unused directly;
      *                                       present only to construct the instance this bean must be)
      * @param auditPayloadGenerationService the library's own payload builder
@@ -242,7 +252,8 @@ public class OperationsConfiguration {
      */
     /* default */
     @Bean
-    @ConditionalOnBean({AuditService.class, AuditPayloadGenerationService.class, PathParameterService.class})
+    @ConditionalOnProperty(name = "cp.audit.enabled", havingValue = SWITCH_ON, matchIfMissing = true)
+    @ConditionalOnProperty(name = "audit.http.enabled", havingValue = SWITCH_ON)
     AuditFilter estateAuditFilter(final AuditService auditService,
                                   final AuditPayloadGenerationService auditPayloadGenerationService,
                                   final PathParameterService pathParameterService) {
@@ -260,7 +271,8 @@ public class OperationsConfiguration {
      */
     /* default */
     @Bean
-    @ConditionalOnBean(AuditFilter.class)
+    @ConditionalOnProperty(name = "cp.audit.enabled", havingValue = SWITCH_ON, matchIfMissing = true)
+    @ConditionalOnProperty(name = "audit.http.enabled", havingValue = SWITCH_ON)
     FilterRegistrationBean<AuditFilter> estateAuditFilterRegistration(final AuditFilter estateAuditFilter) {
         final FilterRegistrationBean<AuditFilter> registration = new FilterRegistrationBean<>(estateAuditFilter);
         registration.setEnabled(false);

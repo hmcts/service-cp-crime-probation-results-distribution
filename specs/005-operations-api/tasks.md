@@ -393,7 +393,7 @@ broker (Testcontainers) — so it can fail for the reason the defect occurs.
     green attempt defaulted the switch on when unset (as the library does) and failed the
     `ApplicationContextRunner` wiring suites (`ReplayWiringIT`, `ResendLegExecutionIT`), which set
     no property and carry no audit auto-configuration; hence the off default.
-- [ ] T052 [US4] Exactly two audit events per call, carrying bounded fields only (FR-005-025,
+- [X] T052 [US4] Exactly two audit events per call, carrying bounded fields only (FR-005-025,
       FR-005-026; constitution Principle VII; row A3-60; no-PII gate). With the transport on, each
       call publishes four events: `cp-audit-filter-springboot`'s own filter still runs although
       `OperationsConfiguration` supplies an `AuditFilter` bean and a disabled
@@ -407,6 +407,38 @@ broker (Testcontainers) — so it can fail for the reason the defect occurs.
       the chain by the mechanism it honours; if it cannot be kept out, record that and stop for a
       decision rather than working around it — `config/OperationsConfiguration.java`,
       `src/test/java/.../api/`
+  - **Done** — how the library registers its filter, read from `cp-audit-filter-springboot`
+    1.0.5's bytecode (`javap` over `ArtemisAuditAutoConfiguration`, its only
+    `AutoConfiguration.imports` entry): the class is `@ConditionalOnProperty(prefix = "cp.audit",
+    name = "enabled", havingValue = "true", matchIfMissing = true)`; its `auditFilter` `@Bean` is
+    `@ConditionalOnProperty(name = "audit.http.enabled", havingValue = "true")` and
+    `@ConditionalOnMissingBean(AuditFilter.class)`; no `FilterRegistrationBean` of its own, so
+    Spring Boot registers the raw `Filter` bean (`@Order(Integer.MIN_VALUE + 50)` on `AuditFilter`)
+    itself. Its `AuditService.postMessageToArtemis` sends through
+    `JmsTemplate.convertAndSend(Destination, Object, MessagePostProcessor)` to `new
+    ActiveMQTopic("jms.topic.auditing.event")` — the overload `OperationsAuditIT`'s recording
+    template never overrode, so that test's two library events failed against its mock connection
+    factory and were swallowed by the library, which is why it counted two. The mechanism the
+    library honours is its `@ConditionalOnMissingBean(AuditFilter.class)`, and T015's design used
+    it; the defect was the gating: `estateAuditFilter` was `@ConditionalOnBean({AuditService,
+    AuditPayloadGenerationService, PathParameterService})` and its registration
+    `@ConditionalOnBean(AuditFilter.class)`, and a user configuration's bean conditions are
+    evaluated before any auto-configuration registers its beans, so neither ever matched and the
+    library's own filter was built and auto-registered. RED — two new cases in
+    `OperationsAuditTransportIT`'s broker-reachable class, a subscriber on the real broker's audit
+    topic, soft assertions: `./gradlew test --tests
+    "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditTransportIT" --tests
+    "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditIT" -Dtest.noFailFast=true` →
+    `9 tests completed, 2 failed`: replay `[audit events on the topic for one replay call] expected:
+    2 but was: 4` and `[every event carries this slice's bounded fields only] Expecting value to be
+    true but was false`; resend-leg the same two plus `[an event carries the caller's operator
+    text] Expecting value to be false but was true` and the same for the reason text (canary values,
+    never quoted in an assertion message), no compile error. Fix: both beans gated on the library's
+    own two switches (`cp.audit.enabled`, on when unset, and `audit.http.enabled=true`, two
+    repeatable `@ConditionalOnProperty`), so the service's `AuditFilter` exists exactly when the
+    library's would and pre-empts it, and its disabled registration keeps it out of the chain. No
+    reflection, no response wrapping. GREEN, same command → `9 tests completed, 0 failed`; every
+    `api.*`, `config.*` and `*ContextTest` suite plus Checkstyle and PMD → `BUILD SUCCESSFUL`.
 
 **Checkpoint**: the authorisation/audit filter chain is proven correct in isolation, ready for US1
 and US2's controllers to sit behind it.

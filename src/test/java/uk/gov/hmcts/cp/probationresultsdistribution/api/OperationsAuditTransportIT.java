@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
@@ -62,7 +63,8 @@ import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionCatalog
 import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionMaintenanceRepository;
 
 /**
- * Pins the operations API's audit against the real wiring (FR-005-025 to FR-005-028; 005 T051):
+ * Pins the operations API's audit against the real wiring (FR-005-025 to FR-005-028; 005 T051,
+ * T052):
  * Spring Boot's own JMS/Artemis auto-configuration left in place, the real {@code
  * cp-audit-filter-springboot} auto-configuration, and a real Artemis broker. {@link
  * OperationsAuditIT} replaces the audit transport with a stub, which is why neither the default
@@ -74,7 +76,9 @@ import uk.gov.hmcts.cp.probationresultsdistribution.maintenance.PartitionMainten
  * {@code JmsTemplate} mistaken for the audit transport, the publish would fail and the call be
  * refused, whatever happens to be listening on the Artemis default port of the machine running the
  * suite. The nested classes switch the audit transport on, once against a real broker and once
- * against a closed port.
+ * against a closed port. Against the real broker a subscriber on the audit topic sees every
+ * message published to it, so one call must put exactly this slice's two bounded events there and
+ * nothing from the library's own filter, which would carry the request body.
  *
  * <p>No assertion message here quotes an audit event, a body, or the caller's operator or reason
  * text: counts and boolean checks only.
@@ -193,6 +197,40 @@ class OperationsAuditTransportIT {
             final List<String> events = topic.drain();
             assertThat(events.stream().filter(OperationsAuditTransportIT::isSliceEvent).count())
                     .as("this slice's own audit events on the topic").isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("one replay call puts exactly two events on the topic, both bounded (FR-005-025, FR-005-026)")
+        void replay_transportOn_should_putExactlyTwoBoundedEventsOnTheTopic() throws InterruptedException {
+            final ResponseEntity<String> response = replay(restTemplate, port);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            final List<String> events = topic.drain();
+            assertSoftly(softly -> {
+                softly.assertThat(events.size()).as("audit events on the topic for one replay call")
+                        .isEqualTo(2);
+                softly.assertThat(events.stream().allMatch(OperationsAuditTransportIT::isSliceEvent))
+                        .as("every event carries this slice's bounded fields only").isTrue();
+            });
+        }
+
+        @Test
+        @DisplayName("one resend-leg call puts exactly two events on the topic, with no body, operator or reason")
+        void resendLeg_transportOn_should_putExactlyTwoBoundedEventsWithNoCallerText() throws InterruptedException {
+            final ResponseEntity<String> response = resendLeg(restTemplate, port);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+            final List<String> events = topic.drain();
+            assertSoftly(softly -> {
+                softly.assertThat(events.size()).as("audit events on the topic for one resend-leg call")
+                        .isEqualTo(2);
+                softly.assertThat(events.stream().allMatch(OperationsAuditTransportIT::isSliceEvent))
+                        .as("every event carries this slice's bounded fields only").isTrue();
+                softly.assertThat(events.stream().anyMatch(event -> event.contains(CANARY_OPERATOR)))
+                        .as("an event carries the caller's operator text").isFalse();
+                softly.assertThat(events.stream().anyMatch(event -> event.contains(CANARY_REASON)))
+                        .as("an event carries the caller's reason text").isFalse();
+            });
         }
     }
 

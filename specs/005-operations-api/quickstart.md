@@ -67,7 +67,9 @@ without it resends as `FAILED(payload-changed)`.
        -H "CJSCPPUID: <test-caller-id>" -H "Content-Type: application/json" \
        -d '{"requestIds": ["<a SENT requestId>"], "leg": "HMPPS", "operator": "local-dev", "reason": "deliberate duplicate", "allowTerminalSuccess": true}'
    ```
-   Confirm the audit event and the attempt row both say the override was requested.
+   Confirm the audit event and the attempt row both say the override was requested. With
+   `CP_AUDIT_ENABLED=true`, the call puts exactly two events on `jms.topic.auditing.event`, neither
+   carrying the body, the operator or the reason.
 
 6. **Check the contract test**: `./gradlew test --tests "*OperationsContractTest*"` asserts the
    served routes/reasons/enums against `probation-results-distribution-openapi.yaml` in both
