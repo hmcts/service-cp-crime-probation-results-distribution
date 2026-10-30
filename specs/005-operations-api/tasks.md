@@ -822,8 +822,26 @@ an identically seeded store, and compare the reports ID for ID.
       (SC-005-011) — `src/test/java/.../config/OperationsConfigPropertiesTest.java`
 - [X] T041 [P] Run the full `TelemetryPrivacyTest`/`LogStatementSweepTest` suite across every new
       class this slice adds — zero findings (FR-005-023, FR-005-031, FR-005-032; SC-005-004)
-- [ ] T042 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
+- [X] T042 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
       are unchanged (SC-005-010)
+      Thresholds unchanged: `gradle/test.gradle` still sets `jacocoTestCoverageVerification` to
+      LINE `minimum = 0.88` / BRANCH `minimum = 0.85`, untouched since the scaffold commit (its
+      history touches the thresholds only there). The first full build on the T039 commit failed
+      (`1184 tests completed, 2 failed`) on two suites outside this slice: `DatabaseOutageIT`, the
+      Service Bus emulator answering `50002 namespace ... is being throttled` under the full
+      suite's load (passes alone, `2 tests completed, 0 failed`, and in the final build), and
+      `BodyRetentionRecoveryIT`, `probation_body_default_partition_rows` reading `NaN` — a real
+      003 defect, not a flake: `maintenance/MaintenanceMetrics` registered its three
+      `probation_body_*` gauges over constructor-local `CachedGaugeRead` objects, which Micrometer
+      holds only weakly, so a garbage collection turned each gauge `NaN`, in production too. Fixed
+      test-first: `MaintenanceCachedGaugesTest.gauges_keep_reporting_after_a_garbage_collection`
+      (the three gauges read after a forced collection) — RED `./gradlew test --tests
+      "uk.gov.hmcts.cp.probationresultsdistribution.maintenance.MaintenanceCachedGaugesTest"` →
+      `7 tests completed, 1 failed` (`expected: 1.0 but was: NaN`); each gauge now built with
+      `strongReference(true)` — GREEN, with `BodyRetentionRecoveryIT` and `DefaultPartitionGaugeIT`
+      → 10 tests, 0 failed. Final full build on that commit: `./gradlew build
+      -Dtest.noFailFast=true` → BUILD SUCCESSFUL, 1186 tests, 0 failed, Checkstyle and PMD clean,
+      `jacocoTestCoverageVerification` green at LINE 0.9448 / BRANCH 0.8878 (gate 0.88 / 0.85).
 - [ ] T043 Run every `quickstart.md` step end to end. The replay steps need only the
       `ReplayEnqueuer` adapter (004); the resend-leg steps need `LegResender` fully implemented
 - [X] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
