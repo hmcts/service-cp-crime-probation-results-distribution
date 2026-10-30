@@ -342,6 +342,42 @@ new component this finding requires.
       (FR-005-028) — `config/StartupValidationConfig.java` or `config/StartupValidator.java`
       (extend, do not duplicate)
 
+### Audit defects found by the manual quickstart run (2026-10-30, `3320fd8`)
+
+T015/T016 passed because `OperationsAuditIT` replaces the audit transport with a stub, so neither
+Spring Boot's own `JmsTemplate` nor the estate library's own filter ever met a real broker. The
+quickstart run against a real Artemis showed both defects below. Each test runs against the
+**real** wiring — Spring Boot's JMS/Artemis auto-configuration left in place and a real Artemis
+broker (Testcontainers) — so it can fail for the reason the defect occurs.
+
+- [ ] T051 [US4] Audit transport off must mean no audit, not a refused API (FR-005-028). With
+      `cp.audit.enabled=false` (the local and compose default), every admitted call answers
+      `503 audit-unavailable` and nothing runs: `OperationsConfiguration` takes
+      `Optional<JmsTemplate>` expecting it empty when the transport is off, but Spring Boot's JMS
+      auto-configuration registers a default `JmsTemplate`, so `OperationsAuditPublisher` treats the
+      call as audited and its publish fails. Test first, with the auto-configuration left in place:
+      transport off → replay and resend-leg run and answer as normal, no audit event, nothing
+      refused `503`; transport on with the broker reachable → two events as T015 pins; transport on
+      with the broker unreachable → `503 audit-unavailable` before anything is read or changed
+      (FR-005-027 unchanged). Fix by deciding "audited" from the audit switch itself (or a
+      dedicated, explicitly named audit template), never from the mere presence of some
+      `JmsTemplate` — `config/OperationsConfiguration.java`, `api/OperationsAuditPublisher.java`,
+      `src/test/java/.../api/`
+- [ ] T052 [US4] Exactly two audit events per call, carrying bounded fields only (FR-005-025,
+      FR-005-026; constitution Principle VII; row A3-60; no-PII gate). With the transport on, each
+      call publishes four events: `cp-audit-filter-springboot`'s own filter still runs although
+      `OperationsConfiguration` supplies an `AuditFilter` bean and a disabled
+      `FilterRegistrationBean` to keep it out of the chain, and the library's resend-leg event
+      carries the request body, including the caller's `operator` and `reason` text. Test first
+      against a real Artemis broker, consuming the audit topic: one replay and one resend-leg call
+      each yield exactly two events (before and after); no event carries a request or response
+      body, the `operator` or `reason` text (use canary values and assert their absence from every
+      message on the topic), a hearing payload or a stored body. Find how the library actually
+      registers its filter (read its auto-configuration, not its documentation) and keep it out of
+      the chain by the mechanism it honours; if it cannot be kept out, record that and stop for a
+      decision rather than working around it — `config/OperationsConfiguration.java`,
+      `src/test/java/.../api/`
+
 **Checkpoint**: the authorisation/audit filter chain is proven correct in isolation, ready for US1
 and US2's controllers to sit behind it.
 
