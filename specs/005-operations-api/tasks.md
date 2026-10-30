@@ -393,6 +393,25 @@ broker (Testcontainers) — so it can fail for the reason the defect occurs.
     green attempt defaulted the switch on when unset (as the library does) and failed the
     `ApplicationContextRunner` wiring suites (`ReplayWiringIT`, `ResendLegExecutionIT`), which set
     no property and carry no audit auto-configuration; hence the off default.
+  - **Gate round 1** — the off-when-unset default split the switch: the library's
+    auto-configuration and `estateAuditFilter` read an unset `cp.audit.enabled` as on, the publisher
+    as off, so such a context built the library's transport, pre-empted its filter and served every
+    call unaudited. Aligned: unset now reads as on in the publisher (audited through the library's
+    `auditJmsTemplate` whenever its auto-configuration built one; a context with no audit
+    auto-configuration, as in the `ApplicationContextRunner` wiring suites, has none and stays
+    unaudited) and in the start-up WARN check. `false` and `true` are unchanged. RED —
+    `config/OperationsAuditSwitchUnsetTest` (new; `ApplicationContextRunner` with the library's
+    real `ArtemisAuditAutoConfiguration`): `./gradlew test --tests
+    "uk.gov.hmcts.cp.probationresultsdistribution.config.OperationsAuditSwitchUnsetTest"` →
+    `5 tests completed, 1 failed`: switch unset with the library's template present, `Wanted but not
+    invoked: jmsTemplate.convertAndSend("jms.topic.auditing.event", <any string>)`; and
+    `OperationsConfigDefaultsTest` "no WARN when the transport switch is unset" → `5 tests completed,
+    1 failed` (`Expecting no elements of:` the WARN); no compile error. GREEN, both → `0 failed`;
+    every `api.*`, `config.*` and `*ContextTest` suite plus `ResendLegExecutionIT` → `BUILD
+    SUCCESSFUL`. `OperationsAuditTransportIT` also gained a transport-on, `audit.http.enabled=false`
+    case (no `AuditFilter` bean of either kind; exactly this slice's two bounded events) and a
+    positive check that the only `AuditFilter` with the HTTP filter on is the disabled
+    `estateAuditFilter`, backing the quiet-window count.
 - [X] T052 [US4] Exactly two audit events per call, carrying bounded fields only (FR-005-025,
       FR-005-026; constitution Principle VII; row A3-60; no-PII gate). With the transport on, each
       call publishes four events: `cp-audit-filter-springboot`'s own filter still runs although
