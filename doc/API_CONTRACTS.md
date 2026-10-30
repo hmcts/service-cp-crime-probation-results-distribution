@@ -306,7 +306,9 @@ changes. Whether a call is audited follows the audit transport's own switch, `cp
 (`CP_AUDIT_ENABLED`, off by default): with it on, the events go through the library's own
 `auditJmsTemplate`; with it off, every call runs unaudited and nothing is refused for the audit,
 and the pod says so once at start-up (FR-005-028) — the default `JmsTemplate` Spring Boot's JMS
-auto-configuration registers in that case is never taken for the audit transport. The library's
+auto-configuration registers in that case is never taken for the audit transport. A context that
+leaves the switch unset (`application.yaml` always sets it) reads it as the library does, on: the
+call is audited whenever the library built its template. The library's
 own HTTP audit filter, which would publish a further two events per call, the resend-leg one
 carrying the request body with the caller's `operator` and `reason`, is kept out of the chain: the
 service defines the one `AuditFilter` bean the library's `@ConditionalOnMissingBean` yields to,

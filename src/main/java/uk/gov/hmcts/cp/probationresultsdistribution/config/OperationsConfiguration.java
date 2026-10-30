@@ -36,6 +36,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
  * on, {@link OperationsAuditPublisher} publishes through {@code cp-audit-filter-springboot}'s own
  * {@code auditJmsTemplate}; with it off (the scaffold's default), every call is served unaudited
  * (FR-005-028), whatever other {@link JmsTemplate} Spring Boot's JMS auto-configuration registers.
+ * Left unset, it is read as the library reads it, on (see {@link #operationsAuditPublisher}).
  *
  * <p>The {@link ObjectMapper} is this bean's own, not an autowired one: Spring Boot 4's
  * {@code JacksonAutoConfiguration} registers a Jackson 3 {@code tools.jackson.databind.json.JsonMapper}
@@ -53,26 +54,42 @@ public class OperationsConfiguration {
 
     /**
      * The operations API's audit publisher. Whether a call is audited is decided by the audit
-     * transport's own switch, {@code cp.audit.enabled} (off when unset, as {@code application.yaml}
-     * defaults it), never by whether some {@link JmsTemplate} exists:
-     * with the transport off, Spring Boot's JMS auto-configuration registers a default template of
-     * its own, which is not the audit transport and whose publish fails against no broker
-     * (FR-005-028; 005 T051). With the switch on, the template is the library's own, taken by its
-     * bean name, {@code auditJmsTemplate}.
+     * transport's own switch, {@code cp.audit.enabled}, never by whether some {@link JmsTemplate}
+     * exists: with the transport off, Spring Boot's JMS auto-configuration registers a default
+     * template of its own, which is not the audit transport and whose publish fails against no
+     * broker (FR-005-028; 005 T051). The template is always the library's own, taken by its bean
+     * name, {@code auditJmsTemplate}.
      *
-     * @param auditTransportEnabled {@code cp.audit.enabled}
-     * @param auditJmsTemplate      the library's {@code auditJmsTemplate}, present when the switch is on
+     * <ul>
+     *   <li>{@code false}: every call is served unaudited.</li>
+     *   <li>{@code true}: audited; a missing {@code auditJmsTemplate} fails the context.</li>
+     *   <li>unset: read as the library reads it, on ({@code matchIfMissing = true} on its
+     *       auto-configuration and on {@link #estateAuditFilter}), so audited through the library's
+     *       template whenever its auto-configuration built one; a context with no audit
+     *       auto-configuration at all (the {@code ApplicationContextRunner} wiring suites) has none
+     *       and is served unaudited. Reading unset as off would leave the library's transport built
+     *       and its filter pre-empted while every call went unaudited. {@code application.yaml}
+     *       always sets the switch, so a deployed pod never meets this case.</li>
+     * </ul>
+     *
+     * @param auditTransportEnabled {@code cp.audit.enabled}, {@code null} when unset
+     * @param auditJmsTemplate      the library's {@code auditJmsTemplate}, when its auto-configuration built one
      * @param metrics               the metric registry
      * @return the publisher, a no-op when the transport is off
      */
     /* default */ @Bean
     OperationsAuditPublisher operationsAuditPublisher(
-            @Value("${cp.audit.enabled:false}") final boolean auditTransportEnabled,
+            @Value("${cp.audit.enabled:#{null}}") final Boolean auditTransportEnabled,
             @Qualifier(AUDIT_JMS_TEMPLATE) final ObjectProvider<JmsTemplate> auditJmsTemplate,
             final MetricRegistry metrics) {
-        final Optional<JmsTemplate> transport = auditTransportEnabled
-                ? Optional.of(auditJmsTemplate.getObject())
-                : Optional.empty();
+        final Optional<JmsTemplate> transport;
+        if (auditTransportEnabled == null) {
+            transport = Optional.ofNullable(auditJmsTemplate.getIfAvailable());
+        } else if (auditTransportEnabled) {
+            transport = Optional.of(auditJmsTemplate.getObject());
+        } else {
+            transport = Optional.empty();
+        }
         return new OperationsAuditPublisher(transport, new ObjectMapper(), metrics);
     }
 
