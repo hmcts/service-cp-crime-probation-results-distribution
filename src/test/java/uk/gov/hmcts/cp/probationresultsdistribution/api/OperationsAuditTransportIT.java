@@ -38,6 +38,8 @@ import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -51,6 +53,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.activemq.ArtemisContainer;
 import org.testcontainers.utility.DockerImageName;
+import uk.gov.hmcts.cp.filter.audit.AuditFilter;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayOutcome;
@@ -164,6 +167,8 @@ class OperationsAuditTransportIT {
         private ReplayAction replayAction;
         @Autowired
         private LegResender legResender;
+        @Autowired
+        private ApplicationContext context;
 
         private final TopicRecorder topic = new TopicRecorder();
 
@@ -217,6 +222,84 @@ class OperationsAuditTransportIT {
         @Test
         @DisplayName("one resend-leg call puts exactly two events on the topic, with no body, operator or reason")
         void resendLeg_transportOn_should_putExactlyTwoBoundedEventsWithNoCallerText() throws InterruptedException {
+            final ResponseEntity<String> response = resendLeg(restTemplate, port);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+            final List<String> events = topic.drain();
+            assertSoftly(softly -> {
+                softly.assertThat(events.size()).as("audit events on the topic for one resend-leg call")
+                        .isEqualTo(2);
+                softly.assertThat(events.stream().allMatch(OperationsAuditTransportIT::isSliceEvent))
+                        .as("every event carries this slice's bounded fields only").isTrue();
+                softly.assertThat(events.stream().anyMatch(event -> event.contains(CANARY_OPERATOR)))
+                        .as("an event carries the caller's operator text").isFalse();
+                softly.assertThat(events.stream().anyMatch(event -> event.contains(CANARY_REASON)))
+                        .as("an event carries the caller's reason text").isFalse();
+            });
+        }
+
+        @Test
+        @DisplayName("the library's own filter is pre-empted: the only AuditFilter is this service's, never registered")
+        void auditFilter_transportOn_should_beOnlyThePreEmptingBeanAndDisabled() {
+            assertThat(context.getBeansOfType(AuditFilter.class)).containsOnlyKeys("estateAuditFilter");
+            assertThat(context.getBean("estateAuditFilterRegistration", FilterRegistrationBean.class)
+                    .isEnabled()).isFalse();
+        }
+    }
+
+    /**
+     * Transport on, broker reachable, HTTP audit filter switched off: neither the library's filter
+     * nor this service's pre-empting one is built, and this slice still puts its two bounded events
+     * on the topic (FR-005-025), since whether a call is audited follows the transport's switch.
+     */
+    @Nested
+    @DisplayName("transport on, broker reachable, audit.http.enabled=false")
+    class TransportOnHttpAuditFilterOff {
+
+        @LocalServerPort
+        private int port;
+        @Autowired
+        private TestRestTemplate restTemplate;
+        @Autowired
+        private ReplayAction replayAction;
+        @Autowired
+        private LegResender legResender;
+        @Autowired
+        private ApplicationContext context;
+
+        private final TopicRecorder topic = new TopicRecorder();
+
+        @DynamicPropertySource
+        static void auditTransportAtRealBrokerHttpFilterOff(final DynamicPropertyRegistry registry) {
+            ARTEMIS.start();
+            registry.add("audit.http.enabled", () -> "false");
+            registry.add("cp.audit.enabled", () -> "true");
+            registry.add("cp.audit.hosts[0]", ARTEMIS::getHost);
+            registry.add("cp.audit.port", () -> ARTEMIS.getMappedPort(ArtemisPorts.CORE));
+            registry.add("cp.audit.user", ARTEMIS::getUser);
+            registry.add("cp.audit.password", ARTEMIS::getPassword);
+        }
+
+        @BeforeEach
+        void subscribe() throws JMSException {
+            stubActions(replayAction, legResender);
+            topic.open();
+        }
+
+        @AfterEach
+        void unsubscribe() throws JMSException {
+            topic.close();
+        }
+
+        @Test
+        @DisplayName("no AuditFilter bean of either kind exists")
+        void auditFilter_httpAuditFilterOff_should_beAbsent() {
+            assertThat(context.getBeansOfType(AuditFilter.class)).isEmpty();
+        }
+
+        @Test
+        @DisplayName("one resend-leg call puts exactly this slice's two bounded events on the topic, with no caller text")
+        void resendLeg_httpAuditFilterOff_should_putExactlyTheSlicesTwoEvents() throws InterruptedException {
             final ResponseEntity<String> response = resendLeg(restTemplate, port);
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
@@ -378,7 +461,11 @@ class OperationsAuditTransportIT {
 
         /**
          * Every message published to the topic since {@link #open}: waits for the first, then until
-         * the topic has been quiet for {@link #QUIET_WAIT_SECONDS}.
+         * the topic has been quiet for {@link #QUIET_WAIT_SECONDS}. The quiet window is seconds,
+         * against a local broker's millisecond delivery, and the count it yields is backed by a
+         * positive check that no filter of the library's own exists to publish a late third event
+         * ({@code auditFilter_transportOn_should_beOnlyThePreEmptingBeanAndDisabled},
+         * {@code auditFilter_httpAuditFilterOff_should_beAbsent}).
          */
         /* default */ List<String> drain() throws InterruptedException {
             final List<String> messages = new ArrayList<>();
