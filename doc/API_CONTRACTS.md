@@ -305,7 +305,8 @@ default, so a request-event publish failure refuses the call `503 audit-unavaila
 changes. Whether a call is audited follows the audit transport's own switch, `cp.audit.enabled`
 (`CP_AUDIT_ENABLED`, off by default): with it on, the events go through the library's own
 `auditJmsTemplate`; with it off, every call runs unaudited and nothing is refused for the audit,
-and the pod says so once at start-up (FR-005-028) — the default `JmsTemplate` Spring Boot's JMS
+and a pod whose HTTP audit filter (`audit.http.enabled`) is on with the transport off says so once
+at WARN at start-up, naming both settings (FR-005-028); with both off it logs nothing — the default `JmsTemplate` Spring Boot's JMS
 auto-configuration registers in that case is never taken for the audit transport. A context that
 leaves the switch unset (`application.yaml` always sets it) reads it as the library does, on: the
 call is audited whenever the library built its template. The library's

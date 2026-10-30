@@ -386,7 +386,8 @@ broker (Testcontainers) — so it can fail for the reason the defect occurs.
     SERVICE_UNAVAILABLE` and resend-leg `expected: 202 ACCEPTED but was: 503 SERVICE_UNAVAILABLE`
     (Spring Boot's default `JmsTemplate` taken for the audit transport), no compile error; the three
     transport-on cases and both `OperationsAuditIT` cases passed. Fix: `OperationsConfiguration`
-    decides "audited" from `cp.audit.enabled` (off when unset, as `application.yaml` defaults it)
+    decides "audited" from `cp.audit.enabled` (at first off when unset; superseded by gate round 1
+    below, which reads an unset switch as on, as the library does)
     and, when on, takes the library's template by its bean name, `auditJmsTemplate`;
     `OperationsAuditPublisher` is unchanged. GREEN, same command → `7 tests completed, 0 failed`;
     every `api.*`, `config.*` and `*ContextTest` suite → `BUILD SUCCESSFUL` (248 tests). A first
