@@ -1546,8 +1546,28 @@ fixed test-first in its own commit:
       5/5 alongside. The slice's own new value sets (`WholeRunRefusal`, `RunnerOutcome`, and the
       reused `ReplayRoute`/`ResendRefusal`) are never stored, so they have no SQL counterpart to
       drift from.
-- [ ] T074 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
+- [X] T074 Run `./gradlew build` (PMD, Checkstyle, JaCoCo gate) and confirm the coverage thresholds
       are unchanged (SC-004-013)
+      Thresholds unchanged: `gradle/test.gradle` still sets `jacocoTestCoverageVerification` to
+      LINE `minimum = 0.88` / BRANCH `minimum = 0.85`, untouched since the scaffold commit `d1efb19`
+      (the file's only later change, `a74d5bb`, adds the `bootJar` dependency of `test`), and
+      `062fbc2..HEAD` touches neither `gradle/` nor `build.gradle`. The first full build on
+      `023a1c9` failed (`1190 tests completed, 1 failed`) on `DatabaseOutageIT` alone, the Service
+      Bus emulator answering `50002 namespace sbemulatorns is being throttled` to the harness's
+      dead-letter peek; it passed alone (2/2) and in the next full build (BUILD SUCCESSFUL), then
+      failed the same way in the following CI-order run. Two in three is more than noise to carry,
+      so the harness now waits out the throttling: `EmulatorThrottleRetryTest` red first (`Expecting
+      AtomicInteger(1) to have value: 3`, and the unretried 50002 thrown), then green 3/3 with
+      `EndToEndTestSupport`'s dead-letter page peek retrying a throttled answer after the emulator's
+      10 s wait, three attempts in all, any other broker failure rethrown at once (test harness
+      only; no production change). Final full build on that commit: `./gradlew build
+      -Dtest.noFailFast=true` → BUILD SUCCESSFUL, 1194 tests, 0 failed, Checkstyle and PMD clean,
+      `jacocoTestCoverageVerification` green; one 50002 answer on the dead-letter sub-queue appears
+      in its log and was absorbed. Coverage from a fresh CI-order run on the same commit:
+      `./gradlew jacocoTestReport check -Dtest.noFailFast=true` → BUILD SUCCESSFUL, report written
+      2026-10-30 11:50 UTC, after the commit (11:34 UTC). Whole-report totals LINE 0.9465
+      (3857/4075) / BRANCH 0.8863 (1216/1372); over the gate's own scope (`Application` and
+      `config/**` excluded) LINE 0.9786 (3478/3554) / BRANCH 0.9125 (1106/1212) — gate 0.88 / 0.85.
 - [ ] T075 Run every `quickstart.md` step end to end in one sitting against a fresh local stack
 - [ ] T076 [P] Re-read `research.md`'s confirmed decisions against any subsequent owning-team
       (H31) changes; if any decision is overturned, apply the isolated change
