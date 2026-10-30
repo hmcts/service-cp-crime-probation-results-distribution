@@ -110,6 +110,14 @@ dependencies {
   // freezing a container makes an outage whose *timing* the suite cannot control. Version from
   // testcontainers-bom.
   testImplementation 'org.testcontainers:testcontainers-toxiproxy'
+  // A real Artemis broker for the operations API's audit suites (005 T051, T052): the audit
+  // transport's defects only show against Spring Boot's own JMS/Artemis auto-configuration and the
+  // estate library's own filter meeting a real broker, which a stubbed JmsTemplate hides. Version
+  // from testcontainers-bom; the image tag is pinned in the suite.
+  testImplementation 'org.testcontainers:testcontainers-activemq'
+  // The suites' own subscriber on the audit topic. The library brings this client on the runtime
+  // classpath only; version from the Spring Boot BOM, the same one the library resolves.
+  testImplementation 'org.apache.artemis:artemis-jakarta-client'
   // The Service Bus emulator's SQL Server companion is an MSSQLServerContainer, and its readiness
   // check opens a JDBC connection — without the driver the companion never reports started. Version
   // from the Spring Boot BOM.

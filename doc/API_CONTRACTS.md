@@ -302,7 +302,11 @@ reached; `500 unexpected` for anything else. Every `/operations/**` call is auth
 audited twice — before and after — by this service's own publisher, which calls
 `cp-audit-filter-springboot`'s JMS transport directly rather than its own (failure-swallowing)
 default, so a request-event publish failure refuses the call `503 audit-unavailable` before anything
-changes.
+changes. Whether a call is audited follows the audit transport's own switch, `cp.audit.enabled`
+(`CP_AUDIT_ENABLED`, off by default): with it on, the events go through the library's own
+`auditJmsTemplate`; with it off, every call runs unaudited and nothing is refused for the audit,
+and the pod says so once at start-up (FR-005-028) — the default `JmsTemplate` Spring Boot's JMS
+auto-configuration registers in that case is never taken for the audit transport.
 
 The other operator actions — list requests, pause and resume intake, submit-hearing, purge-queue,
 the optional flag check and the recommended `dlq-completed` listing — run as command-line runners.

@@ -350,7 +350,7 @@ quickstart run against a real Artemis showed both defects below. Each test runs 
 **real** wiring — Spring Boot's JMS/Artemis auto-configuration left in place and a real Artemis
 broker (Testcontainers) — so it can fail for the reason the defect occurs.
 
-- [ ] T051 [US4] Audit transport off must mean no audit, not a refused API (FR-005-028). With
+- [X] T051 [US4] Audit transport off must mean no audit, not a refused API (FR-005-028). With
       `cp.audit.enabled=false` (the local and compose default), every admitted call answers
       `503 audit-unavailable` and nothing runs: `OperationsConfiguration` takes
       `Optional<JmsTemplate>` expecting it empty when the transport is off, but Spring Boot's JMS
@@ -363,6 +363,36 @@ broker (Testcontainers) — so it can fail for the reason the defect occurs.
       dedicated, explicitly named audit template), never from the mere presence of some
       `JmsTemplate` — `config/OperationsConfiguration.java`, `api/OperationsAuditPublisher.java`,
       `src/test/java/.../api/`
+  - **Done** — `api/OperationsAuditTransportIT` (new), against the real wiring: Spring Boot's
+    JMS/Artemis auto-configuration in place, the real `cp-audit-filter-springboot`
+    auto-configuration, a real broker (`testcontainers-activemq`, image
+    `apache/activemq-artemis:2.37.0`). The enclosing class is transport off (Spring Boot's own
+    `spring.artemis.broker-url` at a closed local port, so the red does not depend on what listens
+    on 61616); nested classes are transport on with the broker reachable (the call answers, this
+    slice's request and response events reach the topic) and unreachable (`503 audit-unavailable`,
+    `ReplayAction`/`LegResender` never reached — FR-005-027, kept). **A second, test-only cause hid
+    the defect from every suite and had to go first**: `OperationsAuditIT.StubAuditTransport` was a
+    `@TestConfiguration`, and `Application`'s explicit `@ComponentScan` replaces
+    `@SpringBootApplication`'s own and so drops Spring Boot's `TypeExcludeFilter`; the stub was
+    scanned into every test context under `api`, its recording `auditJmsTemplate` standing in for
+    the transport everywhere (first run of the new test: transport off `200`/`202`, transport on
+    `0` events and no `503` — all the stub). Restoring the filter on `Application` was tried and
+    reverted: 67 `@WebMvcTest`/serving-context tests rely on the full scan reaching
+    `OperationsConfiguration`. The stub is now a plain class imported by `OperationsAuditIT` alone.
+    RED (stub de-annotated, `OperationsConfiguration` unchanged) — `./gradlew test --tests
+    "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditTransportIT" --tests
+    "uk.gov.hmcts.cp.probationresultsdistribution.api.OperationsAuditIT" -Dtest.noFailFast=true` →
+    `7 tests completed, 2 failed`: transport off, replay `expected: 200 OK but was: 503
+    SERVICE_UNAVAILABLE` and resend-leg `expected: 202 ACCEPTED but was: 503 SERVICE_UNAVAILABLE`
+    (Spring Boot's default `JmsTemplate` taken for the audit transport), no compile error; the three
+    transport-on cases and both `OperationsAuditIT` cases passed. Fix: `OperationsConfiguration`
+    decides "audited" from `cp.audit.enabled` (off when unset, as `application.yaml` defaults it)
+    and, when on, takes the library's template by its bean name, `auditJmsTemplate`;
+    `OperationsAuditPublisher` is unchanged. GREEN, same command → `7 tests completed, 0 failed`;
+    every `api.*`, `config.*` and `*ContextTest` suite → `BUILD SUCCESSFUL` (248 tests). A first
+    green attempt defaulted the switch on when unset (as the library does) and failed the
+    `ApplicationContextRunner` wiring suites (`ReplayWiringIT`, `ResendLegExecutionIT`), which set
+    no property and carry no audit auto-configuration; hence the off default.
 - [ ] T052 [US4] Exactly two audit events per call, carrying bounded fields only (FR-005-025,
       FR-005-026; constitution Principle VII; row A3-60; no-PII gate). With the transport on, each
       call publishes four events: `cp-audit-filter-springboot`'s own filter still runs although

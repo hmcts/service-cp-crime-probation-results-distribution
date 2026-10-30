@@ -2,6 +2,9 @@ package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Optional;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -28,11 +31,11 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
 
 /**
  * Composes the operations API: its controllers, the resend-leg capability and the one thread its
- * accepted runs execute on (FR-005-015), and its audit publishing (FR-005-025 to FR-005-027). {@code JmsTemplate} is
- * {@link Optional} because {@code cp-audit-filter-springboot}'s own auto-configuration only
- * registers it when the audit transport is switched on ({@code cp.audit.enabled=true}); when it is
- * off (the scaffold's default), {@link OperationsAuditPublisher} treats every call as unaudited
- * rather than failing the context refresh (FR-005-028).
+ * accepted runs execute on (FR-005-015), and its audit publishing (FR-005-025 to FR-005-027).
+ * Whether a call is audited follows the audit transport's switch, {@code cp.audit.enabled}: with it
+ * on, {@link OperationsAuditPublisher} publishes through {@code cp-audit-filter-springboot}'s own
+ * {@code auditJmsTemplate}; with it off (the scaffold's default), every call is served unaudited
+ * (FR-005-028), whatever other {@link JmsTemplate} Spring Boot's JMS auto-configuration registers.
  *
  * <p>The {@link ObjectMapper} is this bean's own, not an autowired one: Spring Boot 4's
  * {@code JacksonAutoConfiguration} registers a Jackson 3 {@code tools.jackson.databind.json.JsonMapper}
@@ -43,10 +46,32 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
 @Configuration
 public class OperationsConfiguration {
 
+    /** The bean name {@code cp-audit-filter-springboot} gives its audit transport's template. */
+    private static final String AUDIT_JMS_TEMPLATE = "auditJmsTemplate";
+
+    /**
+     * The operations API's audit publisher. Whether a call is audited is decided by the audit
+     * transport's own switch, {@code cp.audit.enabled} (off when unset, as {@code application.yaml}
+     * defaults it), never by whether some {@link JmsTemplate} exists:
+     * with the transport off, Spring Boot's JMS auto-configuration registers a default template of
+     * its own, which is not the audit transport and whose publish fails against no broker
+     * (FR-005-028; 005 T051). With the switch on, the template is the library's own, taken by its
+     * bean name, {@code auditJmsTemplate}.
+     *
+     * @param auditTransportEnabled {@code cp.audit.enabled}
+     * @param auditJmsTemplate      the library's {@code auditJmsTemplate}, present when the switch is on
+     * @param metrics               the metric registry
+     * @return the publisher, a no-op when the transport is off
+     */
     /* default */ @Bean
-    OperationsAuditPublisher operationsAuditPublisher(final Optional<JmsTemplate> auditJmsTemplate,
-                                                      final MetricRegistry metrics) {
-        return new OperationsAuditPublisher(auditJmsTemplate, new ObjectMapper(), metrics);
+    OperationsAuditPublisher operationsAuditPublisher(
+            @Value("${cp.audit.enabled:false}") final boolean auditTransportEnabled,
+            @Qualifier(AUDIT_JMS_TEMPLATE) final ObjectProvider<JmsTemplate> auditJmsTemplate,
+            final MetricRegistry metrics) {
+        final Optional<JmsTemplate> transport = auditTransportEnabled
+                ? Optional.of(auditJmsTemplate.getObject())
+                : Optional.empty();
+        return new OperationsAuditPublisher(transport, new ObjectMapper(), metrics);
     }
 
     /**

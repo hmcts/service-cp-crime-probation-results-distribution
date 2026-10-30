@@ -12,7 +12,8 @@ end-to-end.
 ./gradlew build    # compile + the full suite + PMD + Checkstyle + the JaCoCo gate
 ./gradlew test     # @WebMvcTest controller tests run with no Docker; OperationsAuthorisationIT and
                     # OperationsAuditIT need the real filters wired, users-groups and the audit
-                    # transport stubbed at their boundaries
+                    # transport stubbed at their boundaries; OperationsAuditTransportIT runs the
+                    # real JMS/Artemis wiring against an Artemis container (Docker)
 ```
 
 ## Try it locally (once 004 is implemented)
@@ -26,7 +27,8 @@ stub answering `Second Line Support` for the test caller:
 version. `CP_AUDIT_ENABLED=true` also needs an Artemis broker the compose stack does not provide
 (for example a throwaway `apache/activemq-artemis` container on `localhost:61616`) and
 `cp.audit.hosts[0]`, `CP_AUDIT_PORT`, `CP_AUDIT_USER` and `CP_AUDIT_PASSWORD` set; without
-`cp.audit.hosts` the service does not start. The users-groups caller read is
+`cp.audit.hosts` the service does not start. With `CP_AUDIT_ENABLED` left off (the default),
+both endpoints run unaudited and answer as normal; the start-up WARN says so. The users-groups caller read is
 `GET /usersgroups-query-api/query/api/rest/usersgroups/users/logged-in-user/permissions` answering
 `{"groups":[{"groupName":"Second Line Support"}],"switchableRoles":[],"permissions":[]}`. A resend
 compares the cached payload's top-level `sharedTime` with the stored one (H17), so a seeded payload

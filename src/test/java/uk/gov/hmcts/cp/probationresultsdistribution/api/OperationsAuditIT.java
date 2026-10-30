@@ -19,7 +19,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -156,8 +155,13 @@ class OperationsAuditIT {
      * built), with a {@link JmsTemplate} that records every send in memory instead of reaching a
      * broker. {@code AuditService} and every other library bean the audit filter needs are still
      * genuinely constructed, since {@code cp.audit.enabled=true} is real.
+     *
+     * <p>Deliberately a plain class, imported by this test alone, and not a {@code
+     * @TestConfiguration}: {@code Application}'s explicit component scan does not carry Spring
+     * Boot's {@code TypeExcludeFilter}, so a {@code @TestConfiguration} here was scanned into every
+     * other test context under this package, where its recorder stood in for the audit transport
+     * and hid the {@link JmsTemplate} Spring Boot registers when the transport is off (005 T051).
      */
-    @TestConfiguration(proxyBeanMethods = false)
     static class StubAuditTransport {
 
         /* default */ @Bean
