@@ -24,8 +24,8 @@ runnable, and US7's remaining `[BLOCKED-ON-004]` tags are that story's own to re
 US1 had — `ReplayAction` with no production `ReplayEnqueuer` wired in Spring, and `replay` not
 dispatched by 004's packaged command line — is closed by 004's T078: `ReplayAction`, and with it
 `ReplayController`, is a bean of the serving context whenever intake is wired, and
-`java -jar app.jar replay` runs `cli/ReplayRunner`. The manual end-to-end run (T023) is now
-unblocked and still to do.
+`java -jar app.jar replay` runs `cli/ReplayRunner`. The manual runs T023 and T029 passed on
+2026-10-30; T043 stays open for the two audit defects that run exposed (see T043).
 Per the lesson already learned once this session (004's own `ReplayRoute`/`ResendRefusalReason`
 duplicating classes that turned out to already exist on this branch): **do not stub, fake or
 pre-define `LegResender` here.** Where a task needs it to compile, write the test against the
@@ -382,13 +382,22 @@ fresh `messageId` with `origin = REPLAY`.
       `ReplayAction.replay(UUID)` via `OperationsRequestMapper`/`OperationsResponseMapper`, wrapped
       by `OperationsAuditPublisher` (request event before the call, response event after) —
       satisfies T019
-- [ ] T023 Run `quickstart.md`'s replay steps manually. **Unblocked by 004's T078**: the
-      production `ServiceBusReplayEnqueuer` is wired, `ReplayAction`/`ReplayController` are beans
-      whenever intake is wired, and the packaged command line dispatches `replay`; the manual run
-      itself is still to do. T019–T022 never needed it (they mock `ReplayAction` at the boundary).
+- [X] T023 Run `quickstart.md`'s replay steps manually. **Run 2026-10-30 at `74182cb`** against
+      the local compose stack, the packaged jar on the host (local profile, `AUTHZ_HTTP_ENABLED=true`,
+      `HTTP_AUDIT_ENABLED=true`, `CP_AUDIT_ENABLED=true` against a throwaway local Artemis broker,
+      users-groups and gateway stubbed at runtime through WireMock's admin API). Step 1: two
+      identically seeded requests (synthetic `EXT_` payload, gateway `500`) each ended
+      `FAILED(leg-exhausted)` after 5 deliveries, attempt 1 `FAILED(gateway-transient)`. Gateway then
+      pointed at `200`. Step 2: `POST /operations/requests/{id}/replay` with `CJSCPPUID` answered
+      `200 {"outcome":"enqueued","messageId":"REPLAY:…"}`; `java -jar … replay --request-id` on the
+      second request exited 0 with `replay done outcome=enqueued messageId=REPLAY:…` — the two agree.
+      Both requests then went `COMPLETED(recovered)`, attempt 1 re-run in place to `SENT`/200 with
+      `note = prev=FAILED/gateway-transient;rerun-by=REPLAY:…`, `audit_note` `route=service`.
+      Step 3: the same call with no `CJSCPPUID` answered `401`. Discrepancies found, recorded under
+      T043 and not fixed here.
 
 **Checkpoint**: replay over HTTP is built and wired (004's T078 supplied the `ReplayEnqueuer`
-adapter); only the manual end-to-end smoke test (T023) remains.
+adapter); the manual end-to-end smoke test (T023) passed on 2026-10-30.
 
 ---
 
@@ -577,10 +586,18 @@ outcomes.
       properties, so the contract's `unknown-field` (FR-005-033) was not reachable for this body
       before; the cap carried on `too-many-request-ids` read from
       `distribution.resend.max-ids-per-run`.
-- [ ] T029 Run `quickstart.md`'s resend-leg steps — runnable now: `LegResender` is a bean of the
-      serving context whenever intake is wired, so `ResendLegController` is registered (T050); the
-      call answers `202` before the run, so read the outcomes from 004's report line or the list
-      runner, not from the answer
+- [X] T029 Run `quickstart.md`'s resend-leg steps — **run 2026-10-30 at `74182cb`**, same setup
+      as T023. Step 4: `POST /operations/resend-leg` for a `FAILED(leg-exhausted)` request answered
+      `202 {"resendRunId":…}` in ~0.1 s; the run report then read `FAILED(payload-changed)` because
+      the seeded payload carried no top-level `sharedTime` (the H17 check, behaving as designed — a
+      seeding gap, not a defect); with `sharedTime` added to the cached payload a second call gave
+      `202`, report `summary={SENT=1}`, attempt 3 `resend` `SENT`/200, request `COMPLETED(recovered)`,
+      and `list-requests --status FAILED` then listed `rows=0`. Step 5: the same call with
+      `allowTerminalSuccess: true` on a `SENT` request answered `202`; attempt 2 `resend` `SENT` with
+      `note = override=force-resend`, the request stayed `COMPLETED(both-legs-terminal)`,
+      `audit_note` gained `FORCED_RESEND`, the outcome line carried `forced=true`, and the slice's
+      bounded audit events (read off `jms.topic.auditing.event`) carried
+      `"allowTerminalSuccess":true` on both the request and response events
 
 **Checkpoint**: resend-leg over HTTP is implementable the moment 004's `LegResender` exists.
 
@@ -874,8 +891,22 @@ an identically seeded store, and compare the reports ID for ID.
       BRANCH 0.9142 (1108/1212). Two earlier attempts at the same run failed only on the Service
       Bus emulator's `50002` throttling (`DatabaseOutageIT`, then `DlqResubmissionReplayIT`), the
       environment flakiness recorded above.
-- [ ] T043 Run every `quickstart.md` step end to end. The replay steps' `ReplayEnqueuer` adapter
-      is now wired (004's T078); the resend-leg steps need `LegResender` fully implemented
+- [ ] T043 Run every `quickstart.md` step end to end. **Run 2026-10-30 at `74182cb`: steps 1–6
+      each behave as written (T023, T029; step 6 `OperationsContractTest` 10/10), but left open for
+      two defects the run exposed, neither fixed here.** (a) With the audit transport off
+      (`CP_AUDIT_ENABLED=false`, docker-compose's own default, and no broker on `localhost:61616`)
+      every admitted operations call answers `503 {"reason":"audit-unavailable"}` and nothing runs:
+      `OperationsConfiguration.operationsAuditPublisher` takes `Optional<JmsTemplate>` by type and
+      receives Spring Boot's auto-configured `JmsTemplate`, not an empty one, so FR-005-028's
+      "transport off is a silent no-op" does not hold at runtime. (b) With the transport on, each
+      admitted call published **four** events, not two: the library's own `auditFilter` (built by
+      `ArtemisAuditAutoConfiguration`, as the start-up failure without `cp.audit.hosts` names) still
+      runs, so `estateAuditFilter`'s `@ConditionalOnBean` pre-emption does not take effect, and its
+      resend-leg request event carries the request body's `operator` and `reason` text, contrary to
+      FR-005-026 and `include-payload-body: false`. `OperationsAuditIT` does not see either, as its
+      stub transport replaces the template. Not verified manually: nothing else; the audit half of
+      step 5 was checked against a throwaway local Artemis broker, which the quickstart does not
+      mention
 - [X] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
       filter chain in T014, including the one case research.md Decision 2 flags as not yet
       re-verified by a running test: a caller sending a conflicting `CPP-ACTION` header has no effect
@@ -953,7 +984,7 @@ code was needed, confirming the ordering already holds.
 ### Incremental Delivery
 
 1. Setup + Foundational + US4 → ready now.
-2. US1 (MVP) → ready now (T019–T022); T023's manual run is unblocked by 004's T078 and still to do.
+2. US1 (MVP) → ready now (T019–T022); T023's manual run passed on 2026-10-30.
 3. The instant 004's `LegResender` lands: US2 → US3 (same endpoint, the override).
 4. US5 and US6 can be finished alongside US1–US3, since their foundational halves need no
    endpoint.

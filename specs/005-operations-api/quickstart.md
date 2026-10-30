@@ -21,6 +21,17 @@ With the local stack running (`docker compose up -d`) and the service started wi
 `AUTHZ_HTTP_ENABLED=true HTTP_AUDIT_ENABLED=true CP_AUDIT_ENABLED=true` and a local users-groups
 stub answering `Second Line Support` for the test caller:
 
+`build/libs/app.jar` below is shorthand: the jar `./gradlew bootJar` builds is
+`build/libs/service-cp-crime-probation-results-distribution-0.0.999.jar` at the default artefact
+version. `CP_AUDIT_ENABLED=true` also needs an Artemis broker the compose stack does not provide
+(for example a throwaway `apache/activemq-artemis` container on `localhost:61616`) and
+`cp.audit.hosts[0]`, `CP_AUDIT_PORT`, `CP_AUDIT_USER` and `CP_AUDIT_PASSWORD` set; without
+`cp.audit.hosts` the service does not start. The users-groups caller read is
+`GET /usersgroups-query-api/query/api/rest/usersgroups/users/logged-in-user/permissions` answering
+`{"groups":[{"groupName":"Second Line Support"}],"switchableRoles":[],"permissions":[]}`. A resend
+compares the cached payload's top-level `sharedTime` with the stored one (H17), so a seeded payload
+without it resends as `FAILED(payload-changed)`.
+
 1. **Seed a `FAILED` request** exactly as in 004's quickstart.
 
 2. **Replay it over HTTP**:
