@@ -788,6 +788,22 @@ an identically seeded store, and compare the reports ID for ID.
       override; `OperationsResponseMapper` rendering replay's `not-eligible` as
       `resend-in-progress`; reverted, never committed) gave `9 tests completed, 2 failed` — the
       mixed-list case and the replay `not-eligible` case.
+      **Overrides added (gate round 1, QA finding)**: two further cases pass each override through
+      both doors — the forced override (`--force-resend-sent` / `allowTerminalSuccess: true`)
+      against a `COMPLETED`/`SENT` request: `SENT` through both, the new attempt row (attempt 2,
+      `resend`, `override = true`, note `override=force-resend`, operator) identical across the
+      doors, the request still `COMPLETED`, one genuine duplicate per door; and
+      `--allow-changed-payload` / `allowChangedPayload: true` against a `FAILED` request whose
+      cached payload carries a later `sharedTime`: `SENT` through both, note
+      `override=allow-changed-payload`, the attempt rows identical. Green on the first run
+      (`11 tests completed, 0 failed`): characterisation, no production change. Every case shown
+      to bite by a throwaway mutation (reverted, never committed): the API mapper dropping
+      `allowTerminalSuccess`, the runner dropping `--allow-changed-payload` and always forcing,
+      `OperationsResponseMapper` swapping `no-op`/`enqueued`, rotating the three replay refusal
+      codes and misrendering `intake-paused` and `too-many-request-ids` → `11 tests completed, 10
+      failed`; the eleventh, `argument-too-long`, is refused by `OperationsRequestMapper`'s own
+      length check before the capability, and mutating that check → `11 tests completed, 1
+      failed`.
       **Gap kept open (004's, not this slice's)**: `replay` is not yet dispatched by the packaged
       command line (`config/OperatorCommandLine` handles `resend-leg` but not `replay`) and no
       production `ReplayEnqueuer` adapter exists, as 004's T021 records; this test pins the runner

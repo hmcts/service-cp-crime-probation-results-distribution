@@ -9,6 +9,7 @@ import com.jayway.jsonpath.JsonPath;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -48,8 +49,13 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunnerOutcome;
  * state gives the same answer through either. The design's mixed list — two eligible {@code FAILED},
  * one {@code SENT} without the override, one under a live request claim and one unknown — is seeded
  * twice, one copy run through {@link ResendLegRunner} and the other through {@code POST
- * /operations/resend-leg}, and the two reports are compared position for position; a run refused
- * whole is refused with the same code through both; and a replay refused (or done) through {@code
+ * /operations/resend-leg}, and the two reports are compared position for position; each override
+ * reaches the capability through both doors alike — the forced override ({@code --force-resend-sent}
+ * / {@code allowTerminalSuccess}) re-sends a {@code SENT} leg on a new attempt row noted {@code
+ * override=force-resend}, the request still {@code COMPLETED}, and {@code --allow-changed-payload} /
+ * {@code allowChangedPayload} lets a later {@code sharedTime} through noted {@code
+ * override=allow-changed-payload}; a run refused whole is refused with the same code through both;
+ * and a replay refused (or done) through {@code
  * POST /operations/requests/{requestId}/replay} is refused (or done) with the same code through
  * {@link ReplayRunner} in the same state.
  *
@@ -75,6 +81,8 @@ class OperationsRunnerParityIT extends ResendTestSupport {
     private static final String RESEND_PATH = "/operations/resend-leg";
     private static final String RESEND_LEG = "resend-leg";
     private static final String REASON_PATH = "$.reason";
+    private static final String LATER_SHARED_TIME = "2026-08-19T17:05:00Z";
+    private static final String NOTE = "note";
     private static final long WAIT_SECONDS = 30;
 
     private final Logger root = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
@@ -191,6 +199,54 @@ class OperationsRunnerParityIT extends ResendTestSupport {
     }
 
     @Nested
+    @DisplayName("resend-leg with an override")
+    class ResendLegOverrides {
+
+        @Test
+        @DisplayName("the forced override re-sends a SENT leg through both, the request still COMPLETED")
+        void resendLeg_forcedOverrideThroughBothDoors_should_reSendTheSentLegAlike()
+                throws Exception {
+            stubYouthSwitchActive();
+            stubGateway(200);
+            final UUID viaRunner = seedCompletedSent();
+            final UUID viaApi = seedCompletedSent();
+
+            final List<String> outcomes = resendOneThroughBothDoors(viaRunner, viaApi, true, false);
+
+            assertThat(outcomes).containsExactly("SENT", "SENT");
+            assertThat(comparedColumns(viaApi)).as("the API's attempt row, as the runner's")
+                    .isEqualTo(comparedColumns(viaRunner));
+            assertThat(latestAttempt(viaRunner)).containsEntry("attempt", 2)
+                    .containsEntry("attempt_origin", "resend")
+                    .containsEntry("override", true)
+                    .containsEntry(NOTE, "override=force-resend");
+            assertThat(requestRow(viaRunner)).containsEntry("status", "COMPLETED");
+            assertThat(requestRow(viaApi)).containsEntry("status", "COMPLETED");
+            assertThat(gatewayPostCount()).as("one genuine duplicate through each door").isEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("allow-changed-payload lets a later sharedTime through both alike")
+        void resendLeg_allowChangedPayloadThroughBothDoors_should_sendTheChangedPayloadAlike()
+                throws Exception {
+            stubYouthSwitchActive();
+            stubGateway(200);
+            final UUID viaRunner = seedFailedWithLaterSharedTime();
+            final UUID viaApi = seedFailedWithLaterSharedTime();
+
+            final List<String> outcomes = resendOneThroughBothDoors(viaRunner, viaApi, false, true);
+
+            assertThat(outcomes).containsExactly("SENT", "SENT");
+            assertThat(comparedColumns(viaApi)).as("the API's attempt row, as the runner's")
+                    .isEqualTo(comparedColumns(viaRunner));
+            assertThat(latestAttempt(viaRunner)).containsEntry("attempt", 2)
+                    .containsEntry("override", true)
+                    .containsEntry(NOTE, "override=allow-changed-payload");
+            assertThat(gatewayPostCount()).as("one send through each door").isEqualTo(2);
+        }
+    }
+
+    @Nested
     @DisplayName("replay")
     class Replay {
 
@@ -296,21 +352,83 @@ class OperationsRunnerParityIT extends ResendTestSupport {
         return ids.stream().map(UUID::toString).collect(Collectors.joining(","));
     }
 
-    private static String[] resendArgs(final String ids, final String operator) {
-        return new String[] {RESEND_LEG, "--leg", "HMPPS", "--request-ids", ids,
-            "--operator", operator, "--reason", REASON};
+    private static String[] resendArgs(final String ids, final String operator,
+                                       final String... overrideFlags) {
+        final List<String> args = new ArrayList<>(List.of(RESEND_LEG, "--leg", "HMPPS",
+                "--request-ids", ids, "--operator", operator, "--reason", REASON));
+        args.addAll(List.of(overrideFlags));
+        return args.toArray(String[]::new);
     }
 
     private MvcResult postResendLeg(final List<UUID> ids, final String operator) throws Exception {
+        return postResendLeg(ids, operator, false, false);
+    }
+
+    private MvcResult postResendLeg(final List<UUID> ids, final String operator,
+                                    final boolean allowTerminalSuccess,
+                                    final boolean allowChangedPayload) throws Exception {
         final String requestIds = ids.stream().map(id -> "\"" + id + "\"")
                 .collect(Collectors.joining(","));
         return mockMvc.perform(MockMvcRequestBuilders.post(RESEND_PATH)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"requestIds": [%s], "leg": "HMPPS", "operator": "%s",
-                                 "reason": "%s"}
-                                """.formatted(requestIds, operator, REASON)))
+                                 "reason": "%s", "allowTerminalSuccess": %s,
+                                 "allowChangedPayload": %s}
+                                """.formatted(requestIds, operator, REASON, allowTerminalSuccess,
+                                allowChangedPayload)))
                 .andReturn();
+    }
+
+    /** Runs one id through each door with the given overrides and returns both per-id outcomes. */
+    private List<String> resendOneThroughBothDoors(final UUID viaRunner, final UUID viaApi,
+                                                   final boolean allowTerminalSuccess,
+                                                   final boolean allowChangedPayload)
+            throws Exception {
+        final List<String> flags = new ArrayList<>();
+        if (allowTerminalSuccess) {
+            flags.add("--force-resend-sent");
+        }
+        if (allowChangedPayload) {
+            flags.add("--allow-changed-payload");
+        }
+        final RunnerOutcome runnerOutcome = new ResendLegRunner(legResender).run(
+                resendArgs(viaRunner.toString(), OPERATOR, flags.toArray(String[]::new)));
+        final String runnerOutcomeForId = runnerOutcomes(List.of(viaRunner)).getFirst();
+
+        final MvcResult answer = postResendLeg(List.of(viaApi), OPERATOR, allowTerminalSuccess,
+                allowChangedPayload);
+        assertThat(answer.getResponse().getStatus()).isEqualTo(202);
+        final UUID runId = UUID.fromString(JsonPath.read(
+                answer.getResponse().getContentAsString(), "$.resendRunId"));
+        final String apiOutcomeForId = apiOutcomes(awaitReport(runId), List.of(viaApi)).getFirst();
+
+        assertThat(runnerOutcome).isEqualTo(RunnerOutcome.DONE);
+        return List.of(runnerOutcomeForId, apiOutcomeForId);
+    }
+
+    /** The columns of the latest attempt row the two doors are compared on. */
+    private Map<String, Object> comparedColumns(final UUID requestId) {
+        final Map<String, Object> row = latestAttempt(requestId);
+        return Map.of("attempt", row.get("attempt"), "attempt_origin", row.get("attempt_origin"),
+                "status", row.get("status"), "override", row.get("override"),
+                NOTE, String.valueOf(row.get(NOTE)), "operator", row.get("operator"));
+    }
+
+    private UUID seedCompletedSent() {
+        final UUID requestId = UUID.randomUUID();
+        seedRequestRow(requestId, cachedHearing(), "COMPLETED", null);
+        seedSentAttemptOne(requestId, "SENT", null, 200);
+        return requestId;
+    }
+
+    private UUID seedFailedWithLaterSharedTime() {
+        final UUID hearingId = UUID.randomUUID();
+        putDatedCachePayload(hearingId, HEARING_DAY, payload(LATER_SHARED_TIME));
+        final UUID requestId = UUID.randomUUID();
+        seedRequestRow(requestId, hearingId, "FAILED", "leg-exhausted");
+        seedBareAttemptOne(requestId, "FAILED", "payload-unavailable");
+        return requestId;
     }
 
     private MvcResult postReplay(final UUID requestId) throws Exception {
