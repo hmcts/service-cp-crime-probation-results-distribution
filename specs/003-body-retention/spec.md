@@ -883,8 +883,8 @@ matching its attempt's `body_digest`.
 ## Dependencies
 
 - **Slice 002-hmpps-distribution** (must land first). Flyway `V1`: `outbound_body` partitioned by
-  month in UTC on `created_at`, `outbound_body_default`, the three months created at migration, the
-  digest trigger and the foreign key to `outbound_message`; and `outbound_message` with `body_digest`
+  month in UTC on `created_at`, `outbound_body_default`, the three months created at migration and
+  the foreign key to `outbound_message` (no digest trigger, H39); and `outbound_message` with `body_digest`
   and `service_version`. Also the body write path (the insert after the outcome UPDATE, the
   replacement on an in-place re-run), the datasource, the startup property validator and the metric
   registry this slice adds to: the `probation_body_*` series and the `BodyMaintenanceStep` label set
@@ -905,8 +905,8 @@ matching its attempt's `body_digest`.
   FR-004-051). Until they exist, the runbook names the step, and the test of FR-003-028 turns
   intake off with the scaffold's intake switch.
 - **Slice 001-parity-kernel.** None.
-- **External.** Platform ask 5: the service's own database, owned by its role, on PostgreSQL ≥ 13 for
-  V1's trigger (15 confirmed, row A3-105). The data owner and the DPIA, informed that bodies are held
+- **External.** Platform ask 5: the service's own database, owned by its role, on PostgreSQL 15
+  (row A3-105). The data owner and the DPIA, informed that bodies are held
   about six months and then removed (row A3-65; a note, not a gate). Both open questions are answered
   (H35, FR-003-011; A3-118, AS-15). The App Insights resource per environment (Q29, H36) decides
   where slice 006's rule reads the signals.
@@ -914,7 +914,7 @@ matching its attempt's `body_digest`.
 ## Out of Scope
 
 - `outbound_body` itself and `V1` — the partitioned table, its DEFAULT partition, the three initial
-  months, the digest trigger and the foreign key — and the write path that inserts and replaces
+  months and the foreign key — and the write path that inserts and replaces
   bodies: slice 002.
 - The alert rule, its routing and owner, and the dashboard: slice 006.
 - Purging `processed_request` or `outbound_message`: never done (DIGEST §8).

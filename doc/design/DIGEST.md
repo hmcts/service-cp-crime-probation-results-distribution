@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Baseline | Design rev 3.6 (draft, 2026-10-20), decisions H1–H38 (H35 decided 2026-10-21; H36–H38 and rows A3-118, A3-119 on 2026-10-23). Frozen for this repo until a later amendment. |
+| Baseline | Design rev 3.6 (draft, 2026-10-20), decisions H1–H39 (H35 decided 2026-10-21; H36–H38 and rows A3-118, A3-119 on 2026-10-23; H39 on 2026-10-30). Frozen for this repo until a later amendment. |
 | Source of truth | [Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service) (Confluence) |
 | How to use | Rules only; the reasoning is on Confluence. Where this digest differs from the design, the design wins. A Confluence section that still predates a rev 3.6 decision (H1–H34) or H35 does not override that decision: the decision applies, and the difference is raised with the design owner as an open issue (constitution, Governance). |
 | Tags | Ids from the design record: H-n, D-n decisions; A2-n, A3-n, R1-n, R2-n, Q-n, O-n design rows; DV-n deviations; P-n legacy defects; R0–R12 HMPPS rules; §n and App. A/B are sections of design rev 3.6. The Confluence page states the same design in plain English, without ids. |
@@ -43,7 +43,7 @@
 - Reused from the informant parity pack: the `recorded/` layout with pinned digests, `comparator-vectors/vectors.json`, `JsonParity`, `ParityCase`, and `RegisteredFieldDeviations` keyed on `doc/DEVIATIONS.md` (§6.1).
 - Before cutover: one week of SIT events is replayed into STE against a stub gateway. STE's `outbound_body` is compared hearing by hearing with SIT's logged bodies; any unexplained difference blocks cutover (A3-68, §6.5).
 
-## 3. Decisions H1–H38
+## 3. Decisions H1–H39
 
 | Id | Rule |
 |---|---|
@@ -66,7 +66,7 @@
 | H17 | No payload digest. A resend compares the re-read payload's `sharedTime` with the stored `shared_time`, as instants: equal → proceed; different, absent or unparseable → `FAILED(payload-changed)`, unless `allow-changed-payload`. The row records `payload_shared_time`. |
 | H18 | Store the exact UTF-8 body POSTed, on every attempt that serialised one; `body_digest` is its SHA-256. No column encryption; never logged. *Placement and retention superseded by H20.* |
 | H19 | One `service_version` (the build version) replaces `rules_version` and `serializer_version`; present iff `body_digest` is. |
-| H20 | The body lives in `outbound_body`, partitioned by month (UTC) on `created_at`. A daily in-service job, single runner by advisory lock, purges it after `distribution.body-retention` (`P6M`, so 6–7 months in effect). A trigger checks each body against `body_digest`. |
+| H20 | The body lives in `outbound_body`, partitioned by month (UTC) on `created_at`. A daily in-service job, single runner by advisory lock, purges it after `distribution.body-retention` (`P6M`, so 6–7 months in effect). The single write path checks each body against `body_digest` (H39). |
 | H21 | No shadow run and no `shadow_capture`. Quality gate: SIT-data unit tests plus a one-week SIT → STE replay against a stub gateway; unexplained differences block cutover. |
 | H22 | Cutover uses two switches and no legacy code change: switch off the legacy function app's Event Grid subscription (no-match filter), then turn on the Results switch, in the weekend deployment window while Common Platform is down. *Results' users-groups read superseded by H26.* |
 | H23 | The planned rollback runs in the same window, steps in order: 1 pause intake, 2 Results switch off and wait ≥ 10 min (A3-103), 2a subscription filter restored, 3 record the cut-off, 4 close in-flight rows `FAILED(rolled-back)`, 5 reconcile the live period, 6 purge the queue, 6a replay only through the ops API, 7 repair only hearings not known to be delivered (§9.4). |
@@ -85,6 +85,7 @@
 | H36 | Nothing scrapes the pods for Prometheus. The App Insights Java agent exports the Micrometer meters to `customMetrics` (about every 60 s). Every alert is an Azure Monitor alert rule, created by hand by DevOps on a ticket with the runbook, and emailed to the Resulting Assistant team. The App Insights resource per environment is decided later (Q29). |
 | H37 | The retention job keeps the current month and the next three (V1 still creates the current month and the next two; the job's first run adds the third). WARN at the start of a run that holds the lock when fewer than 2 months ahead; WARN at the end of a run with no failure when fewer than 3. The ahead alert fires below 2. |
 | H38 | The last successful run of the retention job is kept in the `body-retention` row of `scheduled_job_status` (`job_name` PK, `last_success_at`; names proposed; one row per scheduled job, amended 2026-10-24 from the one-row `body_maintenance_state`), created and that row seeded with the migration time by Flyway `V2` (slice 003; V1 unchanged), set by a run that held the lock and had no failure, as the last statement of the advisory lock's transaction, under a savepoint, after the removals have committed and the fresh end reads: `clock_timestamp()` (not `now()`), exactly that row; it commits with the lock's transaction, so a failed commit records no success. A failed update, or a failed fresh read for the WARNs and summary (A3-119), is logged at ERROR with step `state` / `read`, counts in the summary's `failed`, leaves `last_success_at` unchanged, and is not counted on `probation_body_maintenance_failures_total` (its `step` set stays closed); the 48-hour condition alerts it. |
+| H39 | No database trigger; the estate keeps its rules in the Java tier. `outbound_body_digest_trg` and `outbound_body_digest_check()` are removed from V1 (not yet applied anywhere, so edited, not superseded). One write method behind `OutboundLog` takes the serialised bytes, computes `body_digest` from them and runs the outcome UPDATE then the body INSERT in one transaction (H20); no other code path writes `outbound_body`. An integration test asserts the stored body's SHA-256 equals `body_digest` after a first send, an in-place re-run and a resend. The FK, PK, partitions and DEFAULT partition are unchanged; PostgreSQL 15 stands. A read-only reconciliation query in the runbook lists any body whose hash differs from its digest (amends A3-63, App. B). |
 
 **Other decisions in force**
 - D1: lift and shift. Rules and payload are copied verbatim; delivery and reliability defects are fixed by construction, each as a numbered DV with its own test.
@@ -414,7 +415,7 @@ Flyway `V1__create_processed_log.sql` creates three tables and one view. The dat
 
 - PK `(outbound_message_id, created_at)`; `PARTITION BY RANGE (created_at)`.
 - Monthly partitions `outbound_body_YYYY_MM` on UTC month bounds, plus `outbound_body_default`. V1 creates the current month and the next two; the job keeps three ahead (H37). Flyway `V2` (slice 003) adds `scheduled_job_status`, one row per scheduled job, seeded with the `body-retention` row (H38).
-- Trigger `outbound_body_digest_trg` (`BEFORE INSERT OR UPDATE`, per row): refuses a body if the parent's `body_digest` is NULL or differs from `encode(sha256(convert_to(body, 'UTF8')), 'hex')`. A missing parent is left to the FK.
+- No trigger (H39). The single write path behind `OutboundLog` stores the same bytes it digested, so a body's SHA-256 equals its attempt's `body_digest`; no other code path writes `outbound_body`. An integration test pins it after a first send, an in-place re-run and a resend. A missing parent is refused by the FK.
 - A body row exists only for an attempt with a `body_digest`. It is written after the outcome UPDATE, in the same transaction.
 - An in-place re-run deletes the earlier body row and inserts the new one in the same transaction. "The body" is the latest row by `created_at`.
 - "Digest ⇒ body" is not a constraint (the purge removes bodies).
@@ -433,7 +434,7 @@ Flyway `V1__create_processed_log.sql` creates three tables and one view. The dat
   - logs a start line (or a skip line, without the lock); with the lock, a WARN if the months ahead, read fresh from the catalogue, are < 2 at its start, one summary line with fresh counts, and a WARN if it ends with no failure and < 3 months ahead (A3-119, H37).
 - Read from the database whenever the metrics are collected (cached 5 min), on every pod, lock or not: the months ahead (consecutive whole months after the current UTC month with a partition), the DEFAULT row count and `last_success_at` (A3-118, H38). A failed read reports `-1` and is not cached.
 - Partitions are created, and so owned, by the service role.
-- PostgreSQL ≥ 13 for the trigger; the platform runs 15 (A3-105). The plain `DROP` (H35) needs no later version.
+- The platform runs PostgreSQL 15 (A3-105). The plain `DROP` (H35) needs no later version.
 - DEFAULT non-empty → alert. Runbook: detach DEFAULT, create the month, move the rows, re-attach.
 - After the purge, only `body_digest`, `service_version`, the status and the metadata remain.
 

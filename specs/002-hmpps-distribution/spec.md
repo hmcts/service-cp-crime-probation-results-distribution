@@ -3,7 +3,7 @@
 **Feature Branch**: `002-hmpps-distribution`  
 **Created**: 2026-10-21  
 **Status**: Draft  
-**Input**: Design rev 3.6 (draft of 2026-10-20; decisions H1–H34), as restated in
+**Input**: Design rev 3.6 (draft of 2026-10-20; decisions H1–H34; amended by H39, 2026-10-30), as restated in
 `doc/design/DIGEST.md` §2 (scope), §3 (decisions), §4 (deviations), §5 (inbound contract), §6
 (pipeline order and time budgets), §7 (state machine), §8 (V1 data model), §9 (outbound send
 rules), §10 (payload source, youth switch, redaction), §12 (configuration) and §13
@@ -129,6 +129,13 @@ requirement it names.
 - Q: What does a database outage do to validation? → A: A delivery during the outage is handed back
   before its body is read, as the copied listener does. It is validated on a later delivery. (IR
   failure behaviour; digest §6 Intake; FR-002-009)
+
+### Session 2026-10-30
+
+- Q: Is the body-to-digest match enforced by a database trigger? → A: No (H39). The estate keeps
+  its rules in the Java tier, so V1 has no trigger. The single write path behind `OutboundLog`
+  stores the bytes it digested, no other code path writes `outbound_body`, and an integration test
+  pins the match. (H39; FR-002-042, FR-002-050, FR-002-054)
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -954,10 +961,13 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
 - **FR-002-042**: Every attempt that serialised a body MUST store the exact bytes POSTed in
   `outbound_body`. These are the `SENT`, `FAILED(receiver-rejected)`, `PARKED(gateway-transient)` and
   `FAILED(gateway-transient)` attempts. The body is inserted as text, never as a normalised JSON
-  type, after the outcome UPDATE and in the same transaction, so that the digest trigger accepts it.
-  A re-run in place MUST delete the attempt's earlier body row, and insert the new one if there is
-  one, in the same transaction, leaving at most one body row per attempt. No other attempt has a
-  body row. The receiver's response body is never stored. (H18, H20; A2-61, A3-59, A3-63)
+  type, after the outcome UPDATE and in the same transaction. The bytes stored MUST be the bytes
+  digested (FR-002-033), written by one method behind `OutboundLog`; no other code path writes
+  `outbound_body`. A re-run in place MUST delete the attempt's earlier body row, and insert the new
+  one if there is one, in the same transaction, leaving at most one body row per attempt. No other
+  attempt has a body row. The receiver's response body is never stored. An integration test MUST
+  assert that the SHA-256 of the stored body equals the attempt's `body_digest` after a first send,
+  an in-place re-run and a resend. (H18, H20, H39; A2-61, A3-59, A3-63)
 - **FR-002-043**: Every row this slice writes MUST satisfy design §4.6's column-presence matrix and
   pairings:
   - `payload_source` is set on every row except a `PENDING` or `payload-unavailable` one;
@@ -1021,9 +1031,11 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
     `command text NOT NULL` and `replayed_at`;
   - `outbound_message`;
   - the view `outbound_message_latest`;
-  - the partitioned `outbound_body`, with its trigger.
+  - the partitioned `outbound_body`.
 
-  (Digest §8; App. B.2; A2-48, A2-60, R1-11, H21)
+  V1 has no trigger and no function (H39).
+
+  (Digest §8; App. B.2; A2-48, A2-60, R1-11, H21, H39)
 - **FR-002-051**: `processed_request` MUST enforce:
   - primary key `(source, request_id)`;
   - `status` ∈ {`RECEIVED`, `RETRYING`, `COMPLETED`, `FAILED`}, and `attempts ≥ 0`;
@@ -1080,10 +1092,10 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   - the DEFAULT partition, `outbound_body_default`;
   - primary key `(outbound_message_id, created_at)`;
   - a foreign key to `outbound_message(id)`, `ON DELETE RESTRICT`;
-  - the body as text;
-  - the row trigger `outbound_body_digest_trg`, which refuses a body whose attempt's `body_digest`
-    is NULL or differs from the SHA-256 of the body's UTF-8 bytes. A missing parent is left to the
-    foreign key.
+  - the body as text.
+
+  It has no digest trigger: the match of a body to its attempt's `body_digest` is FR-002-042's
+  (H39).
 
   V1 MUST create the current month's partition and the next two, by that rule. The service's
   database role creates the partitions, and so owns them. Maintaining them after that, and purging,
@@ -1091,7 +1103,7 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   FR-003-007). V1 keeps `outbound_body_default` (A3-63). 003's open question 1 (FR-003-011), whose
   option C would have removed it, is answered: option A (H35, 2026-10-21), a plain `DROP` of each
   expired month, so V1 is unchanged and the DEFAULT partition kept (Assumptions; Dependencies).
-  (H20; H35; A3-63, A3-64, A3-105; digest §8; App. B.2; FR-003-011)
+  (H20; H35; H39; A3-63, A3-64, A3-105; digest §8; App. B.2; FR-003-011)
 - **FR-002-055**: A schema test MUST assert on every build:
   - that the database's value sets equal the code's closed vocabularies: leg status, leg reason,
     leg, attempt origin, payload source, youth switch, completion reason and failure reason;
@@ -1407,8 +1419,8 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
 
 - Names the design marks *proposed* are kept, unless the plan records a change: environment
   variables, metric names, test names. The technical rules fix them at build time.
-- The platform's database is PostgreSQL 15 (A3-105), which supports the digest trigger on a
-  partitioned table.
+- The platform's database is PostgreSQL 15 (A3-105). V1 has no trigger (H39), so it needs no
+  version-specific trigger support.
 - `gateway_request_id` stays NULL until the go-live test call identifies which response header, if
   any, carries a gateway request id (§11.3; digest §16). Capturing it then is a small change to the
   publisher.
@@ -1534,6 +1546,7 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
 | H18, A3-59, A3-60 | FR-002-033, FR-002-042, FR-002-065; Assumptions; Dependencies (ask 5) |
 | H19, A3-61, R1-10 | FR-002-033, FR-002-040, FR-002-043 |
 | H20 (V1), A3-63, A3-64 (V1 part), A3-105 | FR-002-042, FR-002-054 |
+| H39 | FR-002-042, FR-002-050, FR-002-054; Clarifications |
 | H21 | FR-002-050 (no shadow table) |
 | H26, Q15, A3-92 | FR-002-027 |
 | H27, A3-95, A3-96 | FR-002-034, FR-002-067 |
