@@ -1506,6 +1506,27 @@ fixed test-first in its own commit:
 - [ ] T077 Update `CLAUDE.md`'s Setup section once this slice merges to `main`, and hand the
       Dependencies → "005-operations-api" and "006-production-readiness" sections (plan.md,
       `contracts/cli-runners.md`) to whoever starts those slices next
+- [ ] T078 [US1] Build the production `ReplayEnqueuer` adapter and wire replay in both composition
+      roots, closing the gap T021 left (FR-004-015, FR-004-017; design §4.8 action 2, A2-48; H9).
+      Unblocks T075 and slice 005's T023 and the replay half of its T043. Reuse T068's send-only
+      `CommandEnqueuer` port and `adapter/servicebus/ServiceBusCommandEnqueuer` rather than a
+      second Service Bus sender: the adapter sends the stored command byte for byte under the
+      fresh `messageId` `ReplayAction` gives, `correlationId` = hearing id,
+      `contentType = application/json`, and the one application property `origin = REPLAY` (an
+      audit label only, never a body field); a `CommandEnqueueException` is rethrown as
+      `ReplayEnqueueException` → `broker-unavailable`. Wire it into the CLI composition
+      (`config/OperatorCommandLine`, sharing submit-hearing's `probation.requests` sender) **and
+      dispatch `replay` there**, so `java -jar app.jar replay` runs `cli/ReplayRunner` for real;
+      and into the serving context, so `ReplayAction` — and with it slice 005's
+      `ReplayController` — is a bean whenever intake is wired. The sender is closed on shutdown.
+      Needs `AzureServiceBusDataSender` on `probation.requests`, already required for
+      submit-hearing. Tests first: a unit test pinning the body bytes, `messageId`,
+      `correlationId`, the one `origin = REPLAY` property and the exception mapping; an IT against
+      the Service Bus emulator receiving the replayed message with exactly those properties; the
+      packaged-jar `replay` dispatch beside `PackagedIntakeCommandsIT`; and a context test that
+      `ReplayAction`/`ReplayController` are registered when intake is wired and absent when it is
+      not — `src/main/java/.../adapter/servicebus/`, `src/main/java/.../config/`,
+      `src/test/java/.../adapter/servicebus/`
 
 ---
 
