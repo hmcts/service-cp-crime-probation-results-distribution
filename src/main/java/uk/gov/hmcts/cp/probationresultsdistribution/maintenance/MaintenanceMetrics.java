@@ -72,10 +72,14 @@ public final class MaintenanceMetrics {
                 () -> catalogue.monthsAhead(currentMonthStart(clock.nowUtc())), cacheTtl);
         final CachedGaugeRead lastSuccessSeconds = new CachedGaugeRead(
                 () -> stateRepository.lastSuccessAt().toEpochSecond(), cacheTtl);
-        Gauge.builder(DEFAULT_ROWS_M, defaultRows, CachedGaugeRead::value).register(registry);
-        Gauge.builder(MONTHS_AHEAD_M, monthsAhead, CachedGaugeRead::value).register(registry);
-        Gauge.builder(LAST_SUCCESS_SECONDS_M, lastSuccessSeconds, CachedGaugeRead::value)
+        // Each state object is local to this constructor, so the gauge must hold it strongly: a
+        // gauge's default weak reference lets a garbage collection take it and the gauge read NaN.
+        Gauge.builder(DEFAULT_ROWS_M, defaultRows, CachedGaugeRead::value).strongReference(true)
                 .register(registry);
+        Gauge.builder(MONTHS_AHEAD_M, monthsAhead, CachedGaugeRead::value).strongReference(true)
+                .register(registry);
+        Gauge.builder(LAST_SUCCESS_SECONDS_M, lastSuccessSeconds, CachedGaugeRead::value)
+                .strongReference(true).register(registry);
     }
 
     /**

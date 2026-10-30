@@ -5,10 +5,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.lang.ref.WeakReference;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -112,6 +114,42 @@ class MaintenanceCachedGaugesTest {
         assertThat(registry.get("probation_body_default_partition_rows").gauge().value()).isEqualTo(1.0);
         Thread.sleep(150);
         assertThat(registry.get("probation_body_default_partition_rows").gauge().value()).isEqualTo(2.0);
+    }
+
+    @Test
+    @DisplayName("every gauge keeps reporting after a garbage collection: its state is held strongly")
+    void gauges_keep_reporting_after_a_garbage_collection() throws InterruptedException {
+        final SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        final PartitionMaintenanceRepository repository = mock(PartitionMaintenanceRepository.class);
+        when(repository.countDefaultRows()).thenReturn(1L);
+        final DatabaseClock clock = mock(DatabaseClock.class);
+        when(clock.nowUtc()).thenReturn(NOW);
+        final PartitionCatalogue catalogue = mock(PartitionCatalogue.class);
+        when(catalogue.monthsAhead(OCT)).thenReturn(3);
+        final BodyMaintenanceStateRepository stateRepository = mock(BodyMaintenanceStateRepository.class);
+        final OffsetDateTime lastSuccess = NOW.minusDays(1);
+        when(stateRepository.lastSuccessAt()).thenReturn(lastSuccess);
+
+        new MaintenanceMetrics(registry, repository, catalogue, clock, stateRepository);
+        collectGarbage();
+
+        assertThat(registry.get("probation_body_default_partition_rows").gauge().value()).isEqualTo(1.0);
+        assertThat(registry.get("probation_body_partitions_ahead_months").gauge().value())
+                .isEqualTo(3.0);
+        assertThat(registry.get("probation_body_maintenance_last_success_seconds").gauge().value())
+                .isEqualTo((double) lastSuccess.toEpochSecond());
+    }
+
+    // A gauge whose state object is only weakly referenced reads NaN once a collection has run; the
+    // explicit collection is the only way to prove the state is held, so this test asks for one.
+    @SuppressWarnings("PMD.DoNotCallGarbageCollectionExplicitly")
+    private static void collectGarbage() throws InterruptedException {
+        final WeakReference<Object> sentinel = new WeakReference<>(new Object());
+        for (int i = 0; i < 50 && sentinel.get() != null; i++) {
+            System.gc();
+            TimeUnit.MILLISECONDS.sleep(10);
+        }
+        assertThat(sentinel.get()).as("a garbage collection ran").isNull();
     }
 
     @Test
