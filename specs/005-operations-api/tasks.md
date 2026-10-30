@@ -795,9 +795,21 @@ an identically seeded store, and compare the reports ID for ID.
 
 ### Implementation for User Story 7
 
-- [ ] T039 [US7] Confirm the replay and resend-leg command-line runners remain present and
+- [X] T039 [US7] Confirm the replay and resend-leg command-line runners remain present and
       documented as the fallback once this slice is built (FR-005-005) — a verification task, no
       new code
+      Confirmed, **no code change**: `cli/ReplayRunner.java` and `cli/ResendLegRunner.java` are
+      present and no 005 commit has touched either (their history is 004's alone); T038 pins them
+      to the API's answers. Documented as the fallback in `doc/API_CONTRACTS.md` §3 ("The
+      command-line runners in the image remain the fallback for every action") and in
+      `quickstart.md` step 2 (the replay runner compared against the endpoint), with each runner's
+      arguments and exit codes in 004's `contracts/cli-runners.md` §1–§2. Two findings, recorded
+      and not fixed here (both outside a verification task): `resend-leg` is dispatched by the
+      packaged command line (`config/OperatorCommandLine`), but `replay` is not, and no production
+      `ReplayEnqueuer` exists — 004's open T021 gap — so `java -jar app.jar replay` (quickstart
+      step 2's comparison, and T043) waits on that wiring; and `doc/API_CONTRACTS.md` §3's status
+      line still says resend-leg "waits on slice 004's `application.LegResender`", which T047–T050
+      have since closed.
 
 **Checkpoint**: all seven user stories are independently functional once 004 lands for real.
 
