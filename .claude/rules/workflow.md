@@ -86,8 +86,9 @@ A change ships only when all applicable gates are green:
    release (H13). The gateway retries in-run only a connection failure and 429; a 5xx, a 408 and a
    read timeout park with no in-run retry (H11, H15). Nothing VEP-shaped is added (H5).
 7. **Stored-body gate.** The exact bytes POSTed go to `outbound_body` after the outcome UPDATE, in
-   the same transaction, and the digest trigger accepts them (H20); the body is never logged at any
-   level and never a metric label (row A3-60).
+   the same transaction, written by the single method behind `OutboundLog` from the bytes it
+   digested, with a test asserting their SHA-256 equals `body_digest` (H20, H39; no trigger); the
+   body is never logged at any level and never a metric label (row A3-60).
 8. **No-swallowed-exception gate.** No empty catch, no catch-and-continue, no success returned from
    a catch block. Reviewers reject on sight.
 9. **No-PII gate.** No defendant PII (names, addresses, DOB, ASN, URN) at `info` level or above, no

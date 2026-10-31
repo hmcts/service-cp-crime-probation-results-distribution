@@ -1256,7 +1256,7 @@ Assumptions.
 - **002-hmpps-distribution** (required first). This slice takes from it, unchanged: the V1 schema —
   `processed_request` with `command` and `replayed_at`; `outbound_message` with `attempt_origin`, the
   leg claim, `resend_run_id`, `operator`, `override` and `note`; the latest-attempt view;
-  `outbound_body` and its digest trigger — with every CHECK and the `NoteForms` forms; the enums and
+  `outbound_body` (no digest trigger, H39) — with every CHECK and the `NoteForms` forms; the enums and
   vocabularies; the guard's first-delivery, redelivery, no-op, live-claim, reclaim, collision and
   insert-race paths; the queue run's stages (payload source, youth switch, redaction, body digest,
   send, the outcome-and-body write); the settlement statements, with the completion-reason choice
