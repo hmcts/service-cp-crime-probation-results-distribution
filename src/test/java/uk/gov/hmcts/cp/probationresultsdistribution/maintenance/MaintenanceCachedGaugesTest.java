@@ -58,7 +58,7 @@ class MaintenanceCachedGaugesTest {
     }
 
     @Test
-    @DisplayName("reports the last-success instant in epoch seconds, read from body_maintenance_state")
+    @DisplayName("reports the last-success instant in epoch seconds, read from scheduled_job_status")
     void reports_last_success_in_epoch_seconds() {
         final SimpleMeterRegistry registry = new SimpleMeterRegistry();
         final BodyMaintenanceStateRepository stateRepository = mock(BodyMaintenanceStateRepository.class);

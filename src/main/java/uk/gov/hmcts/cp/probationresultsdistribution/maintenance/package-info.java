@@ -3,7 +3,7 @@
  * maintenance job. Every run ensures the current UTC month and the next three each have a partition
  * (H37), removes each whole partition past the retention cut-off, deletes stranded
  * {@code DEFAULT}-partition rows before the same cut-off, and — on a run with no failure — records
- * its success in {@code body_maintenance_state} (H38). It publishes the signals that let the
+ * its success in {@code scheduled_job_status} (H38). It publishes the signals that let the
  * "Body partition maintenance" alert page — a {@code DEFAULT} partition that is not empty, a
  * creation or removal failure (FR-003-023), fewer than two whole months ahead with a partition, and
  * no successful run for more than 48 hours — read from the database independently of the

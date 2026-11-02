@@ -22,8 +22,9 @@ signals independent of whether it has ever run or is currently running, each a d
 for five minutes on every pod: the `DEFAULT`-partition row count
 (`probation_body_default_partition_rows`), the consecutive whole months ahead with a partition
 (`probation_body_partitions_ahead_months`), and the epoch-second timestamp of the job's last
-no-failure completion (`probation_body_maintenance_last_success_seconds`, kept in a new one-row table,
-`body_maintenance_state`, created and seeded by this slice's Flyway `V2`). A failed read reports `-1`
+no-failure completion (`probation_body_maintenance_last_success_seconds`, kept in the `body-retention`
+row of `scheduled_job_status` (H38, keyed by `job_name`), created and seeded by this slice's Flyway
+`V2`). A failed read reports `-1`
 and is never cached. The alert pages below two months ahead or after 48 hours without success,
 regardless of whether any row has yet reached `DEFAULT` — so a job that stops running is visible even
 when the misrouting symptom (FR-003-023) hasn't yet appeared. Each trigger, skip and finished run also
@@ -40,8 +41,9 @@ lock (see Research, "Lock and transaction strategy"); Micrometer (`MeterRegistry
 `config`) for the job's gauges and counters — no new external library
 **Storage**: PostgreSQL 15 (production's version, row A3-105) — the existing `outbound_body` table and
 its monthly + `DEFAULT` partitions from `V1__create_processed_log.sql` (unchanged); this slice's own
-Flyway `V2` adds exactly one new table, the one-row `body_maintenance_state` (H38), plus the partition
-DDL it executes at runtime against `outbound_body`
+Flyway `V2` adds exactly one new table, `scheduled_job_status` (H38, one row per scheduled job, this
+slice's own row `body-retention`), plus the partition DDL it executes at runtime against
+`outbound_body`
 **Testing**: JUnit 5 + Mockito + AssertJ; Testcontainers (`PostgreSQLContainer`) for `BodyRetentionJobIT`
 (AS-12) exercising real partition CREATE/DROP against a throwaway schema; no Service Bus or Redis
 involvement — this feature has no queue, cache or gateway dependency
@@ -132,8 +134,8 @@ src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/
 │   ├── PartitionMaintenanceRepository.java # the short, separately-transacted DDL/DML statements:
 │   │                                        CREATE a missing month's partition, DROP an expired
 │   │                                        one, DELETE stranded DEFAULT rows, COUNT DEFAULT rows
-│   ├── BodyMaintenanceStateRepository.java # NEW (H38, FR-003-032) — body_maintenance_state's one
-│   │                                        row: an independent read for the last-success gauge,
+│   ├── BodyMaintenanceStateRepository.java # NEW (H38, FR-003-032) — scheduled_job_status's
+│   │                                        body-retention row: an independent read for the gauge,
 │   │                                        and the one statement that MUST run on the
 │   │                                        single-runner lock's own connection, under a savepoint
 │   ├── CachedGaugeRead.java                # NEW (A3-118) — a small five-minute-TTL cache wrapping

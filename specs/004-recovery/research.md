@@ -116,10 +116,11 @@ flag on its next probe; `probation_intake_suspended{cause="operator"}` reflects 
 state.
 
 **Rationale**:
-1. **Precedent already set.** Slice 003 added `body_maintenance_state`, a single-row control table,
-   by its own Flyway migration (`V2`), for exactly the same shape of problem — a cross-pod,
-   restart-surviving piece of state the design does not put in the three original tables. This
-   slice's `intake_control` is the same pattern, one row, applied to a different control value.
+1. **Precedent already set.** Slice 003 added `scheduled_job_status` (keyed by `job_name`, this
+   job's row `body-retention`), by its own Flyway migration (`V2`), for exactly the same shape of
+   problem — a cross-pod, restart-surviving piece of state the design does not put in the three
+   original tables. This slice's `intake_control` is the same pattern, one row, applied to a
+   different control value.
 2. **It needs no new infrastructure.** The alternative of flipping `distribution.consumer.enabled`
    (the scaffold's static intake switch, DIGEST §12) requires a redeploy or a Helm value change for
    every pause and resume — operationally wrong for an action operators must be able to take and

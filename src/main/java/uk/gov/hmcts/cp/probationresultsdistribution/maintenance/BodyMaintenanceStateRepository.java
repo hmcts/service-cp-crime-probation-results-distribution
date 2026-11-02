@@ -11,8 +11,9 @@ import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * The one-row {@code body_maintenance_state} table (H38), created and seeded by this slice's Flyway
- * {@code V2}. {@link #lastSuccessAt()} is an independent read, for the
+ * The {@code body-retention} row of {@code scheduled_job_status} (H38, one row per scheduled job,
+ * keyed by {@code job_name}), created and seeded by this slice's Flyway {@code V2}.
+ * {@link #lastSuccessAt()} is an independent read, for the
  * {@code probation_body_maintenance_last_success_seconds} gauge (FR-003-031, A3-118).
  * {@link #recordSuccessOnConnection(Connection)} is different from every other statement this slice
  * issues: it MUST run on the single-runner lock's own connection, as the last statement of its
@@ -21,6 +22,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 public final class BodyMaintenanceStateRepository {
 
+    private static final String JOB_NAME = "body-retention";
     private static final String SET_LOCK_TIMEOUT_5S = "SET LOCAL lock_timeout = '5s'";
 
     private final JdbcClient jdbc;
@@ -48,11 +50,13 @@ public final class BodyMaintenanceStateRepository {
         try {
             return transactionTemplate.execute(status -> {
                 jdbc.sql(SET_LOCK_TIMEOUT_5S).update();
-                return jdbc.sql("SELECT last_success_at FROM body_maintenance_state")
+                return jdbc.sql("SELECT last_success_at FROM scheduled_job_status "
+                                + "WHERE job_name = :jobName")
+                        .param("jobName", JOB_NAME)
                         .query(OffsetDateTime.class).single();
             });
         } catch (final DataAccessException | TransactionException e) {
-            throw DatabaseFailureClassifier.classify(e, "reading body_maintenance_state");
+            throw DatabaseFailureClassifier.classify(e, "reading scheduled_job_status");
         }
     }
 
@@ -68,14 +72,16 @@ public final class BodyMaintenanceStateRepository {
         try {
             final Savepoint savepoint = lockConnection.setSavepoint();
             try (PreparedStatement statement = lockConnection.prepareStatement(
-                    "UPDATE body_maintenance_state SET last_success_at = clock_timestamp()")) {
+                    "UPDATE scheduled_job_status SET last_success_at = clock_timestamp() "
+                            + "WHERE job_name = ?")) {
+                statement.setString(1, JOB_NAME);
                 statement.executeUpdate();
             } catch (final SQLException e) {
                 lockConnection.rollback(savepoint);
                 throw e;
             }
         } catch (final SQLException e) {
-            throw DatabaseFailureClassifier.classify(e, "updating body_maintenance_state");
+            throw DatabaseFailureClassifier.classify(e, "updating scheduled_job_status");
         }
     }
 }

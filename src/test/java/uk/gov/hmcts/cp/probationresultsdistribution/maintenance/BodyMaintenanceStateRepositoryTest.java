@@ -30,11 +30,13 @@ class BodyMaintenanceStateRepositoryTest {
         final PreparedStatement statement = mock(PreparedStatement.class);
         when(connection.setSavepoint()).thenReturn(mock(Savepoint.class));
         when(connection.prepareStatement(
-                "UPDATE body_maintenance_state SET last_success_at = clock_timestamp()"))
+                "UPDATE scheduled_job_status SET last_success_at = clock_timestamp() "
+                        + "WHERE job_name = ?"))
                 .thenReturn(statement);
 
         repository.recordSuccessOnConnection(connection);
 
+        verify(statement).setString(1, "body-retention");
         verify(statement).executeUpdate();
         verify(statement).close();
         verify(connection, never()).rollback(any(Savepoint.class));
@@ -51,7 +53,8 @@ class BodyMaintenanceStateRepositoryTest {
         final PreparedStatement statement = mock(PreparedStatement.class);
         when(connection.setSavepoint()).thenReturn(savepoint);
         when(connection.prepareStatement(
-                "UPDATE body_maintenance_state SET last_success_at = clock_timestamp()"))
+                "UPDATE scheduled_job_status SET last_success_at = clock_timestamp() "
+                        + "WHERE job_name = ?"))
                 .thenReturn(statement);
         when(statement.executeUpdate()).thenThrow(
                 new SQLException("canceling statement due to lock timeout", "55P03"));

@@ -45,7 +45,7 @@ under T037; the installed Java SDK has no public operation for it.
 claim/`resend_run_id`/`operator`/`override`/`note`, `outbound_message_latest`, `outbound_body`) —
 unchanged by this slice; one additional single-row control table is the confirmed answer to
 FR-004-052 (Research, Decision 3), added by a new Flyway migration at this slice's own version
-number, following the precedent of slice 003's `V2__…body_maintenance_state` addition
+number, following the precedent of slice 003's `V2__create_scheduled_job_status` addition
 **Testing**: JUnit 5 + Mockito + AssertJ for the application layer (plain mocks, no Spring context);
 Testcontainers (`testcontainers-postgresql`, `testcontainers-azure` for the Service Bus emulator,
 `testcontainers-toxiproxy`) for `*IT` suites; WireMock for the results-query and users-groups stubs

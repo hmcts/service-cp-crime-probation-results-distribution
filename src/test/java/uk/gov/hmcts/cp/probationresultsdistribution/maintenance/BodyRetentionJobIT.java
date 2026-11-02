@@ -314,7 +314,7 @@ class BodyRetentionJobIT extends SchemaTestSupport {
     }
 
     @Test
-    @DisplayName("a successful run advances body_maintenance_state.last_success_at through the real SingleRunnerLock connection (FR-003-032, H38)")
+    @DisplayName("a successful run advances scheduled_job_status.last_success_at through the real SingleRunnerLock connection (FR-003-032, H38)")
     void a_successful_run_advances_the_real_last_success_state() {
         final OffsetDateTime before = stateRepository.lastSuccessAt();
 

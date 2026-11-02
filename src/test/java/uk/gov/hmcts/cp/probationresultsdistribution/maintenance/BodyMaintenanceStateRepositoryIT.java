@@ -7,13 +7,14 @@ import java.time.OffsetDateTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-@DisplayName("body_maintenance_state (H38)")
+@DisplayName("scheduled_job_status, the body-retention row (H38, amended 2026-10-24)")
 class BodyMaintenanceStateRepositoryIT extends MaintenanceTestStore {
 
     @Test
-    @DisplayName("V2 seeds exactly one row, with a recent migration-time value")
+    @DisplayName("V2 seeds exactly the body-retention row, with a recent migration-time value")
     void migration_seeds_exactly_one_row() {
-        final long rows = sql.sql("SELECT count(*) FROM body_maintenance_state")
+        final long rows = sql.sql("SELECT count(*) FROM scheduled_job_status "
+                        + "WHERE job_name = 'body-retention'")
                 .query(Long.class).single();
         assertThat(rows).isEqualTo(1L);
 
@@ -34,7 +35,8 @@ class BodyMaintenanceStateRepositoryIT extends MaintenanceTestStore {
         final OffsetDateTime recorded = stateRepository.lastSuccessAt();
         assertThat(recorded).isCloseTo(OffsetDateTime.now(java.time.ZoneOffset.UTC),
                 org.assertj.core.api.Assertions.within(1, java.time.temporal.ChronoUnit.MINUTES));
-        assertThat(sql.sql("SELECT count(*) FROM body_maintenance_state").query(Long.class).single())
+        assertThat(sql.sql("SELECT count(*) FROM scheduled_job_status "
+                        + "WHERE job_name = 'body-retention'").query(Long.class).single())
                 .isEqualTo(1L);
     }
 

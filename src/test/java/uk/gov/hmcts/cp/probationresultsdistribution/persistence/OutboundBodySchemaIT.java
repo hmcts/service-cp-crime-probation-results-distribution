@@ -47,13 +47,13 @@ class OutboundBodySchemaIT extends SchemaTestSupport {
     }
 
     @Test
-    @DisplayName("rejects a body whose SHA-256 differs from its attempt's digest")
-    void rejects_a_mismatched_body() {
+    @DisplayName("has no digest trigger: a mismatched body is not rejected at this layer (H39)")
+    void accepts_a_mismatched_body_with_no_trigger_to_reject_it() {
         final String messageId = sentLegWithDigestOf("the exact bytes");
-        assertThatThrownBy(() -> execute(
+        assertThatCode(() -> execute(
                 "INSERT INTO outbound_body (outbound_message_id, body) VALUES ('"
                         + messageId + "', 'different bytes')"))
-                .isInstanceOf(DataAccessException.class);
+                .doesNotThrowAnyException();
     }
 
     @Test

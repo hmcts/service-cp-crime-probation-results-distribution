@@ -180,28 +180,9 @@ CREATE TABLE outbound_body (
         REFERENCES outbound_message (id) ON DELETE RESTRICT
 ) PARTITION BY RANGE (created_at);
 
-CREATE FUNCTION outbound_body_digest_check() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE
-    expected text;
-BEGIN
-    SELECT body_digest INTO expected
-    FROM outbound_message
-    WHERE id = NEW.outbound_message_id;
-    IF NOT FOUND THEN
-        RETURN NEW; -- no parent: leave it to the foreign key
-    END IF;
-    IF expected IS NULL
-       OR expected <> encode(sha256(convert_to(NEW.body, 'UTF8')), 'hex') THEN
-        RAISE EXCEPTION 'outbound_body digest mismatch for %', NEW.outbound_message_id;
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER outbound_body_digest_trg
-    BEFORE INSERT OR UPDATE ON outbound_body
-    FOR EACH ROW EXECUTE FUNCTION outbound_body_digest_check();
-
+-- No digest trigger (H39): the estate keeps its rules in the Java tier. The single write path
+-- behind OutboundLog stores the same bytes it digested, so a body's SHA-256 equals its attempt's
+-- body_digest by construction; no other code path writes outbound_body.
 CREATE TABLE IF NOT EXISTS outbound_body_default PARTITION OF outbound_body DEFAULT;
 
 -- The current month's partition and the next two, each created only if absent (slice 003 maintains

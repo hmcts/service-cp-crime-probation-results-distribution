@@ -74,8 +74,8 @@ CREATE TABLE intake_control (
 INSERT INTO intake_control (id) VALUES (1);
 ```
 
-- Exactly one row, enforced by the CHECK and seeded by the migration — the same single-row pattern as
-  slice 003's `body_maintenance_state`.
+- Exactly one row, enforced by the CHECK and seeded by the migration — the same single-row-per-key
+  pattern as slice 003's `scheduled_job_status` (keyed there by `job_name`; this table has one key).
 - `paused_by_operator`: the durable record of the operator pause (FR-004-051, FR-004-052).
   `paused_at` is set when it flips to `true` and cleared (`NULL`) when it flips back — this is the
   value the alert "a request non-terminal for more than 30 minutes" style reasoning could later use

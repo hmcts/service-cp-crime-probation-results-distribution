@@ -206,6 +206,10 @@ merged spec: no new user story, a correction of Phase 3's and Phase 6's prior wo
 
 - [x] T046 Add Flyway `V2__create_body_maintenance_state.sql`: the one-row `body_maintenance_state`
   table (`last_success_at timestamptz NOT NULL`), seeded with the migration time; V1 unchanged (H38)
+  **Superseded 2026-11-02 (H38 amended 2026-10-24)**: renamed to
+  `V2__create_scheduled_job_status.sql` — edited in place, since it was not yet applied anywhere —
+  creating `scheduled_job_status(job_name text PRIMARY KEY, last_success_at timestamptz NOT NULL)`,
+  one row per scheduled job, seeded `('body-retention', clock_timestamp())`. `V1` still unchanged.
 - [x] T047 Implement `maintenance/BodyMaintenanceStateRepository.java`: an independent
   `lastSuccessAt()` read (for the gauge) and `recordSuccessOnConnection(Connection)`, which MUST run
   on the single-runner lock's own connection under a savepoint — not `PartitionMaintenanceRepository`'s

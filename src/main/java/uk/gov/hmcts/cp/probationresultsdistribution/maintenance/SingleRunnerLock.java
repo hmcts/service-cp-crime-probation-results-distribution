@@ -73,7 +73,7 @@ public final class SingleRunnerLock {
 
     /**
      * The connection presently holding the advisory lock, for the one statement the design requires
-     * to run on it rather than its own, separate transaction: the {@code body_maintenance_state}
+     * to run on it rather than its own, separate transaction: the {@code scheduled_job_status}
      * update (FR-003-032), so that a run's success is recorded in the same transaction as the lock
      * it was computed under and commits together with it.
      *

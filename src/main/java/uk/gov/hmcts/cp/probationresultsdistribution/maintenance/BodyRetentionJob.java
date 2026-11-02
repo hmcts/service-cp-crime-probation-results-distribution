@@ -18,7 +18,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.MaintenanceFailureCau
  * The service's one scheduled task (FR-003-001): every run ensures the current UTC month and the
  * next three each have a partition (H37), removes each whole partition past the retention cut-off,
  * deletes stranded DEFAULT-partition rows before the same cut-off, and — on a run that held the lock
- * and found no failure — records its success in {@code body_maintenance_state} (H38), under a
+ * and found no failure — records its success in {@code scheduled_job_status} (H38), under a
  * single-runner advisory lock.
  *
  * <p>Logs one INFO start line on every trigger, one INFO skip line from a pod that does not get the
@@ -53,7 +53,7 @@ public final class BodyRetentionJob {
      * @param retention       the whole-months retention the cut-off is computed from (FR-003-009)
      * @param lockSupplier    supplies a fresh {@link SingleRunnerLock} for each run (FR-003-002)
      * @param metrics         this slice's own counters and gauges (FR-003-020 to FR-003-022)
-     * @param stateRepository the {@code body_maintenance_state} repository a successful run records
+     * @param stateRepository the {@code scheduled_job_status} repository a successful run records
      *                        into (FR-003-032)
      */
     public BodyRetentionJob(final DatabaseClock clock, final PartitionCatalogue catalogue,
@@ -166,7 +166,7 @@ public final class BodyRetentionJob {
     }
 
     // Reads the fresh end-of-run signals (never the metrics cache), logs the end-of-run WARN when
-    // due, records this run's success in body_maintenance_state when nothing failed, and logs the
+    // due, records this run's success in scheduled_job_status when nothing failed, and logs the
     // run's one summary line. A "state"/"read" failure is summarised but never counted on the
     // maintenanceFailure metric (FR-003-021's step set stays closed).
     private void recordSuccessAndSummarise(final SingleRunnerLock lock,

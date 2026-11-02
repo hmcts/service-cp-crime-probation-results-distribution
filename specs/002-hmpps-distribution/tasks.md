@@ -53,8 +53,15 @@ description: "Task list for HMPPS distribution (slice 002)"
 - [x] T009 Write `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/persistence/ProcessedRequestSchemaIT.java` (Postgres Testcontainers) asserting the `processed_request` table exists with IR's byte-identical block plus the `command`, `replayed_at` `ALTER`s, the replaced exhausted-ID CHECK and the completion-/failure-reason CHECKs — run first to fail (no migration yet) (FR-002-050, FR-002-051)
 - [x] T010 [P] Write `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/persistence/OutboundMessageSchemaIT.java` asserting `outbound_message`'s full CHECK matrix from data-model.md (unique key, status/reason pairs including future `payload-changed`/`rolled-back` cells, the five presence checks, the four pairings, claim-triple/`resend_run_id` presence) — fails first (FR-002-052, FR-002-043)
 - [x] T011 [P] Write `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/persistence/OutboundBodySchemaIT.java` asserting the partitioned `outbound_body` table (current month + next two + DEFAULT partition), the `outbound_body_digest_trg` trigger rejecting a mismatched digest, and the `ON DELETE RESTRICT` foreign key — fails first (FR-002-054)
+      **Superseded 2026-10-30 (H39)**: V1's digest trigger is removed — edited in place, since V1 was
+      "not yet applied anywhere" (H39's own words). `OutboundBodySchemaIT`'s trigger-rejection case
+      is replaced with `accepts_a_mismatched_body_with_no_trigger_to_reject_it`, asserting the DB no
+      longer rejects it; the consistency guarantee FR-002-042 now requires is pinned separately by
+      the new `OutboundBodyDigestConsistencyIT` (first send, in-place re-run, resend).
 - [x] T012 [P] Write `src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/persistence/OutboundMessageLatestViewTest.java` asserting the view returns the highest `attempt` per `(source, request_id, leg)` — fails first (FR-002-053)
 - [x] T013 Implement `src/main/resources/db/migration/V1__create_processed_log.sql` per design Appendix B.2: IR's `processed_request` block byte-identical, then the `ALTER`s; `outbound_message` with every CHECK and index from data-model.md; the `outbound_message_latest` view; the partitioned `outbound_body` with its trigger function and current+2 monthly partitions plus DEFAULT, created only if absent — makes T009–T012 pass (FR-002-050 to FR-002-054, FR-002-043)
+      **Superseded 2026-10-30 (H39)**: the digest trigger function and trigger are removed from V1;
+      the partitioned table, its FK and PK, and the current+2 monthly partitions are unchanged.
 - [x] T014 Run T005's `SchemaVocabularyIT` against V1 and extend it to cover every CHECK's accepted/rejected cells across the full matrix, including `payload-changed` and `rolled-back` — makes it pass (FR-002-031, FR-002-055)
 
 ### Application core: ports, runner skeleton, state machine

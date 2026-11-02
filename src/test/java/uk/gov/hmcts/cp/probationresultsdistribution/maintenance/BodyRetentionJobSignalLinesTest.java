@@ -199,7 +199,7 @@ class BodyRetentionJobSignalLinesTest {
     }
 
     @Test
-    @DisplayName("a failed body_maintenance_state update is logged step=state, summarised as failed, and never counted on the failures metric")
+    @DisplayName("a failed scheduled_job_status update is logged step=state, summarised as failed, and never counted on the failures metric")
     void logs_a_failed_state_update_as_step_state() {
         when(lock.tryAcquire()).thenReturn(true);
         when(catalogue.partitions()).thenReturn(allFourMonthsPresent());

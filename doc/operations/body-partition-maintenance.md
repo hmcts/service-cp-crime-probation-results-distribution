@@ -10,7 +10,7 @@ This entry supplies the recovery procedure and series those rules consume.
 | `probation_body_maintenance_failures_total{step}` | Failures; step is `lock`, `create` or `drop` only — a `state` or `read` failure (below) is logged and summarised but never counted here | Any new `create` or `drop` failure; DEFAULT-delete failures count as `drop` |
 | `probation_body_default_partition_rows` | Row count, read from the database whenever metrics are collected, on every pod, lock or not, at most five minutes old (a cached read) | Greater than zero, or a reading of `-1` (a failed read), or no sample in the rule's window |
 | `probation_body_partitions_ahead_months` | Consecutive whole months after the current one with a partition, read the same way (five-minute cache); the job never sets it | Fewer than two, or `-1`, or no sample |
-| `probation_body_maintenance_last_success_seconds` | The epoch-second timestamp of the job's last no-failure completion, kept in the database (`body_maintenance_state`, H38) and read the same way (five-minute cache) | More than 48 hours old, or `-1`, or no sample |
+| `probation_body_maintenance_last_success_seconds` | The epoch-second timestamp of the job's last no-failure completion, kept in the database (the `body-retention` row of `scheduled_job_status`, H38) and read the same way (five-minute cache) | More than 48 hours old, or `-1`, or no sample |
 
 All three gauges are read independently of the single-runner lock and of whether the job has ever
 run on this pod (A3-118): every pod reports the same reading, a stopped job is seen once the
@@ -27,7 +27,7 @@ with fewer than two whole months ahead, and another when it ends with no failure
 three (H37).
 
 A failure's ERROR line gives a bounded step (`lock`, `create`, `drop`, or `state`/`read` for a
-failed `body_maintenance_state` update or fresh end-of-run read), month where relevant, cause
+failed `scheduled_job_status` update or fresh end-of-run read), month where relevant, cause
 (`lock-timeout`, `default-has-rows`, `partition-overlap`, `store-unavailable` or `other`) and
 `sqlState` (the five-character PostgreSQL code, or `unavailable`). Database error text and stored
 bodies are excluded from every line, at every level. Inspect partition names, UTC bounds and counts

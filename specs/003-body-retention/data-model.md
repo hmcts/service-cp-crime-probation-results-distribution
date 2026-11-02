@@ -1,21 +1,24 @@
 # Data Model: Body Retention
 
 Phase 1 output for `003-body-retention`. 002's `V1__create_processed_log.sql` is unchanged. This
-slice's own Flyway `V2` adds exactly one table, `body_maintenance_state` (H38) — see below. What
-follows are the entities this slice reasons about (several are rows/structures that already exist; a
-few are types this slice originates in code).
+slice's own Flyway `V2` adds exactly one table, `scheduled_job_status` (H38, amended 2026-10-24
+from the one-row `body_maintenance_state`) — see below. What follows are the entities this slice
+reasons about (several are rows/structures that already exist; a few are types this slice
+originates in code).
 
-## `body_maintenance_state` (this slice's own table, Flyway `V2`)
+## `scheduled_job_status` (this slice's own table, Flyway `V2`)
 
 | Field | Type | Notes |
 |---|---|---|
+| `job_name` | text, PRIMARY KEY | this job's row is `body-retention`; one row per scheduled job |
 | `last_success_at` | timestamptz, NOT NULL | when the job last completed a run with no failure |
 
-One row, created and seeded with the migration time by `V2`. Read independently of any run, on
-every pod, for the `probation_body_maintenance_last_success_seconds` gauge (A3-118). Updated only
-by a run that held the single-runner lock and found no failure, as the last statement of that lock's
-own transaction, under its own savepoint, using the database's wall clock (`clock_timestamp()`, not
-`now()`) — never from outside `BodyRetentionJob` (FR-003-032).
+One row per scheduled job; this slice's own row is created and seeded with the migration time by
+`V2`. Read independently of any run, on every pod, for the
+`probation_body_maintenance_last_success_seconds` gauge (A3-118). Updated only by a run that held
+the single-runner lock and found no failure, as the last statement of that lock's own transaction,
+under its own savepoint, using the database's wall clock (`clock_timestamp()`, not `now()`) — never
+from outside `BodyRetentionJob` (FR-003-032).
 
 ## Entities already owned by 002 (read/acted on, never redefined)
 
@@ -116,7 +119,7 @@ owns is:
   never lists it again).
 - A `DEFAULT` row's existence: **present → absent**, once its `created_at` is before the cut-off, via
   `DELETE`.
-- `body_maintenance_state.last_success_at` (one row, in the database, surviving a pod restart):
+- `scheduled_job_status.last_success_at` (the `body-retention` row, in the database, surviving a pod restart):
   **seeded at migration time → set to `clock_timestamp()`** on a run that held the lock and ended with
   no failure (lock/create/drop failures, and a failed fresh end-of-run read, all leave it unchanged —
   FR-003-032). A skipped run, a run with a failure, or a failed state update also leaves it unchanged.
