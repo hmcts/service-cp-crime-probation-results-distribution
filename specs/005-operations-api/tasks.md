@@ -1009,7 +1009,7 @@ an identically seeded store, and compare the reports ID for ID.
       BRANCH 0.9142 (1108/1212). Two earlier attempts at the same run failed only on the Service
       Bus emulator's `50002` throttling (`DatabaseOutageIT`, then `DlqResubmissionReplayIT`), the
       environment flakiness recorded above.
-- [ ] T043 Run every `quickstart.md` step end to end. **Run 2026-10-30 at `74182cb`: steps 1–6
+- [X] T043 Run every `quickstart.md` step end to end. **Run 2026-10-30 at `74182cb`: steps 1–6
       each behave as written (T023, T029; step 6 `OperationsContractTest` 10/10), but left open for
       two defects the run exposed, neither fixed here.** (a) With the audit transport off
       (`CP_AUDIT_ENABLED=false`, docker-compose's own default, and no broker on `localhost:61616`)
@@ -1059,9 +1059,21 @@ an identically seeded store, and compare the reports ID for ID.
       `OperationsRefusalSweepTest`'s javadoc still said the resend-leg refusal sweep was
       `[BLOCKED-ON-004]` — stale since `ResendLegController` and its own non-echo/content-type
       sweep (`ResendLegControllerTest`) have existed since 004's T078 landed; corrected to point at
-      where that coverage actually lives. **Still open**: every step passed except the real-broker
-      half of step 5, which needs headroom this environment didn't have at run time — not a product
-      regression, an environment gap.
+      where that coverage actually lives.
+      **Defect (b) re-verified live 2026-11-02 at `bafa11e`**, after freeing the Docker VM disk
+      (`docker buildx prune`, `docker image prune` — 8.376 GB + 154.4 MB reclaimed, 95%→44% used):
+      a real `apache/activemq-artemis:2.37.0` container this time logged `Server is now active`
+      with no disk-usage warning. Against it, with `CP_AUDIT_ENABLED=true` and
+      `CP_AUDIT_HOSTS_0_`/`CP_AUDIT_PORT`/`CP_AUDIT_USER`/`CP_AUDIT_PASSWORD` set, a `resend-leg`
+      call carrying a canary operator and reason (`CANARY-operator-name`/`CANARY-reason-text`)
+      answered `202 {"resendRunId":...}`; a JMS subscriber on `jms.topic.auditing.event` recorded
+      **exactly two** events — `{"action":"resend-leg","allowTerminalSuccess":true,
+      "allowChangedPayload":false}` and `{"action":"resend-leg","allowTerminalSuccess":true,
+      "allowChangedPayload":false,"outcome":"accepted","resendRunId":...,"ids":1}` — neither
+      containing the canary operator, the canary reason or the request body; the resend itself
+      settled to `SENT`, the request `COMPLETED(recovered)`. T052's fix holds against a real
+      broker, not just the automated suite. Every quickstart step now passes end to end; nothing
+      left open on this task.
 - [X] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
       filter chain in T014, including the one case research.md Decision 2 flags as not yet
       re-verified by a running test: a caller sending a conflicting `CPP-ACTION` header has no effect

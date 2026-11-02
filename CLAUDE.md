@@ -178,23 +178,31 @@ submit-hearing, matches `quickstart.md` exactly); T076 (re-checked 2026-11-02: n
 has overturned any of the three confirmed decisions since 2026-10-26); and this paragraph (T077).
 
 `005-operations-api` (`specs/005-operations-api/plan.md`, with `research.md`, `data-model.md`,
-`quickstart.md` and `contracts/` alongside it) is implemented over 004's real `ReplayAction` and
-`LegResender` — both `[NEEDS CLARIFICATION]` markers are resolved (resend-leg answers `202`
-accepted-run; the caller group defaults to `Second Line Support` pending H31's confirmation), and 50
-of its 52 tasks are checked, including the two audit defects (T051, T052) its own manual quickstart
-run exposed — the transport-off silent-503 bug and the library audit filter's double-publish — both
-fixed and pinned 2026-10-30. The `[BLOCKED-ON-004]` tags once attached to US2/US3/US7 are gone:
-004's T078 wired the real `ReplayAction`/`LegResender` into both composition roots, every one of
-those stories' tasks is checked, and a 2026-11-02 live run confirmed replay, resend-leg and forced
-resend all work over real HTTP against the real services — not mocks — with the exact `202`/`200`
-shapes `quickstart.md` documents, the `401` with no `CJSCPPUID`, and the US7 HTTP/CLI parity check.
-One half of one task remains open: **T043**'s real-broker audit double-publish re-confirmation
-(T052's fix) could not be re-run live this session — the local Docker Desktop VM disk was at 95%
-capacity, which makes a real Artemis broker silently block producers rather than error, the likely
-cause of an unrelated test hang found the same session; this needs an environment with headroom,
-not a code change. `006-production-readiness` is specified (`specs/006-production-readiness/spec.md`)
-but not yet planned: it still carries 3 unresolved `[NEEDS CLARIFICATION]` markers, so
-`/speckit-clarify` is the next step before `/speckit-plan`.
+`quickstart.md` and `contracts/` alongside it) is **implemented in full — all 52 tasks checked** —
+over 004's real `ReplayAction` and `LegResender`; both `[NEEDS CLARIFICATION]` markers are resolved
+(resend-leg answers `202` accepted-run; the caller group defaults to `Second Line Support` pending
+H31's confirmation). The two audit defects (T051, T052) its own manual quickstart run exposed — the
+transport-off silent-503 bug and the library audit filter's double-publish — are fixed and pinned
+(2026-10-30), and both are now re-confirmed live, not just by the automated suite: a 2026-11-02 run
+with the audit transport off got the documented WARN and normal `200`/`202` answers, never the old
+`503`; a second run with a real Artemis broker (after freeing Docker's VM disk, which had been
+stalling real brokers — see below) put exactly two bounded audit events per call, neither carrying
+the caller's operator, reason or the request body. The `[BLOCKED-ON-004]` tags once attached to
+US2/US3/US7 are gone: 004's T078 wired the real `ReplayAction`/`LegResender` into both composition
+roots, and the same live runs confirmed replay, resend-leg and forced resend all work over real
+HTTP against the real services, with the exact `202`/`200` shapes `quickstart.md` documents, the
+`401` with no `CJSCPPUID`, and the US7 HTTP/CLI parity check. **Nothing left open in 005.**
+`006-production-readiness` is specified (`specs/006-production-readiness/spec.md`) but not yet
+planned: it still carries 3 unresolved `[NEEDS CLARIFICATION]` markers, so `/speckit-clarify` is the
+next step before `/speckit-plan`.
+
+**Environment note**: this branch's local Docker Desktop VM disk was found at 95% capacity
+(unused build cache and dangling images from unrelated projects sharing the daemon), which makes a
+real or Testcontainers-managed Artemis broker silently block producers rather than error — the
+likely cause of an unrelated `OperationsAuditTransportIT` hang found mid-session. Freed with
+`docker buildx prune -f` (8.376 GB) and `docker image prune -f` (154.4 MB), down to 44% used. If a
+broker-based test or manual run stalls with no error again, check `docker run --rm alpine df -h /`
+before assuming a code regression.
 
 **The Spec Kit scripts resolve the active feature from the current branch name by default**
 (`specs/<NNN>-*` matching the branch's numeric prefix), which only resolves correctly for
