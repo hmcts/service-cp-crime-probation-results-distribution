@@ -8,7 +8,7 @@
 
 - [x] No implementation details (languages, frameworks, APIs) — the spec names what the design fixes
       for this job (A3-64; H35): the two properties, the six `probation_body_*` metrics and their
-      `step` label, the one-row maintenance-state table (H38), V1's partition names and bounds, and the PostgreSQL mechanisms the design
+      `step` label, the `scheduled_job_status` table (H38), V1's partition names and bounds, and the PostgreSQL mechanisms the design
       prescribes (a transaction-scoped advisory lock, a lock timeout, partition bounds read from the
       catalogue, a plain `DROP` of an expired partition in its own transaction). The design's SQL is
       quoted only where the design is cited (the Clarifications and open question 1), and the slice
@@ -183,7 +183,7 @@
   - User Story 4 scenarios 6–9, SC-003-014, SC-003-015, a Clarifications session, the Input line,
     Dependencies and the traceability table (rows A3-118, A3-119, H36, H37) follow.
   - An independent review then found that a per-pod last-success value is lost on a restart and has
-    none at first deployment: H38 keeps it in a one-row table created and seeded by this slice's
+    none at first deployment: H38 keeps it in a table created and seeded by this slice's
     Flyway `V2` (FR-003-032; V1 unchanged; slice 002 has no `V2`). Also from that review: a failed
     gauge read reports `-1` and is not cached; the WARNs and the summary read the catalogue fresh,
     not the metrics cache; the database's error text is never logged at any level and `sqlState` is
@@ -191,6 +191,11 @@
     SC-003-015 states the cache, export and evaluation delays.
 
   Every item passes; no marker remains.
+- Validation run 6 (2026-10-24, H38 amended): the last-success table is `scheduled_job_status`, one
+  row per scheduled job keyed by `job_name`, this job's row `body-retention` (it was the one-row
+  `body_maintenance_state`); a missing row reads `-1`. FR-003-032, User Story 4 scenario 10, the
+  Key Entities, the traceability row and a 2026-10-24 Clarifications session follow. Every item
+  passes; no marker remains.
 - This spec was written directly in `specs/003-body-retention/`. `.specify/feature.json` does not
   point at it; a developer starting the feature branches `003-body-retention` from `main` (or sets
   `feature.json`) before running `/speckit-plan`.
@@ -271,7 +276,7 @@ lock, and whether a run that is overdue should be signalled.
 
 **Your choice**: Custom, close to D (A3-118, 2026-10-23) — the months ahead (a new gauge) and the
 DEFAULT row count are read from the database whenever the metrics are collected, on every pod, lock
-or not (cached 5 minutes), and so is the end of the last run with no failure, kept in a one-row
-table created by this slice's Flyway `V2` (H38); a failed read reports `-1`; the alert also fires on too few months ahead (fewer than
+or not (cached 5 minutes), and so is the end of the last run with no failure, kept in the
+`body-retention` row of `scheduled_job_status`, created by this slice's Flyway `V2` (H38); a failed read reports `-1`; the alert also fires on too few months ahead (fewer than
 two, H37, with three kept ahead) or more than 48 hours without a successful run. A3-119 adds the run
 log lines; H36 says how the alerts are delivered.

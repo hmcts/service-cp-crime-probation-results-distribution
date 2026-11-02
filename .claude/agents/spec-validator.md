@@ -80,7 +80,7 @@ This service is a message-in, **redact-and-send** service: a lift-and-shift port
 ### 3. The outbound HMPPS body
 
 - **Not validated against any schema in this release** (H13): an outbound schema check, a validator, a validation mode property or a `contract-invalid` write is a HIGH finding. What guards the body is parity: the legacy oracle and the deviation register (contract 7).
-- `body_digest` and `service_version` (the build version) recorded whenever a body was serialised for a POST (H19); the exact bytes POSTed inserted into `outbound_body` after the outcome UPDATE, in the same transaction, accepted by the digest trigger (H18, H20). Hearing payloads are never persisted.
+- `body_digest` and `service_version` (the build version) recorded whenever a body was serialised for a POST (H19); the exact bytes POSTed inserted into `outbound_body` after the outcome UPDATE, in the same transaction, by the single write method behind `OutboundLog` from the bytes it digested, with no database trigger (H18, H20, H39). Hearing payloads are never persisted.
 - Headers: `Ocp-Apim-Subscription-Key` from configuration and `Content-Type: application/json`. No client certificate (D4b).
 - Outcome mapping (H11, H12, H15): any 2xx → `SENT`, a non-200 2xx also logged at WARN and counted; a 4xx other than 408 and 429 → `FAILED(receiver-rejected)`; a connection failure or 429 still failing after the in-run retries → `PARKED(gateway-transient)`; a 5xx, a 408 or a read timeout or I/O failure after the write → `PARKED(gateway-transient)` at once, with no in-run retry; `FAILED(gateway-transient)` on the final delivery or a resend. The publisher never throws past its outcome.
 
