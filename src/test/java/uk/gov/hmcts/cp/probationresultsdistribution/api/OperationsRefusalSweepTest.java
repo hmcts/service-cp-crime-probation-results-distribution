@@ -38,8 +38,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
  * contains, and a successful call's {@code requestId} is always the service's own canonical parse,
  * never the raw characters sent.
  *
- * <p>The resend-leg half of this story is {@code [BLOCKED-ON-004]}: there is no
- * {@code ResendLegController} to sweep yet. This test covers only the endpoint that exists.
+ * <p>The resend-leg half of this story is pinned separately, in {@code ResendLegControllerTest}
+ * (its own non-echo and content-type assertions over {@code ResendLegController}), now that 004's
+ * real {@code LegResender} is wired for both endpoints (004 T078). This test covers the replay
+ * endpoint only.
  */
 @WebMvcTest(controllers = ReplayController.class, properties = "distribution.consumer.enabled=false")
 @ActiveProfiles("test")

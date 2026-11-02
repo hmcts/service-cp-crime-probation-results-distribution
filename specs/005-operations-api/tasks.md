@@ -1025,13 +1025,60 @@ an identically seeded store, and compare the reports ID for ID.
       stub transport replaces the template. Not verified manually: nothing else; the audit half of
       step 5 was checked against a throwaway local Artemis broker, which the quickstart does not
       mention
+      **Re-run 2026-11-02 at `ecc3221`, end to end, against a fresh `docker compose up -d postgres
+      servicebus-emulator redis wiremock` plus `./gradlew bootRun` with
+      `AUTHZ_HTTP_ENABLED=true HTTP_AUDIT_ENABLED=true CP_AUDIT_ENABLED=false` exactly as
+      `quickstart.md` specifies (postgres remapped to a free host port locally only, to dodge an
+      unrelated already-running container; no change to the committed compose file). The defect (a)
+      regression is the one this run most needed to confirm, since it needs no broker at all: the
+      service logged the documented startup WARN verbatim ("the operations API's HTTP audit filter
+      is on ... but its JMS transport is off ... admitted calls will be served unaudited") and every
+      admitted call answered normally — `replay` `200 {"outcome":"enqueued",...}`, `resend-leg`
+      `202 {"resendRunId":...}` — never the `503 audit-unavailable` T051 fixed. Step 3 (no
+      `CJSCPPUID`) → `401`. Step 2's replay/recover cycle and step 7's US7 parity check both ran
+      live: a second identically-seeded pair, one replayed over HTTP, the other via
+      `java -jar app.jar replay --request-id`, both answered `outcome=enqueued` and both requests
+      reached `COMPLETED(recovered)`. Step 4 (`resend-leg` over HTTP) → `202` immediately, the run
+      settling to `SENT`/`COMPLETED(recovered)` behind it. Step 5 (`allowTerminalSuccess: true` on
+      the now-`SENT` leg) → `202`, a new attempt row with `note=override=force-resend` and
+      `forced=true` on the outcome log line, request stayed `COMPLETED`. Step 6
+      (`OperationsContractTest`) → 10/10, unchanged. **Defect (b), the real-broker double-publish
+      check, could not be re-verified live this run**: the local Docker Desktop VM disk was at 95%
+      capacity (2.8 GB free of 58.4 GB — the macOS host disk itself was only 7% used; this is
+      Docker's own VM allocation), and a real Artemis broker's `max-disk-usage` guard at that
+      threshold silently blocks producers rather than erroring — the most likely explanation for an
+      unrelated 18+ minute hang in `OperationsAuditTransportIT.resendLeg_httpAuditFilterOff_...`
+      found while re-running `./gradlew build` for 004's T075 the same session (thread dump: the
+      test's HTTP client blocked in `Mono.block()`, no server-side thread ever picking up the
+      request). Offered to free the space (`docker buildx prune`/`docker image prune`, unused layers
+      only); the user did not respond in time and the auto-mode classifier correctly refused the
+      prune without explicit consent, so it was not done. T052's fix is unchanged since its own
+      2026-10-30 landing and `OperationsAuditTransportIT`'s suite history (10/10 the last time it
+      ran clean, before this session's disk-constrained environment); a live real-broker
+      confirmation stays a to-do for an environment with headroom. Also fixed in this pass:
+      `OperationsRefusalSweepTest`'s javadoc still said the resend-leg refusal sweep was
+      `[BLOCKED-ON-004]` — stale since `ResendLegController` and its own non-echo/content-type
+      sweep (`ResendLegControllerTest`) have existed since 004's T078 landed; corrected to point at
+      where that coverage actually lives. **Still open**: every step passed except the real-broker
+      half of step 5, which needs headroom this environment didn't have at run time — not a product
+      regression, an environment gap.
 - [X] T044 [P] Confirm T013's `OperationsActionResolutionFilter` ordering holds against the real
       filter chain in T014, including the one case research.md Decision 2 flags as not yet
       re-verified by a running test: a caller sending a conflicting `CPP-ACTION` header has no effect
-- [ ] T045 Update `CLAUDE.md`'s Setup section once this slice is fully implemented (not just
+- [X] T045 Update `CLAUDE.md`'s Setup section once this slice is fully implemented (not just
       planned), and hand the Dependencies → "006-production-readiness" section to whoever starts
       that slice next — **not done in this pass**: US2/US3/US7 remain `[BLOCKED-ON-004]`, so the
       slice is not fully implemented yet
+      Re-checked 2026-11-02 at `ecc3221`: the `[BLOCKED-ON-004]` tags above were stale, not current
+      — every US2/US3/US7 task (T024, T025–T028, T030, T031, T038, T039, T046–T050) is checked, 004's
+      T078 wired the real `ReplayAction`/`LegResender` into both composition roots, and this
+      session's live run confirmed replay, resend-leg and forced resend all work over real HTTP
+      against the real application services, not mocks. `OperationsRefusalSweepTest`'s own stale
+      `[BLOCKED-ON-004]` javadoc (the one place that language survived in source) is fixed in the
+      same pass. CLAUDE.md's Setup section is rewritten accordingly: 50/52 tasks, implementation
+      complete, with T043's one still-open half (the real-broker audit double-publish
+      re-confirmation) and this task both named as what remains. 006's status is unchanged from the
+      004 hand-off (3 unresolved `[NEEDS CLARIFICATION]` markers, no plan yet).
 
 **T040/T041/T044 landing note**: `OperationsConfigPropertiesTest` reads the live `distribution.*`
 property names out of `application.yaml` with `YamlPropertySourceLoader` (not retyped by hand, so a
