@@ -105,8 +105,10 @@ private CachedHearingPayloadAdapter adapter;
   `NoteForms` forms, of which `baseline=none` and `contract=invalid` are reserved, unused
 - PostgreSQL 15, production's version (row A3-105). `outbound_body` is partitioned by month on
   `created_at` (UTC) with a DEFAULT partition; its partitions are created by the service role, which
-  owns the database, so the role owns them and can detach and drop them. The digest trigger and the
-  `ON DELETE RESTRICT` foreign key are part of V1
+  owns the database, so the role owns them and can detach and drop them. The `ON DELETE RESTRICT`
+  foreign key is part of V1. **No database triggers** (H39): the estate keeps its rules in the Java
+  tier, so a body's match to its `body_digest` is guaranteed by the single write method behind
+  `OutboundLog`, which stores the bytes it digested, and pinned by an integration test
 - Write order: the leg's outcome UPDATE (with `body_digest`) first, then the `outbound_body` INSERT,
   in the same transaction (H20)
 - The body-retention job: single runner by a transaction-scoped advisory lock on a fixed key, its
