@@ -155,23 +155,41 @@ Postgres, Redis, WireMock).
 All six features are specified (design rev 3.6 + H35, constitution v2.0.1). **This branch,
 `002-hmpps-distribution` (PR #8), is now the one common integration branch for every slice**: all
 further work on any spec, for any slice, lands here, rather than spreading across per-slice
-branches — open one long-lived PR, not one per slice. `001-parity-kernel` and `002-hmpps-distribution`
-are implemented here (Flyway V1, enums, state machine, ports, metric registry, the redaction pipeline
-and the ported rules). `001-parity-kernel`'s own corpus is **not** yet a satisfied go-live evidence
-gate (H21, FR-001-017): the committed corpus is synthetic-only, holding only the `CACHE` form, pending
-the owning team's SIT capture (`doc/DEVIATIONS.md` "Corpus status"; an external dependency, not a code
-gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are resolved (spec.md
-Clarifications). `003-body-retention` is implemented here too (the body-maintenance job, Flyway V2).
-`004-recovery` is planned here (`specs/004-recovery/plan.md`, with `research.md`, `data-model.md`,
-`quickstart.md`, `contracts/` and `tasks.md` alongside it), with its first foundational pieces (the
-`cli` runner-dispatch package, the `WholeRunRefusal`/`RunnerOutcome` vocabulary) implemented; the
-rest of its 77 tasks await the remaining guard/runner/port work. `005-operations-api` is now planned
-too, fully clarified (both `[NEEDS CLARIFICATION]` markers resolved 2026-10-25: resend-leg answers
-`202` accepted-run; the caller group defaults to `Second Line Support` pending H31): **the current
-plan is `specs/005-operations-api/plan.md`**, with `research.md`, `data-model.md`, `quickstart.md`
-and `contracts/` alongside it; nothing of it is implemented yet, and it depends on 004's
-`ReplayAction`/`LegResender` landing for real. `006-production-readiness` is specified but not yet
-planned.
+branches — open one long-lived PR, not one per slice. `001-parity-kernel`, `002-hmpps-distribution`
+and `003-body-retention` are implemented here in full (Flyway V1/V2, enums, state machine, ports,
+metric registry, the redaction pipeline, the ported rules, the body-maintenance job) — every task in
+each of their `tasks.md` is checked. `001-parity-kernel`'s own corpus is still **not** a satisfied
+go-live evidence gate (H21, FR-001-017): the committed corpus is synthetic-only, holding only the
+`CACHE` form, pending the owning team's SIT capture (`doc/DEVIATIONS.md` "Corpus status"; an external
+dependency, not a code gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are
+resolved (spec.md Clarifications).
+
+`004-recovery` (`specs/004-recovery/plan.md`, with `research.md`, `data-model.md`, `quickstart.md`,
+`contracts/` and `tasks.md` alongside it) is implemented: all three confirmed decisions (FR-004-024,
+FR-004-049, FR-004-052) landed, replay is wired through a production `ReplayEnqueuer` in both
+composition roots (T078), and 74 of its 79 tasks are checked. Five remain open, none of them a
+guard/runner/port gap: T037 (the `pause-intake`/`rollback-close-in-flight`/`resume-intake` halves of
+the quickstart's step 6 are proven live against a running instance 2026-11-02, but `purge-queue`
+itself stays open — the installed Service Bus SDK has no native cutoff-delete operation, a dependency
+gap recorded 2026-10-27, not an application bug); T053 (walking the DLQ runbook with the owning team
+— a live session, not a build step, pending T052's 2026-10-30 landing); T075 (run live end to end
+2026-11-02: every other quickstart step, including replay, resend-leg, forced resend and
+submit-hearing, matches `quickstart.md` exactly); T076 (re-checked 2026-11-02: no owning-team change
+has overturned any of the three confirmed decisions since 2026-10-26); and this paragraph (T077).
+
+`005-operations-api` (`specs/005-operations-api/plan.md`, with `research.md`, `data-model.md`,
+`quickstart.md` and `contracts/` alongside it) is implemented over 004's real `ReplayAction` and
+`LegResender`: both `[NEEDS CLARIFICATION]` markers are resolved (resend-leg answers `202`
+accepted-run; the caller group defaults to `Second Line Support` pending H31's confirmation), and 50
+of its 52 tasks are checked, including the two audit defects (T051, T052) its own manual quickstart
+run exposed — the transport-off silent-503 bug and the library audit filter's double-publish — both
+fixed and pinned 2026-10-30. Two tasks remain: T043 (re-run `quickstart.md` end to end now that
+T051/T052 are in — not yet re-verified since they landed) and T045 (this slice's own `CLAUDE.md`
+hand-off, blocked on T043: US2/US3/US7 were still `[BLOCKED-ON-004]` when T045 was last touched,
+2026-10-30, before 004's T078 wired real replay — re-check those tags against the current tasks.md
+before treating T045 as safe to close). `006-production-readiness` is specified
+(`specs/006-production-readiness/spec.md`) but not yet planned: it still carries 3 unresolved
+`[NEEDS CLARIFICATION]` markers, so `/speckit-clarify` is the next step before `/speckit-plan`.
 
 **The Spec Kit scripts resolve the active feature from the current branch name by default**
 (`specs/<NNN>-*` matching the branch's numeric prefix), which only resolves correctly for

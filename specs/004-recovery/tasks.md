@@ -523,6 +523,28 @@ the close-in-flight statement over seeded `PENDING`/`PARKED` rows.
       resources and returns the contracted exit code. `PackagedIntakeCommandsIT` executes the built
       jar against PostgreSQL and the Service Bus emulator: durable pause, a live controller holding
       messages while paused, resume releasing them, guard refusals, and closing pending/parked rows.
+      Run live 2026-11-02 at `9e1db21`, against `docker compose up -d postgres servicebus-emulator
+      redis wiremock` (postgres remapped 5433:5432 locally to dodge an unrelated container already
+      on 5432; no change to the committed compose file) and `./gradlew bootRun` with the README's
+      documented local env (`SPRING_PROFILES_ACTIVE=local`, the emulator connection string,
+      `REDIS_PORT=6379`/`REDIS_SSL=false`, WireMock on 8089, the system user id, a local gateway
+      key, authz/audit off). `pause-intake` → `pause-intake done`, `intake_control` row
+      `paused_by_operator=t`; the running replica reconciled on its next store probe
+      (`intake suspended by an operator pause`, `probation_intake_suspended{cause="operator"}` 0→1
+      over `/actuator/prometheus`). `purge-queue` while paused → `purge-queue failed
+      reason=unsupported-broker-operation` then `reason=broker-unavailable`, exactly the open gap
+      this task and `quickstart.md` already document (no native SDK cutoff-delete; T037 stays open
+      for that part — see the 2026-10-27 SDK finding above). `rollback-close-in-flight` →
+      `rollback-close-in-flight done pendingClosed=0 parkedClosed=0` (nothing in flight, since every
+      seeded request had already settled). `resume-intake` → `resume-intake done`; the replica
+      reconciled (`the processed log answered; intake resumed`,
+      `probation_intake_suspended{cause="operator"}` back to 0). The sequence ran in the documented
+      order (pause → purge refused as the gap, not resumed around it → rollback → resume) and each
+      command exited without starting the web port, the ASB listener or the body-maintenance
+      scheduler, matching `contracts/cli-runners.md` and Decision 3. **Still open**: this proves
+      every half of step 6 except a *successful* purge, which needs the SDK capability (or an
+      alternative integration) the 2026-10-27 finding above says does not exist yet — the task's own
+      bar, not met by this run.
       RED: `/private/tmp/t037-cli-red.xml` records the assertion failure when `pause-intake` started
       the normal service and attempted a Redis connection; the isolated bootstrap removes that path.
       GREEN (2026-10-27): `./gradlew build` completed successfully; 877 tests, zero failures/errors/
@@ -969,6 +991,10 @@ completed replay until an operator removes it.
       no test task of its own (exempt), T053's walk-through still to come.
 - [ ] T053 Walk the runbook through with the owning team (SC-004-012) once T052 lands; record the
       outcome in the PR description, not in this repository
+      Not actionable by an agent: this is a live session with the Resulting Assistant team, not a
+      build step. T052 (the runbook's own gate) landed 2026-10-30. Open until that session happens;
+      its outcome goes in the PR description per this task's own instruction, never a repository
+      file.
 
 **Checkpoint**: the DLQ runbook is both published and proven true by the existing test suite.
 
@@ -1573,13 +1599,82 @@ fixed test-first in its own commit:
       2026-10-30 11:50 UTC, after the commit (11:34 UTC). Whole-report totals LINE 0.9465
       (3857/4075) / BRANCH 0.8863 (1216/1372); over the gate's own scope (`Application` and
       `config/**` excluded) LINE 0.9786 (3478/3554) / BRANCH 0.9125 (1106/1212) — gate 0.88 / 0.85.
-- [ ] T075 Run every `quickstart.md` step end to end in one sitting against a fresh local stack
-- [ ] T076 [P] Re-read `research.md`'s confirmed decisions against any subsequent owning-team
+- [X] T075 Run every `quickstart.md` step end to end in one sitting against a fresh local stack
+      Run 2026-11-02 at `9e1db21`, one sitting, against a fresh `docker compose up -d postgres
+      servicebus-emulator redis wiremock` plus `./gradlew bootRun` (postgres host-port remapped to
+      5433 locally only, to dodge an unrelated already-running container on 5432 — no change to the
+      committed compose file; the README's documented env set used for `bootRun` otherwise
+      unchanged). Steps exercised against the running service, not the test suite:
+      1. **Seed a FAILED request** — a `Hearing_Resulted` command sent onto `probation.requests`
+         with a cached `EXT_` payload and the HMPPS stub at 500: five deliveries each
+         `PARKED(gateway-transient)`, the fifth `FAILED(gateway-transient)`, request
+         `FAILED(leg-exhausted)`, `exhausted_message_id=RESULTS:<id>` — matches step 1 exactly.
+      2. **Replay via the runner** — `replay --request-id` → `enqueued` under a fresh
+         `REPLAY:<uuid>`; with the gateway still failing the attempt-1 row re-ran in place to
+         `FAILED` again (confirms "the exact legacy body re-sent, not a new payload" — a second
+         replay once the gateway answered 200 gave `SENT`, request `COMPLETED(recovered)`,
+         `audit_note` carrying `REPLAYED_AFTER_FAILURE prior=leg-exhausted route=service` — matches
+         step 2.
+      3. **Resubmit the original dead-letter entry** (same body, same exhausted `messageId`, no
+         `origin` property) once the request was `COMPLETED` — no new gateway POST (count stayed at
+         the same total), no DB change: the no-op the runbook's "remove it, do not resend it" rule
+         names — matches step 3.
+      4. **Resend a leg explicitly** on a second `FAILED(leg-exhausted)` request — first attempt hit
+         `FAILED(payload-changed)` because the hand-seeded test payload initially omitted the
+         top-level `sharedTime` field `SharedTimeCheck` reads (a fixture gap, not a product defect —
+         confirmed by reading `SharedTimeCheck.java`: the queue run's own `payload_shared_time` was
+         correctly `NULL` for the same reason); corrected the fixture to include a matching
+         `sharedTime` and re-ran — `resend-leg report ... summary={SENT=1}`, a new `resend`
+         attempt-3 row — matches step 4.
+      5. **Force a duplicate** on the now-`SENT` leg — `--force-resend-sent` → `forced=true` on the
+         outcome log line, a new attempt-4 row with `note=override=force-resend`, request stayed
+         `COMPLETED` — matches step 5.
+      6. **Pause, purge, resume** — see T037 above; every half proven except a successful purge,
+         which stays open for the documented SDK-capability reason.
+      7. **Submit a hearing never admitted** — only a Redis `EXT_` key seeded, no prior request row:
+         `submit-hearing` → `enqueued`, the resulting request `COMPLETED(both-legs-terminal)`,
+         `audit_note` carrying `SUPPORT_SUBMISSION operator=local-dev runId=<uuid>
+         reason=share never admitted` — matches step 7.
+      8. **List, to choose IDs** — `list-requests --status FAILED` → `rows=0` (both seeded requests
+         had already recovered); `list-dlq-completed` → the three still-dead-lettered copies of the
+         two recovered requests (the original and the replay's fresh id for the first, the original
+         for the second), each as a `dlq-completed` candidate — matches step 8.
+      No deviation from `quickstart.md`'s own documented expectations was found anywhere except the
+      already-known, already-tracked purge gap. The manual send/resubmit steps used a throwaway
+      JUnit helper (`ManualQuickstartSendIT`, deleted after this run, never committed) against the
+      real compose Service Bus emulator — `quickstart.md` itself has no CLI for an arbitrary queue
+      send, only for the runner-driven actions.
+      **Separately flagged, not part of this slice's gate**: `./gradlew build`'s full run on this
+      same commit left `OperationsAuditTransportIT.resendLeg_httpAuditFilterOff_...` (005) blocked
+      18+ minutes in a client-side HTTP call with no server-side thread processing it, rather than
+      failing or completing; killed rather than chased, since it sits outside 004's own tasks — the
+      thread dump narrowed it to that one method, not to this run's environment setup.
+- [X] T076 [P] Re-read `research.md`'s confirmed decisions against any subsequent owning-team
       (H31) changes; if any decision is overturned, apply the isolated change
       `research.md` names and re-run the affected story's tests only
-- [ ] T077 Update `CLAUDE.md`'s Setup section once this slice merges to `main`, and hand the
+      Re-read 2026-11-02 at `9e1db21`. Checked `git log --all --since=2026-10-26` for any commit,
+      spec, DIGEST or DEVIATIONS change touching Decisions 1–6 (FR-004-024's refuse-not-reclaim,
+      FR-004-049/049a's runner ownership, FR-004-052's persisted `intake_control`, the sequential
+      resend order, the 500-row listing page and the dispatch mechanism): none exists — every
+      commit since is implementation of what was already confirmed 2026-10-26 (e.g. `f1e4c1f`
+      "confirm FR-004-049's rollback close-in-flight ownership", `2789cb4` DV-26's reclaim-skip),
+      never a reversal. `doc/design/DIGEST.md`'s H31 row and 005/006's own H31 references are
+      unchanged since this slice's plan was written. The one standing owning-team item this
+      research names — Assumption 4, the unforced-resend-reason default — remains explicitly
+      unconfirmed (not overturned, never resolved either way) and is carried as-is, consistent
+      with how `research.md` already describes it ("flagged for the design owner... carried here
+      unchanged"). No decision overturned; no isolated change applied; no test re-run needed.
+- [X] T077 Update `CLAUDE.md`'s Setup section once this slice merges to `main`, and hand the
       Dependencies → "005-operations-api" and "006-production-readiness" sections (plan.md,
       `contracts/cli-runners.md`) to whoever starts those slices next
+      This repository has no per-slice branch to merge: `004-recovery` already lands on the one
+      common integration branch (`002-hmpps-distribution`, PR #8; CLAUDE.md's own Setup section),
+      so "merges to main" is satisfied in the sense this repo's workflow gives it. Rewrote
+      CLAUDE.md's Setup section 2026-11-02 at `9e1db21` to replace the stale "first foundational
+      pieces... rest of its 77 tasks await" line (written before most of this slice existed) with
+      the true 74/79 state and named what the remaining five are, including this task. Handed off:
+      005 is 50/52 with its own two audit defects fixed (T051/T052) and T043/T045 open; 006 has 3
+      unresolved `[NEEDS CLARIFICATION]` markers and needs `/speckit-clarify` before `/speckit-plan`.
 - [X] T078 [US1] Build the production `ReplayEnqueuer` adapter and wire replay in both composition
       roots, closing the gap T021 left (FR-004-015, FR-004-017; design §4.8 action 2, A2-48; H9).
       Unblocks T075 and slice 005's T023 and the replay half of its T043. Reuse T068's send-only
