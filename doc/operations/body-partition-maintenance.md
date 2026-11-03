@@ -1,7 +1,9 @@
 # Body partition maintenance
 
-The owning team handles this alert. Slice 006 owns deployed alert rules, routing and dashboards.
-This entry supplies the recovery procedure and series those rules consume.
+The owning team handles this alert. Slice 006 owns deployed alert rules, routing and dashboards —
+see alert 9 of [alert-catalogue.md](alert-catalogue.md), which cross-references this entry rather
+than restating its condition. This entry supplies the recovery procedure and series those rules
+consume.
 
 | Series | Meaning | Alert input |
 |---|---|---|

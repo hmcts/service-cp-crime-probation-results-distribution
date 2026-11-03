@@ -192,9 +192,29 @@ US2/US3/US7 are gone: 004's T078 wired the real `ReplayAction`/`LegResender` int
 roots, and the same live runs confirmed replay, resend-leg and forced resend all work over real
 HTTP against the real services, with the exact `202`/`200` shapes `quickstart.md` documents, the
 `401` with no `CJSCPPUID`, and the US7 HTTP/CLI parity check. **Nothing left open in 005.**
-`006-production-readiness` is specified (`specs/006-production-readiness/spec.md`) but not yet
-planned: it still carries 3 unresolved `[NEEDS CLARIFICATION]` markers, so `/speckit-clarify` is the
-next step before `/speckit-plan`.
+`006-production-readiness` (`specs/006-production-readiness/plan.md`, with `research.md`,
+`data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it) is **implemented in
+full — all 43 tasks checked**. All 3 `[NEEDS CLARIFICATION]` markers were resolved 2026-11-02
+before planning (the replay publishes directly onto `probation.requests`, bypassing results, with
+`EXT_` payloads loaded from the SIT export into STE's Redis; the daily reconciliation's
+results-side count comes from a results viewstore query on the UTC calendar day; the row-9
+reachability-proof call is a real hearing via `submit-hearing`, with HMPPS's agreement that the
+duplicate is acceptable). This slice adds nothing to the message path — no new migration, no new
+endpoint, no new metric — only a replay comparator extending 001's `pipeline/support`
+(`ReplayComparator`/`ReplayReport`, over `HearingPairing`/`HearingComparisonClass`/
+`ExplanationEntry`/`PreRunChecks`), a new read-only `evidence` package (`GoNoGoEvidenceQuery`/
+`GoNoGoEvidenceIndex`, `DailyReconciliationQuery`, `DecommissioningEvidenceQuery`,
+`LegacyBothPathsCheck`), and a typed `config.AlertCatalogue` (no new dependency). 001's own
+`JsonParity`/`RegisteredFieldDeviations` moved from `src/test` to `src/main` in the same package
+(2026-11-02) so `ReplayComparator` — production code the owning team runs against real STE data,
+not a JUnit fixture — can depend on them; no import changed. A real staleness was found and fixed
+while implementing User Story 3: FR-006-040 said rollback step 4 had no supported execution path,
+but 004 had already built and wired `rollback-close-in-flight` (commits 33787cf/f1e4c1f) before
+this phase started — the spec, research notes, tasks and runbook doc are corrected to name the
+real runner. One governance item surfaced while planning, not this slice's to fix: the
+constitution (version 2.0.1, last amended 2026-10-21) predates H36–H39 and still describes the
+`outbound_body` digest trigger H39 removed and omits `scheduled_job_status` (H38) — due its own
+amendment separately from any feature, and not closed by this slice.
 
 **Environment note**: this branch's local Docker Desktop VM disk was found at 95% capacity
 (unused build cache and dangling images from unrelated projects sharing the daemon), which makes a

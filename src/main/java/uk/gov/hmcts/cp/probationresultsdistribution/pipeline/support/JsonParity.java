@@ -58,7 +58,7 @@ public final class JsonParity {
             return;
         }
 
-        final StringBuilder message = new StringBuilder()
+        final StringBuilder message = new StringBuilder(128)
                 .append(what)
                 .append(" does not match the golden captured from the legacy function app — ")
                 .append(differences.size())
@@ -92,6 +92,9 @@ public final class JsonParity {
      * @param path        the JSON pointer of this node
      * @param differences the differences found so far
      */
+    // Guard-and-return dispatch by node-pair shape: the clearest form for a set of mutually
+    // exclusive cases, same precedent as HmppsRedaction's ported rules.
+    @SuppressWarnings("PMD.OnlyOneReturn")
     private static void compare(
             final JsonNode expected,
             final JsonNode actual,
@@ -108,13 +111,13 @@ public final class JsonParity {
         }
         if (expected.isNumber() && actual.isNumber()) {
             if (expected.decimalValue().compareTo(actual.decimalValue()) != 0) {
-                differences.add(new Difference(at(path),
+                differences.add(new Difference(renderPath(path),
                         "expected " + expected + " but was " + actual));
             }
             return;
         }
         if (!expected.equals(actual)) {
-            differences.add(new Difference(at(path),
+            differences.add(new Difference(renderPath(path),
                     "expected " + describe(expected) + " but was " + describe(actual)));
         }
     }
@@ -143,10 +146,10 @@ public final class JsonParity {
             final String childPath = path + "/" + name.replace("~", "~0").replace("/", "~1");
 
             if (expectedValue == null) {
-                differences.add(new Difference(at(childPath),
+                differences.add(new Difference(renderPath(childPath),
                         "unexpected field, was " + describe(actualValue)));
             } else if (actualValue == null) {
-                differences.add(new Difference(at(childPath),
+                differences.add(new Difference(renderPath(childPath),
                         "missing field, expected " + describe(expectedValue)));
             } else {
                 final RegisteredFieldDeviations.Deviation deviation =
@@ -188,7 +191,7 @@ public final class JsonParity {
                 : List.of();
 
         if (permitted.isEmpty()) {
-            differences.add(new Difference(at(path),
+            differences.add(new Difference(renderPath(path),
                     "registered deviation " + deviation.reference()
                             + " cannot derive the required rendering from the golden value "
                             + describe(expected)
@@ -197,7 +200,7 @@ public final class JsonParity {
             return;
         }
         if (!actual.isString() || !permitted.contains(actual.stringValue())) {
-            differences.add(new Difference(at(path),
+            differences.add(new Difference(renderPath(path),
                     "registered deviation " + deviation.reference()
                             + " requires the golden " + describe(expected) + " to be re-rendered as "
                             + String.join(" or ", permitted) + " but was " + describe(actual)));
@@ -219,7 +222,7 @@ public final class JsonParity {
             final List<Difference> differences) {
 
         if (expected.size() != actual.size()) {
-            differences.add(new Difference(at(path),
+            differences.add(new Difference(renderPath(path),
                     "expected " + expected.size() + " element(s) but was " + actual.size()));
         }
         final int shared = Math.min(expected.size(), actual.size());
@@ -235,11 +238,9 @@ public final class JsonParity {
      * @return a short rendering
      */
     private static String describe(final JsonNode node) {
-        if (node == null) {
-            return "absent";
-        }
-        final String rendered = node.toString();
-        return rendered.length() <= 120 ? rendered : rendered.substring(0, 120) + "...";
+        final String rendered = node == null ? null : node.toString();
+        return rendered == null ? "absent"
+                : rendered.length() <= 120 ? rendered : rendered.substring(0, 120) + "...";
     }
 
     /**
@@ -248,7 +249,7 @@ public final class JsonParity {
      * @param path the JSON pointer
      * @return the path to show
      */
-    private static String at(final String path) {
+    private static String renderPath(final String path) {
         return path.isEmpty() ? "(root)" : path;
     }
 }
