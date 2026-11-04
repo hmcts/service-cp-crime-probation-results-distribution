@@ -180,6 +180,10 @@ public final class IdempotencyGuard {
      * {@link ProcessedRequestRepository#hasTerminalSuccess}), or an exhaustion-eligible {@code FAILED}
      * recorded on the final permitted delivery — but the crash landed before the request's own
      * transition committed (FR-002-012, FR-002-047): the leg needs no further attempt either way.
+     * A redelivery can also meet a leg a resend has since claimed: the same crash window that leaves
+     * the request claim to expire is exactly what makes it eligible for resend-leg's own claim too, so
+     * {@link ProcessedRequestRepository#reclaim} never matches a row whose leg has a live-or-expired
+     * {@code PENDING} resend row (FR-004-035) — the two must never run concurrently.
      *
      * @param command   the parsed command
      * @param row       the request's current state

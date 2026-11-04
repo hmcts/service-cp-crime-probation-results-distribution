@@ -415,12 +415,34 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
 
     @Override
     public boolean reclaim(final String source, final UUID requestId, final RunClaim claim) {
+        return Boolean.TRUE.equals(transactionTemplate.execute(status ->
+                lockedReclaim(source, requestId, claim)));
+    }
+
+    private boolean lockedReclaim(final String source, final UUID requestId, final RunClaim claim) {
+        // Lock the request row first, exactly as lockedAdmitReplay does (FR-004-035): a single UPDATE
+        // statement's own NOT EXISTS is evaluated once, at that statement's own snapshot, when it
+        // scans for matching rows — blocking afterwards on this row's lock (held by checkAndClaim's
+        // own SELECT FOR UPDATE, which never itself modifies the row) does not force a re-check of a
+        // different table once the block resolves, since nothing changed about the locked row for
+        // PostgreSQL's read-committed re-evaluation to catch. This statement forces any concurrent
+        // resend claim's lock-and-commit to fully resolve first, so the UPDATE below — a fresh
+        // statement, with its own fresh snapshot — always sees its now-committed PENDING resend row.
+        jdbc.sql("SELECT status FROM processed_request " + REQUEST_WHERE + "FOR UPDATE")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query(String.class)
+                .optional();
         final int rows = jdbc.sql("UPDATE processed_request SET claim_owner = :owner, "
                         + "claim_token = :token, "
                         + "claim_expires_at = now() + make_interval(secs => :lease), "
                         + "attempts = attempts + 1, updated_at = now() "
                         + REQUEST_WHERE + ACTIVE_REQUEST
-                        + "AND (claim_expires_at IS NULL OR claim_expires_at <= now())")
+                        + "AND (claim_expires_at IS NULL OR claim_expires_at <= now()) "
+                        + "AND NOT EXISTS (SELECT 1 FROM outbound_message_latest oml "
+                        + "WHERE oml.source = processed_request.source "
+                        + "AND oml.request_id = processed_request.request_id AND oml.leg = 'HMPPS' "
+                        + "AND oml.attempt_origin = 'resend' AND oml.status = 'PENDING')")
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
                 .param(LEASE, (double) leaseSeconds)

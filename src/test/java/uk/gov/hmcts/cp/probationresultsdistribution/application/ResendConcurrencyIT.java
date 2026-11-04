@@ -174,6 +174,31 @@ class ResendConcurrencyIT extends ResendTestSupport {
         }
 
         @Test
+        @DisplayName("a late queue delivery meeting an in-flight resend over a crash-stuck "
+                + "RECEIVED/RETRYING request is abandoned, never reclaimed (FR-004-035)")
+        void late_queue_delivery_over_a_retrying_request_is_abandoned() {
+            // Models the crash window FR-004-035 fences: a prior run's leg write landed FAILED but
+            // the crash left the request itself RECEIVED/RETRYING with no live claim, so it is
+            // simultaneously eligible for resend-leg's own claim and a plain queue reclaim.
+            final UUID hearingId = cachedHearing();
+            final UUID requestId = UUID.randomUUID();
+            seedRequestRow(requestId, hearingId, "RETRYING", null);
+            seedBareAttemptOne(requestId, "FAILED", "payload-unavailable");
+            final IdempotencyGuard guard = new IdempotencyGuard(requestStore(),
+                    new RequestFingerprint());
+            final List<GuardDecision> decisions = new ArrayList<>();
+            final LegResender first = resenderSending(() -> decisions.add(guard.admit(
+                    command(requestId, hearingId), storedCommand(requestId, hearingId),
+                    "RESULTS:" + requestId, 0L, ReplayRoute.COPY)));
+
+            first.resend(request(false, requestId));
+
+            assertThat(decisions).hasSize(1);
+            assertThat(decisions.get(0)).isInstanceOf(GuardDecision.Abandon.class);
+            assertThat(gatewayPostCount()).isEqualTo(1);
+        }
+
+        @Test
         @DisplayName("a replay admitted first leaves the resend refused request-claimed")
         void replay_first_refuses_the_resend() {
             final UUID requestId = seedFailedCached();

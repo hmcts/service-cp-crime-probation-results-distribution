@@ -61,12 +61,20 @@ public interface ProcessedRequestRepository {
                         RunClaim claim, SupportSubmission support);
 
     /**
-     * Atomically takes over an absent or expired claim, bumping {@code attempts}.
+     * Atomically takes over an absent or expired claim, bumping {@code attempts} — unless the leg's
+     * latest row is a {@code PENDING} resend row, live or expired, in which case this never matches
+     * (FR-004-035): a plain queue reclaim must never run concurrently with an in-flight resend, so
+     * the delivery is abandoned instead and retried once the resend resolves. A resend row stuck
+     * {@code PENDING} past its own expired lease has no "reclaim in place" of its own yet (open
+     * design conflict §16): until that lands, it also blocks ordinary queue recovery for the same
+     * request, not only a further resend or a replay — the final-permitted-delivery dead-letter still
+     * bounds how long a redelivery keeps retrying against it.
      *
      * @param source    the command source
      * @param requestId the request id
      * @param claim     the fresh claim to take
-     * @return {@code true} when the claim was taken; {@code false} when a live claim still held it
+     * @return {@code true} when the claim was taken; {@code false} when a live claim still held it,
+     *     or a {@code PENDING} resend row is in progress on the leg
      */
     boolean reclaim(String source, UUID requestId, RunClaim claim);
 

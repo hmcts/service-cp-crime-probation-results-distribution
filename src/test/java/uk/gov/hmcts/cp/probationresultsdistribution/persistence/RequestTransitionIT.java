@@ -2,8 +2,15 @@ package uk.gov.hmcts.cp.probationresultsdistribution.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -167,6 +174,113 @@ class RequestTransitionIT extends SchemaTestSupport {
         assertThat(repository.hasRecordedExhaustion(SOURCE, requestId)).isTrue();
         assertThat(repository.hasTerminalFailure(SOURCE, requestId)).isFalse();
         assertThat(repository.hasTerminalSuccess(SOURCE, requestId)).isFalse();
+    }
+
+    /**
+     * FR-004-035: a plain queue reclaim must never run concurrently with an in-flight resend. The
+     * same crash window that leaves a request's own claim to expire is exactly what also makes it
+     * eligible for resend-leg's own claim, so the exclusion has to be atomic in the {@code reclaim}
+     * statement itself — a Java-side pre-check would leave a race window between the read and the
+     * write.
+     */
+    @Test
+    @DisplayName("never reclaims a request whose leg has a PENDING resend row, live or expired "
+            + "(FR-004-035)")
+    void reclaim_never_matches_a_pending_resend_row() {
+        final UUID requestId = UUID.randomUUID();
+        seedRetryingWithExpiredClaim(requestId);
+        seedPendingResendAttempt(requestId);
+
+        final boolean reclaimed = repository.reclaim(SOURCE, requestId, RunClaim.fresh());
+
+        assertThat(reclaimed).isFalse();
+        assertThat(status(requestId).get("status")).isEqualTo("RETRYING");
+    }
+
+    /**
+     * A genuine cross-connection race, not merely sequenced via a callback: a separate connection
+     * takes and holds the row lock {@code checkAndClaim} itself takes first, while {@code reclaim}
+     * blocks on it from another connection/thread, proving the lock-first shape actually forces
+     * {@code reclaim}'s own statement to re-evaluate against the resend row once it has committed —
+     * not just that the final SQL text happens to mention it (FR-004-035).
+     */
+    @Test
+    @DisplayName("reclaim blocks on a resend claim's row lock and then correctly refuses once that "
+            + "resend's PENDING row has committed")
+    void reclaim_blocks_on_and_then_refuses_a_concurrent_resend_claim() throws Exception {
+        final UUID requestId = UUID.randomUUID();
+        seedRetryingWithExpiredClaim(requestId);
+        final CountDownLatch reclaimStarted = new CountDownLatch(1);
+        try (ExecutorService pool = Executors.newSingleThreadExecutor();
+                Connection resendConnection = datasource().getConnection()) {
+            resendConnection.setAutoCommit(false);
+            try (PreparedStatement lock = resendConnection.prepareStatement(
+                    "SELECT status FROM processed_request WHERE source = ? AND request_id = ? "
+                            + "FOR UPDATE")) {
+                lock.setString(1, SOURCE);
+                lock.setObject(2, requestId);
+                lock.executeQuery();
+            }
+
+            final Future<Boolean> reclaimResult = pool.submit(() -> {
+                reclaimStarted.countDown();
+                return repository.reclaim(SOURCE, requestId, RunClaim.fresh());
+            });
+            assertThat(reclaimStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            // Give reclaim's own lock-wait time to actually start blocking on the row this
+            // connection holds, before the resend row below is inserted and committed — the exact
+            // window the pre-fix single-statement UPDATE would have evaluated its NOT EXISTS in.
+            Thread.sleep(300);
+            try (PreparedStatement insert = resendConnection.prepareStatement(
+                    "INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                            + "attempt_origin, status, attempts, claim_owner, claim_token, "
+                            + "claim_expires_at, resend_run_id, operator) VALUES "
+                            + "(gen_random_uuid(), ?, ?, 'HMPPS', 2, 'resend', 'PENDING', 0, "
+                            + "gen_random_uuid()::text, gen_random_uuid(), "
+                            + "now() + interval '5 minutes', gen_random_uuid(), 'an-operator')")) {
+                insert.setString(1, SOURCE);
+                insert.setObject(2, requestId);
+                insert.executeUpdate();
+            }
+            resendConnection.commit();
+
+            assertThat(reclaimResult.get(5, TimeUnit.SECONDS)).isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("reclaims normally once the resend attempt is no longer PENDING")
+    void reclaim_succeeds_once_the_resend_row_is_no_longer_pending() {
+        final UUID requestId = UUID.randomUUID();
+        seedRetryingWithExpiredClaim(requestId);
+        seedPendingResendAttempt(requestId);
+        jdbc().sql("UPDATE outbound_message SET status = 'FAILED', reason = 'rolled-back' "
+                        + "WHERE request_id = :r AND attempt_origin = 'resend'")
+                .param("r", requestId)
+                .update();
+
+        assertThat(repository.reclaim(SOURCE, requestId, RunClaim.fresh())).isTrue();
+    }
+
+    private void seedRetryingWithExpiredClaim(final UUID requestId) {
+        jdbc().sql("INSERT INTO processed_request (source, request_id, hearing_id, hearing_day, "
+                        + "shared_time, event_type, request_fingerprint, status, attempts, command, "
+                        + "claim_owner, claim_token, claim_expires_at) VALUES (:s, :r, "
+                        + "gen_random_uuid(), DATE '2026-08-19', now(), 'Hearing_Resulted', 'fp', "
+                        + "'RETRYING', 1, '{}', NULL, NULL, NULL)")
+                .param("s", SOURCE).param("r", requestId)
+                .update();
+    }
+
+    private void seedPendingResendAttempt(final UUID requestId) {
+        jdbc().sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                        + "attempt_origin, status, attempts, claim_owner, claim_token, "
+                        + "claim_expires_at, resend_run_id, operator) VALUES (gen_random_uuid(), "
+                        + ":s, :r, 'HMPPS', 2, 'resend', 'PENDING', 0, gen_random_uuid()::text, "
+                        + "gen_random_uuid(), now() + interval '5 minutes', gen_random_uuid(), "
+                        + "'an-operator')")
+                .param("s", SOURCE).param("r", requestId)
+                .update();
     }
 
     // A body is digested before send, so it is present for receiver-rejected and gateway-transient
