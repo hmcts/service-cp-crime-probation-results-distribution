@@ -113,7 +113,9 @@ public class ServiceBusConsumerConfig {
 
     /* default */ @Bean(destroyMethod = "close")
     StatefulRedisConnection<String, String> redisConnection(final RedisClient client) {
-        return client.connect();
+        // Connects lazily, on the first real call, so a cache outage never fails context refresh
+        // (FR-002-016): client.connect() here would block bean creation on an unreachable Redis.
+        return LazyRedisConnection.over(client);
     }
 
     /* default */ @Bean

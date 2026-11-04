@@ -117,6 +117,22 @@ class StartupValidationTest {
     }
 
     @Test
+    @DisplayName("refuses Redis TLS or peer verification switched off, only outside the local and "
+            + "test profiles (FR-002-016, DV-14)")
+    void refuses_redis_tls_or_peer_verification_off_when_secrets_are_required() {
+        assertThatThrownBy(() -> validator.validateRedisTls(false, true, true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.redis.ssl");
+        assertThatThrownBy(() -> validator.validateRedisTls(true, false, true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.redis.verify-peer");
+        assertThatCode(() -> validator.validateRedisTls(false, false, false))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> validator.validateRedisTls(true, true, true))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     @DisplayName("refuses a forbidden property and accepts an environment without one")
     void refuses_a_forbidden_property() {
         assertThatThrownBy(() -> validator.validateNoForbiddenProperties(

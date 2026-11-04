@@ -30,6 +30,14 @@ public class StartupValidationConfig {
                     !environment.acceptsProfiles(Profiles.of("local", "test"));
             validator.validate(properties, requireSecrets);
             validator.validateNoForbiddenProperties(environment);
+            validator.validateGatewayKey(
+                    environment.getProperty("distribution.gateway.subscription-key", ""),
+                    requireSecrets);
+            validator.validateRedisTls(
+                    environment.getProperty("distribution.redis.ssl", Boolean.class, Boolean.TRUE),
+                    environment.getProperty("distribution.redis.verify-peer", Boolean.class,
+                            Boolean.TRUE),
+                    requireSecrets);
             LOG.info("distribution.youth-switch.default-when-unreadable resolved to {}",
                     properties.youthSwitch().defaultWhenUnreadable());
             warnIfAuditFilterOnWithTransportOff(environment);

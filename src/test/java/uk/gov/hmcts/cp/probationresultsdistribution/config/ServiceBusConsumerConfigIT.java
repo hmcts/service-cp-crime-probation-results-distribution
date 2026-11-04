@@ -84,4 +84,39 @@ class ServiceBusConsumerConfigIT {
                     assertThat(context).doesNotHaveBean(DistributionRunner.class);
                 });
     }
+
+    @Test
+    @DisplayName("refreshes the whole bean graph even when Redis is unreachable (FR-002-016): a "
+            + "cache outage must not stop the service from starting")
+    void refreshes_the_bean_graph_when_redis_is_unreachable() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(ServiceBusConsumerConfig.class, MetricRegistryConfiguration.class)
+                .withBean(DataSource.class, EndToEndTestSupport::sharedDataSource)
+                .withBean(JdbcClient.class,
+                        () -> JdbcClient.create(EndToEndTestSupport.sharedDataSource()))
+                .withBean(PlatformTransactionManager.class,
+                        () -> new DataSourceTransactionManager(EndToEndTestSupport.sharedDataSource()))
+                .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+                .withBean(DistributionProperties.class, () -> TEST_PROPERTIES)
+                .withPropertyValues(
+                        "distribution.consumer.enabled=true",
+                        "distribution.servicebus.connection-string="
+                                + EndToEndTestSupport.serviceBusConnectionString(),
+                        "distribution.servicebus.namespace=",
+                        "distribution.servicebus.queue-name=probation.requests",
+                        "distribution.servicebus.max-concurrent-calls=2",
+                        // Port 1 is never a listening Redis: nothing answers, so a connect attempt
+                        // here would fail fast rather than time out.
+                        "distribution.redis.host=127.0.0.1",
+                        "distribution.redis.port=1",
+                        "distribution.redis.ssl=false",
+                        "distribution.redis.verify-peer=false",
+                        "distribution.redis.key-prefix=EXT_",
+                        "distribution.usersgroups.youth-filter-key=EMYouthFilter",
+                        "distribution.gateway.subscription-key=test-subscription-key")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(ProbationMessageListener.class);
+                });
+    }
 }

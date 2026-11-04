@@ -89,7 +89,8 @@ class OperationsConfigDefaultsTest {
             configLogger.addAppender(appender);
             final MockEnvironment environment = new MockEnvironment()
                     .withProperty("audit.http.enabled", "true")
-                    .withProperty("cp.audit.enabled", "false");
+                    .withProperty("cp.audit.enabled", "false")
+                    .withProperty("distribution.gateway.subscription-key", "a-key");
             final ApplicationRunner runner = new StartupValidationConfig()
                     .distributionConfigValidator(validProperties(), environment);
 
@@ -113,7 +114,8 @@ class OperationsConfigDefaultsTest {
             configLogger.addAppender(appender);
             final MockEnvironment environment = new MockEnvironment()
                     .withProperty("audit.http.enabled", "true")
-                    .withProperty("cp.audit.enabled", "true");
+                    .withProperty("cp.audit.enabled", "true")
+                    .withProperty("distribution.gateway.subscription-key", "a-key");
             final ApplicationRunner runner = new StartupValidationConfig()
                     .distributionConfigValidator(validProperties(), environment);
 
@@ -129,7 +131,8 @@ class OperationsConfigDefaultsTest {
             appender.start();
             configLogger.addAppender(appender);
             final MockEnvironment environment = new MockEnvironment()
-                    .withProperty("audit.http.enabled", "true");
+                    .withProperty("audit.http.enabled", "true")
+                    .withProperty("distribution.gateway.subscription-key", "a-key");
             final ApplicationRunner runner = new StartupValidationConfig()
                     .distributionConfigValidator(validProperties(), environment);
 

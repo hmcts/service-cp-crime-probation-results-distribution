@@ -235,6 +235,11 @@ public final class OperatorCommandLine {
                 validator.validateNoForbiddenProperties(environment);
                 validator.validateGatewayKey(environment.getRequiredProperty(
                         "distribution.gateway.subscription-key"), requireSecrets);
+                validator.validateRedisTls(
+                        environment.getRequiredProperty("distribution.redis.ssl", Boolean.class),
+                        environment.getRequiredProperty("distribution.redis.verify-peer",
+                                Boolean.class),
+                        requireSecrets);
             } catch (final IllegalStateException invalid) {
                 throw new InvalidConfigurationException(invalid);
             }
@@ -262,7 +267,10 @@ public final class OperatorCommandLine {
         @Lazy
         StatefulRedisConnection<String, String> commandRedisConnection(
                 final RedisClient commandRedisClient) {
-            return commandRedisClient.connect();
+            // Connects lazily, on the first real call, not here: a failed connect must surface as a
+            // RedisException to CachedHearingPayloadAdapter's existing miss handling (FR-002-016),
+            // not as a BeanCreationException the lazy bean's own resolution would otherwise wrap it in.
+            return LazyRedisConnection.over(commandRedisClient);
         }
 
         /**

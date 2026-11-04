@@ -58,6 +58,24 @@ public final class StartupValidator {
     }
 
     /**
+     * Refuses Redis TLS or peer verification switched off where secrets are required (outside the
+     * {@code local} and {@code test} profiles): an unverified or plaintext connection to the payload
+     * cache is an interception risk (FR-002-016, DV-14).
+     *
+     * @param ssl            {@code distribution.redis.ssl}
+     * @param verifyPeer     {@code distribution.redis.verify-peer}
+     * @param requireSecrets whether required secrets must be present
+     */
+    public void validateRedisTls(final boolean ssl, final boolean verifyPeer,
+                                 final boolean requireSecrets) {
+        if (requireSecrets) {
+            require(ssl, "distribution.redis.ssl", "must be true outside the local and test profiles");
+            require(verifyPeer, "distribution.redis.verify-peer",
+                    "must be true outside the local and test profiles");
+        }
+    }
+
+    /**
      * Validates the retention settings before the scheduled bean is constructed.
      *
      * @param properties the bound retention settings

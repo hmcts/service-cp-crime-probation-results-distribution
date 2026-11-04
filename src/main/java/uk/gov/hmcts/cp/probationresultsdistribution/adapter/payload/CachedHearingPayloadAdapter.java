@@ -64,7 +64,9 @@ public final class CachedHearingPayloadAdapter implements HearingPayloadSource {
         } catch (final RedisException unreachable) {
             // An unreachable, timed-out or refused read is a miss for this key, not a run failure
             // (FR-002-016, DV-07). Not swallowed: mapped to the explicit miss (null) the caller treats
-            // as the next source's turn.
+            // as the next source's turn. Also covers a still-unconnected lazy connection
+            // (config.LazyRedisConnection): RedisConnectionException extends RedisException, so a
+            // first-connect failure deferred to here from bean construction lands in this same catch.
             raw = Optional.empty();
         }
         return raw;
