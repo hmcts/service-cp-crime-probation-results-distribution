@@ -2,6 +2,8 @@ package uk.gov.hmcts.cp.probationresultsdistribution.evidence;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +16,11 @@ import org.springframework.jdbc.core.simple.JdbcClient;
  * request recovered by a resend counts once, and a completed request whose resend failed counts
  * as failed. Does not call results' own viewstore (research.md Decision 5): the UTC-day
  * results-side count is supplied externally and compared by the owning team.
+ *
+ * <p>Counted by {@code shared_time}'s UTC calendar day, never {@code hearing_day} (FR-006-024):
+ * results' own daily share count is a count of {@code Hearing_Resulted} records for the day it
+ * shared them, so a hearing that sat on one day and was shared the next must count against the
+ * share day — the only day the two sides can agree on.
  */
 public final class DailyReconciliationQuery {
 
@@ -31,15 +38,21 @@ public final class DailyReconciliationQuery {
     }
 
     /**
-     * The reconciliation counts for one UTC hearing day.
+     * The reconciliation counts for one UTC share day.
      *
-     * @param hearingDay the day
+     * @param shareDay the day, by {@code shared_time}'s UTC calendar day
      * @return the day's counts
      */
-    public DailyCounts countsFor(final LocalDate hearingDay) {
+    public DailyCounts countsFor(final LocalDate shareDay) {
+        final OffsetDateTime start = shareDay.atStartOfDay(ZoneOffset.UTC).toOffsetDateTime();
+        final OffsetDateTime end = shareDay.plusDays(1).atStartOfDay(ZoneOffset.UTC)
+                .toOffsetDateTime();
+
         final int requestsReceived = jdbc.sql(
-                        "SELECT count(*) FROM processed_request WHERE hearing_day = :day")
-                .param("day", hearingDay)
+                        "SELECT count(*) FROM processed_request "
+                        + "WHERE shared_time >= :start AND shared_time < :end")
+                .param("start", start)
+                .param("end", end)
                 .query(Integer.class).single();
 
         int sent = 0;
@@ -54,9 +67,10 @@ public final class DailyReconciliationQuery {
                         + "JOIN outbound_message_latest m "
                         + "  ON m.source = pr.source AND m.request_id = pr.request_id "
                         + "  AND m.leg = 'HMPPS' "
-                        + "WHERE pr.hearing_day = :day "
+                        + "WHERE pr.shared_time >= :start AND pr.shared_time < :end "
                         + "GROUP BY m.status, m.reason")
-                .param("day", hearingDay)
+                .param("start", start)
+                .param("end", end)
                 .query((rs, rowNum) -> new Object[] {rs.getString("status"), rs.getString("reason"),
                         rs.getInt("n")})
                 .list();
@@ -75,7 +89,7 @@ public final class DailyReconciliationQuery {
             }
         }
 
-        return new DailyCounts(hearingDay, requestsReceived, sent, notApplicableByReason,
+        return new DailyCounts(shareDay, requestsReceived, sent, notApplicableByReason,
                 failedByReason, parked, pending);
     }
 

@@ -2,6 +2,8 @@ package uk.gov.hmcts.cp.probationresultsdistribution.evidence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -94,6 +96,36 @@ class DailyReconciliationQueryIT extends EvidenceTestStore {
                 .isEqualTo("submit-hearing");
         assertThat(DailyReconciliationQuery.repairRouteForOrphanedDeadLetter("collision"))
                 .isEqualTo("submit-hearing");
+    }
+
+    @Test
+    @DisplayName("a hearing shared the day after it sat counts against the share day, not the "
+            + "hearing day (FR-006-024)")
+    void counts_by_share_day_not_hearing_day() {
+        final DailyReconciliationQuery query = new DailyReconciliationQuery(sql);
+        final LocalDate hearingDay = LocalDate.parse("2026-11-03");
+        final LocalDate shareDay = LocalDate.parse("2026-11-04");
+        insertAdmittedRequestSharedOn("RESULTS", UUID.randomUUID(), hearingDay,
+                OffsetDateTime.parse("2026-11-04T09:15:00Z"));
+
+        assertThat(query.countsFor(shareDay).requestsReceived()).isEqualTo(1);
+        assertThat(query.countsFor(hearingDay).requestsReceived()).isZero();
+    }
+
+    @Test
+    @DisplayName("a share at UTC midnight lands in the new day, the half-open range's own boundary "
+            + "(FR-006-024)")
+    void counts_at_the_utc_midnight_boundary() {
+        final DailyReconciliationQuery query = new DailyReconciliationQuery(sql);
+        final LocalDate earlierDay = LocalDate.parse("2026-11-03");
+        final LocalDate day = LocalDate.parse("2026-11-04");
+        insertAdmittedRequestSharedOn("RESULTS", UUID.randomUUID(), day,
+                OffsetDateTime.parse("2026-11-04T00:00:00.000Z"));
+        insertAdmittedRequestSharedOn("RESULTS", UUID.randomUUID(), earlierDay,
+                OffsetDateTime.parse("2026-11-03T23:59:59.999Z"));
+
+        assertThat(query.countsFor(day).requestsReceived()).isEqualTo(1);
+        assertThat(query.countsFor(earlierDay).requestsReceived()).isEqualTo(1);
     }
 
     @Test

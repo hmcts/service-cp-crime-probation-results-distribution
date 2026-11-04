@@ -9,7 +9,8 @@ import java.util.Objects;
  * {@code processed_request.status}, because a request's completion is historical (slice 006,
  * FR-006-023, FR-006-025).
  *
- * @param day                    the UTC hearing day these counts are for
+ * @param day                    the UTC share day these counts are for — {@code shared_time}'s
+ *                               calendar day, never {@code hearing_day} (FR-006-024)
  * @param requestsReceived       admitted {@code processed_request} rows for this day
  * @param sent                   latest attempts {@code SENT}
  * @param notApplicableByReason  latest attempts {@code NOT_APPLICABLE}, by reason

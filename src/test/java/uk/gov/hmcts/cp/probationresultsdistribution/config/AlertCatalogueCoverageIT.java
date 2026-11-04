@@ -125,4 +125,14 @@ class AlertCatalogueCoverageIT {
         assertThat(alert11.lapse()).contains("decommissioning");
         assertThat(alert11.ruleType()).isEqualTo("log-search");
     }
+
+    @Test
+    @DisplayName("only alert 1 is a metric rule; every other alert is a log-search rule (FR-006-053)")
+    void only_alert_one_is_a_metric_rule() {
+        AlertCatalogue.alerts().forEach(alert -> {
+            final String expected = alert.id() == 1 ? "metric" : "log-search";
+            assertThat(alert.ruleType()).as("alert %d (%s)", alert.id(), alert.name())
+                    .isEqualTo(expected);
+        });
+    }
 }

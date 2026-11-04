@@ -44,41 +44,41 @@ public final class AlertCatalogue {
                                 + "An exhausted entry whose request is COMPLETED is duplicate-copy "
                                 + "noise: remove it", Optional.empty()),
                 alert(2, "Leg parked too long", "probation_oldest_parked_age", Map.of(), "> 30 min",
-                        Optional.of(Duration.ofMinutes(30)), FIXED, METRIC,
+                        Optional.of(Duration.ofMinutes(30)), FIXED, LOG_SEARCH,
                         "The leg is waiting for broker redelivery. On the final delivery the leg "
                                 + "becomes FAILED, the message is dead-lettered leg-exhausted, and "
                                 + "the dead-letter runbook applies", Optional.empty()),
                 alert(3, "Silent drop", "probation_oldest_non_terminal_age", Map.of(), "> 30 min",
-                        Optional.of(Duration.ofMinutes(30)), FIXED, METRIC,
+                        Optional.of(Duration.ofMinutes(30)), FIXED, LOG_SEARCH,
                         "The oldest request that is not terminal: the silent-drop detector",
                         Optional.empty()),
                 alert(4, "Leg failed", LEG_OUTCOMES,
                         Map.of("status", "FAILED", "reason",
                                 "gateway-transient|payload-unavailable|rules-exception|"
                                         + "payload-changed|rolled-back"),
-                        "any origin, any count", Optional.empty(), FIXED, METRIC,
+                        "any origin, any count", Optional.empty(), FIXED, LOG_SEARCH,
                         "A FAILED(gateway-transient) after a 5xx, a 408 or a read timeout is "
                                 + "outcome-unknown: confirmed with HMPPS before any re-send "
                                 + "(FR-006-017)", Optional.empty()),
                 alert(5, "Youth switch unreadable", "probation_youth_switch_unreadable_total",
                         Map.of(), "not zero for > 5 min", Optional.of(Duration.ofMinutes(5)),
-                        FIXED, METRIC,
+                        FIXED, LOG_SEARCH,
                         "Each counted read is a hearing sent on an assumed switch value. Re-check "
                                 + "the default against the live toggle (FR-006-033)",
                         Optional.empty()),
                 alert(6, "Repeated 401s", LEG_OUTCOMES,
                         Map.of("reason", "receiver-rejected", "http", "401"),
-                        "> 3 in an hour", Optional.of(Duration.ofHours(1)), PROPOSAL, METRIC,
+                        "> 3 in an hour", Optional.of(Duration.ofHours(1)), PROPOSAL, LOG_SEARCH,
                         "The gateway is refusing the service's credentials. A 401 is terminal at "
                                 + "once", Optional.empty()),
                 alert(7, "Send re-run after a crash", "probation_crash_reruns_total", Map.of(),
-                        "any increase", Optional.empty(), FIXED, METRIC,
+                        "any increase", Optional.empty(), FIXED, LOG_SEARCH,
                         "A possible duplicate at HMPPS: record the hearing for HMPPS",
                         Optional.empty()),
                 alert(8, "Case-hearing 400 spike", LEG_OUTCOMES,
                         Map.of("reason", "receiver-rejected", "http", "400", "shape", "case"),
                         "daily increase > 2x the environment's normal daily level",
-                        Optional.of(Duration.ofDays(1)), PROPOSAL, METRIC,
+                        Optional.of(Duration.ofDays(1)), PROPOSAL, LOG_SEARCH,
                         "The daily count itself is counted, not paged (FR-006-022)",
                         Optional.empty()),
                 alert(9, "Body partition maintenance", "probation_body_default_partition_rows, "
@@ -89,13 +89,13 @@ public final class AlertCatalogue {
                         "DEFAULT partition not empty; any create/drop failure; fewer than 2 "
                                 + "consecutive months ahead (H37); more than 48h since the last "
                                 + "success (H38); any pod reporting -1; or no sample in the window",
-                        Optional.of(Duration.ofHours(2)), PROPOSAL, METRIC,
+                        Optional.of(Duration.ofHours(2)), PROPOSAL, LOG_SEARCH,
                         "003's runbook: for a DEFAULT spill, detach, create the missing month, "
                                 + "move rows, re-attach; for partitions not created, check the "
                                 + "scheduler and advisory lock; for -1, check the database "
                                 + "connection", Optional.empty()),
                 alert(10, "Results switch unreadable", "probation_flag_read_failures_total",
-                        Map.of(), "any increase", Optional.empty(), FIXED, METRIC,
+                        Map.of(), "any increase", Optional.empty(), FIXED, LOG_SEARCH,
                         "After cutover, each failed read is a share on neither path. Reconcile, "
                                 + "and repair with submit-hearing while the EXT_ payload is still "
                                 + "in Redis", Optional.empty()),

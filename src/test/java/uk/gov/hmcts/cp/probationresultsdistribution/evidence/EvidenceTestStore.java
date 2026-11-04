@@ -56,6 +56,30 @@ abstract class EvidenceTestStore extends SchemaTestSupport {
     }
 
     /**
+     * Admits a {@code RECEIVED} request whose hearing day and share day differ, as a hearing
+     * shared the day after it sat does (FR-006-024): the hearing itself was on {@code hearingDay},
+     * but {@code sharedTime} — when results shared it — falls on a different UTC calendar day.
+     *
+     * @param source     the command source
+     * @param requestId  the request id
+     * @param hearingDay the hearing's own day
+     * @param sharedTime when results shared it
+     * @return the hearing id generated for this request
+     */
+    protected final UUID insertAdmittedRequestSharedOn(final String source, final UUID requestId,
+            final LocalDate hearingDay, final OffsetDateTime sharedTime) {
+        final UUID hearingId = UUID.randomUUID();
+        sql.sql("INSERT INTO processed_request (source, request_id, hearing_id, hearing_day, "
+                        + "shared_time, event_type, request_fingerprint, status, command) "
+                        + "VALUES (:source, :requestId, :hearingId, :hearingDay, :sharedTime, "
+                        + "'Hearing_Resulted', 'fp', 'RECEIVED', '{}')")
+                .param("source", source).param("requestId", requestId)
+                .param("hearingId", hearingId).param("hearingDay", hearingDay)
+                .param("sharedTime", sharedTime).update();
+        return hearingId;
+    }
+
+    /**
      * Inserts a {@code SENT} attempt-1 HMPPS leg for the given request.
      *
      * @param source      the command source
@@ -131,9 +155,24 @@ abstract class EvidenceTestStore extends SchemaTestSupport {
     }
 
     /**
+     * Admits a replay over a {@code FAILED} request without settling it, as {@code admitReplay}
+     * does: {@code status = 'RECEIVED'}, {@code replayed_at} set, {@code failure_reason} cleared —
+     * the live, pre-settlement signal {@code recoveryEvidence()} also reads.
+     *
+     * @param source    the command source
+     * @param requestId the request id
+     */
+    protected final void markMidReplayAdmission(final String source, final UUID requestId) {
+        sql.sql("UPDATE processed_request SET status = 'RECEIVED', replayed_at = now(), "
+                        + "failure_reason = NULL WHERE source = :source AND request_id = :requestId")
+                .param("source", source).param("requestId", requestId).update();
+    }
+
+    /**
      * Recovers a dead-lettered request: a fresh attempt {@code SENT}, the request
-     * {@code COMPLETED(recovered)} with {@code replayed_at} set, as the {@code copy} route's
-     * admission does (DV-26, H9).
+     * {@code COMPLETED(recovered)}, as the {@code copy} route's admission does (DV-26, H9).
+     * {@code replayed_at} is cleared, exactly as the real {@code markCompleted} always clears it on
+     * completion — the durable trail of the replay is {@code completion_reason = 'recovered'}.
      *
      * @param source    the command source
      * @param requestId the request id
@@ -148,8 +187,7 @@ abstract class EvidenceTestStore extends SchemaTestSupport {
                 .param("requestId", requestId).update();
         sql.sql("UPDATE processed_request SET status = 'COMPLETED', "
                         + "completion_reason = 'recovered', failure_reason = NULL, "
-                        + "replayed_at = :replayedAt WHERE source = :source AND request_id = :requestId")
-                .param("replayedAt", OffsetDateTime.now())
+                        + "replayed_at = NULL WHERE source = :source AND request_id = :requestId")
                 .param("source", source).param("requestId", requestId).update();
     }
 

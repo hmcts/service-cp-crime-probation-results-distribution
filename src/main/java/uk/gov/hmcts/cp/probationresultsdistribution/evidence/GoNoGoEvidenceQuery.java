@@ -81,6 +81,11 @@ public final class GoNoGoEvidenceQuery {
 
     /**
      * §9.2 row 21: a request dead-lettered {@code leg-exhausted}, then recovered by a replay.
+     * {@code replayed} reads both the live signal ({@code replayed_at}, set while a replay is
+     * in flight) and the durable one ({@code completion_reason = 'recovered'}): {@code
+     * markCompleted} always clears {@code replayed_at} on completion, so only the durable
+     * completion reason survives to prove a completed request was recovered by a replay
+     * (FR-006-032).
      *
      * @param source    the command source
      * @param requestId the request id
@@ -88,7 +93,8 @@ public final class GoNoGoEvidenceQuery {
      */
     public Optional<RecoveryEvidence> recoveryEvidence(final String source, final UUID requestId) {
         return jdbc.sql("SELECT status, failure_reason, exhausted_message_id, "
-                        + "(replayed_at IS NOT NULL) AS replayed FROM processed_request "
+                        + "(replayed_at IS NOT NULL OR completion_reason = 'recovered') AS replayed "
+                        + "FROM processed_request "
                         + "WHERE source = :source AND request_id = :requestId")
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)

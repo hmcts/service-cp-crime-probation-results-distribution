@@ -104,6 +104,22 @@ class GoNoGoEvidenceQueryIT extends EvidenceTestStore {
     }
 
     @Test
+    @DisplayName("row 21: a replay admitted but not yet settled reads replayed from replayed_at, "
+            + "the live signal (FR-006-032)")
+    void row21_mid_replay_reads_the_live_signal() {
+        final GoNoGoEvidenceQuery query = new GoNoGoEvidenceQuery(sql);
+        final UUID requestId = UUID.randomUUID();
+        insertAdmittedRequest("SUPPORT", requestId);
+        insertLegExhausted("SUPPORT", requestId, "RESULTS:" + requestId);
+
+        markMidReplayAdmission("SUPPORT", requestId);
+
+        final RecoveryEvidence midReplay = query.recoveryEvidence("SUPPORT", requestId).orElseThrow();
+        assertThat(midReplay.status()).isEqualTo("RECEIVED");
+        assertThat(midReplay.replayed()).isTrue();
+    }
+
+    @Test
     @DisplayName("row 21: empty for a request that was never admitted")
     void row21_empty_for_unknown_request() {
         final GoNoGoEvidenceQuery query = new GoNoGoEvidenceQuery(sql);
