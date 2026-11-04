@@ -62,6 +62,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     public Optional<RequestRecord> find(final String source, final UUID requestId) {
         return jdbc.sql("SELECT pr.status, pr.request_fingerprint, pr.exhausted_message_id, "
                         + "(pr.claim_expires_at IS NOT NULL AND pr.claim_expires_at > now()) AS claim_live, "
+                        + "(pr.replayed_at IS NOT NULL) AS replayed_at_set, "
                         + "om.status AS attempt_one_status, om.reason AS attempt_one_reason, "
                         + "om.http_status AS attempt_one_http_status, "
                         + "(oml.attempt_origin = 'resend' AND oml.status = 'PENDING') "
@@ -84,7 +85,8 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                             Optional.ofNullable(rs.getString("attempt_one_status")),
                             Optional.ofNullable(rs.getString("attempt_one_reason")), optionalHttpStatus,
                             Optional.ofNullable(rs.getString("exhausted_message_id")),
-                            rs.getBoolean("pending_resend_row_latest"));
+                            rs.getBoolean("pending_resend_row_latest"),
+                            rs.getBoolean("replayed_at_set"));
                 })
                 .optional();
     }
@@ -163,9 +165,41 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
 
     @Override
     public boolean hasTerminalSuccess(final String source, final UUID requestId) {
+        // Deliberately never matches a FAILED row: decideReplayAdmission also consults this check, and
+        // FR-004-007 requires a replay to re-run a leg whose latest row is FAILED for any reason. The
+        // FAILED/terminal-reason half of FR-002-012's "skip it" row lives in hasTerminalFailure, which
+        // only the non-replay reclaim path may consult.
         return jdbc.sql("SELECT EXISTS (SELECT 1 FROM outbound_message_latest "
                         + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
                         + "AND status IN ('SENT', 'NOT_APPLICABLE'))")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query(Boolean.class)
+                .single();
+    }
+
+    @Override
+    public boolean hasTerminalFailure(final String source, final UUID requestId) {
+        // FR-002-012's eligibility table marks attempt-1 FAILED "skip it" on a non-replay delivery:
+        // receiver-rejected and rules-exception are terminal (the request only needs claim-guarded
+        // completion), unlike the exhaustion-eligible payload-unavailable and gateway-transient, which
+        // must still reach the exhausted settlement path (hasRecordedExhaustion).
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM outbound_message_latest "
+                        + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
+                        + "AND status = 'FAILED' "
+                        + "AND reason IN ('receiver-rejected', 'rules-exception'))")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query(Boolean.class)
+                .single();
+    }
+
+    @Override
+    public boolean hasRecordedExhaustion(final String source, final UUID requestId) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM outbound_message_latest "
+                        + "WHERE source = :source AND request_id = :requestId AND leg = 'HMPPS' "
+                        + "AND status = 'FAILED' "
+                        + "AND reason IN ('payload-unavailable', 'gateway-transient'))")
                 .param(SOURCE, source)
                 .param(REQUEST_ID, requestId)
                 .query(Boolean.class)

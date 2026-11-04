@@ -25,25 +25,49 @@ public sealed interface GuardDecision
      * @param claim the claim the run's writes are fenced by
      * @param crashRerun whether this reclaimed an expired claim with a still-PENDING attempt-1 row
      * @param gatewayParked whether attempt 1 was PARKED for a gateway 5xx before this reclaim
-     * @param replayMessageId the admitting delivery's {@code messageId} when this is a replay
-     *                        admission (slice 004, FR-004-007); empty for a queue admission
+     * @param replayMessageId the delivery's {@code messageId} whenever the run this admits must apply
+     *                        the replay column of the eligibility table (slice 004, FR-004-007): the
+     *                        admitting delivery of a fresh replay, and every redelivery while the
+     *                        request is still mid-replay; empty for a queue admission
      * @param terminalSuccess whether the latest leg is already successful and only the request
      *                        needs claim-guarded completion, without another leg run
+     * @param freshReplayAdmission whether this decision is the replay's own admission — the
+     *                             {@code FAILED}-to-{@code RECEIVED} transition itself, not a later
+     *                             redelivery reclaimed while still mid-replay. The "replay admitted"
+     *                             metric and log line fire once, on this transition only; a
+     *                             redelivery reclaimed mid-replay still carries {@code replayMessageId}
+     *                             so the run applies the replay column, but is not counted again
+     * @param alreadyExhausted whether a reclaimed row's latest leg is already {@code FAILED} with an
+     *                         exhaustion-eligible reason ({@code payload-unavailable},
+     *                         {@code gateway-transient}): a crash left the request unsettled after
+     *                         that outcome was recorded, so the leg needs no further attempt — only
+     *                         the request's {@code FAILED(leg-exhausted)} transition and the
+     *                         dead-letter are still owed (FR-002-012, FR-002-047). Never set on a
+     *                         replay admission: FR-004-007 requires a replay to re-run a leg whose
+     *                         latest row is {@code FAILED} for any reason
      */
     record Admitted(RunClaim claim, boolean crashRerun, boolean gatewayParked,
-                    Optional<String> replayMessageId, boolean terminalSuccess) implements GuardDecision {
+                    Optional<String> replayMessageId, boolean terminalSuccess,
+                    boolean freshReplayAdmission, boolean alreadyExhausted) implements GuardDecision {
 
         public Admitted(final RunClaim claim) {
-            this(claim, false, false, Optional.empty(), false);
+            this(claim, false, false, Optional.empty(), false, false, false);
         }
 
         public Admitted(final RunClaim claim, final boolean crashRerun, final boolean gatewayParked) {
-            this(claim, crashRerun, gatewayParked, Optional.empty(), false);
+            this(claim, crashRerun, gatewayParked, Optional.empty(), false, false, false);
         }
 
         public Admitted(final RunClaim claim, final boolean crashRerun, final boolean gatewayParked,
-                        final Optional<String> replayMessageId) {
-            this(claim, crashRerun, gatewayParked, replayMessageId, false);
+                        final Optional<String> replayMessageId, final boolean terminalSuccess,
+                        final boolean freshReplayAdmission) {
+            this(claim, crashRerun, gatewayParked, replayMessageId, terminalSuccess,
+                    freshReplayAdmission, false);
+        }
+
+        public Admitted(final RunClaim claim, final boolean crashRerun, final boolean gatewayParked,
+                        final Optional<String> replayMessageId, final boolean terminalSuccess) {
+            this(claim, crashRerun, gatewayParked, replayMessageId, terminalSuccess, false, false);
         }
 
         /** Rejects a null claim or replay-message-id optional. */

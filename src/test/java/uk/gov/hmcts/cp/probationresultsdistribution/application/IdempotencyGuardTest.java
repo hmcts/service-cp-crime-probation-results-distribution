@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -211,6 +212,109 @@ class IdempotencyGuardTest {
                     admitted -> assertThat(admitted.terminalSuccess()).isTrue());
             verify(repository).hasTerminalSuccess("RESULTS", command.requestId());
         }
+
+        @Test
+        @DisplayName("also returns a completion-only admission for an already-recorded terminal "
+                + "failure (FR-002-012)")
+        void marks_terminal_success_for_a_recorded_terminal_failure() {
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(
+                    new RequestRecord("RETRYING", fp, false)));
+            when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
+            when(repository.hasTerminalFailure("RESULTS", command.requestId())).thenReturn(true);
+
+            final GuardDecision decision = guard.admit(command, "{}", MESSAGE_ID, 1L,
+                    ReplayRoute.COPY);
+
+            assertThat(decision).isInstanceOfSatisfying(GuardDecision.Admitted.class,
+                    admitted -> assertThat(admitted.terminalSuccess()).isTrue());
+            verify(repository).hasTerminalFailure("RESULTS", command.requestId());
+        }
+    }
+
+    /**
+     * FR-002-012, FR-002-047: a crash can leave the request {@code RECEIVED}/{@code RETRYING} after
+     * the leg's exhaustion outcome ({@code FAILED(payload-unavailable)} or
+     * {@code FAILED(gateway-transient)}) is already recorded on the final permitted delivery. The
+     * leg needs no further attempt on reclaim — only the request's {@code FAILED(leg-exhausted)}
+     * transition and the dead-letter are still owed.
+     */
+    @Nested
+    @DisplayName("reclaiming a request with an already-recorded exhaustion outcome")
+    class ReclaimRecordedExhaustion {
+
+        @Test
+        @DisplayName("marks an already-exhausted admission after a successful expired-claim reclaim")
+        void marks_already_exhausted_after_expired_claim_reclaim() {
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(
+                    new RequestRecord("RETRYING", fp, false)));
+            when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
+            when(repository.hasRecordedExhaustion("RESULTS", command.requestId())).thenReturn(true);
+
+            final GuardDecision decision = guard.admit(command, "{}", MESSAGE_ID, 4L,
+                    ReplayRoute.COPY);
+
+            assertThat(decision).isInstanceOfSatisfying(GuardDecision.Admitted.class, admitted -> {
+                assertThat(admitted.alreadyExhausted()).isTrue();
+                assertThat(admitted.terminalSuccess()).isFalse();
+            });
+            verify(repository).hasRecordedExhaustion("RESULTS", command.requestId());
+        }
+
+        @Test
+        @DisplayName("leaves an ordinary reclaim, with no recorded exhaustion, unmarked")
+        void leaves_an_ordinary_reclaim_unmarked() {
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(
+                    new RequestRecord("RETRYING", fp, false)));
+            when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
+
+            final GuardDecision decision = guard.admit(command, "{}", MESSAGE_ID, 1L,
+                    ReplayRoute.COPY);
+
+            assertThat(decision).isInstanceOfSatisfying(GuardDecision.Admitted.class,
+                    admitted -> assertThat(admitted.alreadyExhausted()).isFalse());
+        }
+    }
+
+    /**
+     * A replay admission moves the request off {@code FAILED} to {@code RECEIVED}/{@code RETRYING}
+     * (design A2-62). If a later redelivery lands here — because the row is no longer {@code FAILED}
+     * — while {@code replayed_at} is still set, FR-004-007 requires it to keep applying the replay
+     * column of the eligibility table, not silently fall back to a queue admission.
+     */
+    @Nested
+    @DisplayName("reclaiming a request still mid-replay (FR-004-007)")
+    class ReclaimMidReplay {
+
+        @Test
+        @DisplayName("preserves replay routing across a redelivery after a replay admission")
+        void preserves_replay_routing_across_redelivery() {
+            final RequestRecord row = new RequestRecord("RETRYING", fp, false,
+                    Optional.of("FAILED"), Optional.of("rules-exception"), OptionalInt.empty(),
+                    Optional.empty(), false, true);
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(row));
+            when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
+
+            final GuardDecision.Admitted decision = (GuardDecision.Admitted) admit(1L, MESSAGE_ID);
+
+            assertThat(decision.replayMessageId()).contains(MESSAGE_ID);
+            // Not a fresh admission: the "replay admitted" metric and log line must not fire again on
+            // this redelivery, only the run's replay-column routing (probation_replays_total pins this).
+            assertThat(decision.freshReplayAdmission()).isFalse();
+        }
+
+        @Test
+        @DisplayName("leaves replay routing empty on an ordinary reclaim, not mid-replay")
+        void leaves_replay_routing_empty_when_not_mid_replay() {
+            final RequestRecord row = new RequestRecord("RETRYING", fp, false,
+                    Optional.of("PARKED"), Optional.of("gateway-transient"), OptionalInt.of(503),
+                    Optional.empty(), false, false);
+            when(repository.find("RESULTS", command.requestId())).thenReturn(Optional.of(row));
+            when(repository.reclaim(eq("RESULTS"), eq(command.requestId()), any())).thenReturn(true);
+
+            final GuardDecision.Admitted decision = (GuardDecision.Admitted) admit();
+
+            assertThat(decision.replayMessageId()).isEmpty();
+        }
     }
 
     @Nested
@@ -230,6 +334,42 @@ class IdempotencyGuardTest {
             assertThat(decision).isInstanceOf(GuardDecision.Admitted.class);
             assertThat(((GuardDecision.Admitted) decision).replayMessageId())
                     .contains(MESSAGE_ID);
+            assertThat(((GuardDecision.Admitted) decision).freshReplayAdmission()).isTrue();
+        }
+
+        @Test
+        @DisplayName("never short-circuits an already-exhausted leg: FR-004-007 requires a replay to "
+                + "re-run it")
+        void never_short_circuits_an_already_exhausted_leg() {
+            when(repository.find("RESULTS", command.requestId()))
+                    .thenReturn(Optional.of(new RequestRecord("FAILED", fp, false)));
+            when(repository.admitReplay(eq("RESULTS"), eq(command.requestId()), any(),
+                    eq(ReplayRoute.COPY))).thenReturn(true);
+            lenient().when(repository.hasRecordedExhaustion("RESULTS", command.requestId()))
+                    .thenReturn(true);
+
+            final GuardDecision decision = admit();
+
+            assertThat(((GuardDecision.Admitted) decision).alreadyExhausted()).isFalse();
+            verify(repository, never()).hasRecordedExhaustion(any(), any());
+        }
+
+        @Test
+        @DisplayName("never consults the terminal-failure check: FR-004-007 requires a replay to "
+                + "re-run a FAILED leg of any reason, and hasTerminalSuccess alone never matches "
+                + "FAILED, so a replay admission is safe without it")
+        void never_consults_the_terminal_failure_check() {
+            when(repository.find("RESULTS", command.requestId()))
+                    .thenReturn(Optional.of(new RequestRecord("FAILED", fp, false)));
+            when(repository.admitReplay(eq("RESULTS"), eq(command.requestId()), any(),
+                    eq(ReplayRoute.COPY))).thenReturn(true);
+            lenient().when(repository.hasTerminalFailure("RESULTS", command.requestId()))
+                    .thenReturn(true);
+
+            final GuardDecision decision = admit();
+
+            assertThat(((GuardDecision.Admitted) decision).terminalSuccess()).isFalse();
+            verify(repository, never()).hasTerminalFailure(any(), any());
         }
 
         @Test

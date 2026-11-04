@@ -38,6 +38,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
@@ -156,6 +157,67 @@ class ProbationMessageListenerTest {
         verify(processedRequests).markCompleted(command.source(), command.requestId(), claim,
                 CompletionReason.BOTH_LEGS_TERMINAL);
         assertThat(count("probation_processed_total", "status", "COMPLETED")).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("fires the replay-admitted metric once on a fresh replay admission (FR-004-007)")
+    void fires_the_replay_metric_once_on_a_fresh_replay_admission() {
+        final RunClaim claim = RunClaim.fresh();
+        final String replayMessageId = "RESULTS:" + command.requestId();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(
+                new GuardDecision.Admitted(claim, false, false, Optional.of(replayMessageId), false, true));
+        when(runner.run(command, AttemptOrigin.REPLAY, claim, false, replayMessageId)).thenReturn(
+                new RunResult(AttemptOrigin.REPLAY, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
+
+        listener.decide(BODY, 1L);
+
+        assertThat(count("probation_replays_total", "route", "copy")).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("does not re-fire the replay-admitted metric on a mid-replay redelivery reclaim, "
+            + "though the run still applies the replay write path (FR-004-007)")
+    void leaves_the_replay_metric_unfired_on_a_mid_replay_reclaim() {
+        final RunClaim claim = RunClaim.fresh();
+        final String replayMessageId = "RESULTS:" + command.requestId();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(
+                new GuardDecision.Admitted(claim, false, false, Optional.of(replayMessageId), false, false));
+        when(runner.run(command, AttemptOrigin.REPLAY, claim, false, replayMessageId)).thenReturn(
+                new RunResult(AttemptOrigin.REPLAY, LegStatus.SENT, Optional.empty(), true));
+        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
+                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
+
+        listener.decide(BODY, 1L);
+
+        verify(runner).run(command, AttemptOrigin.REPLAY, claim, false, replayMessageId);
+        assertThat(count("probation_replays_total", "route", "copy")).isEqualTo(0.0d);
+    }
+
+    @Test
+    @DisplayName("settles an already-recorded exhaustion outcome without re-running the leg "
+            + "(FR-002-012, FR-002-047)")
+    void settles_an_already_exhausted_leg_without_re_running_it() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(
+                new GuardDecision.Admitted(claim, false, false, Optional.empty(), false, false, true));
+        when(processedRequests.markFailed(eq(command.source()), eq(command.requestId()), eq(claim),
+                eq(FailureReason.LEG_EXHAUSTED), any())).thenReturn(true);
+
+        final Settlement settlement = listener.decide(BODY, 4L);
+
+        assertThat(settlement).isInstanceOf(DeadLetter.class);
+        assertThat(((DeadLetter) settlement).reason()).isEqualTo(DeadLetterReason.LEG_EXHAUSTED);
+        verify(runner, never()).run(any(), any(), any(), anyBoolean());
+        verify(runner, never()).run(any(), any(), any(), anyBoolean(), any());
+        verify(processedRequests).markFailed(eq(command.source()), eq(command.requestId()), eq(claim),
+                eq(FailureReason.LEG_EXHAUSTED), any());
+        assertThat(count("probation_deadlettered_total", "reason", "leg-exhausted")).isEqualTo(1.0d);
+        assertThat(count("probation_processed_total", "status", "FAILED")).isEqualTo(1.0d);
     }
 
     @Test

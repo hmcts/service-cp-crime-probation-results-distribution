@@ -226,13 +226,18 @@ public final class ProbationMessageListener {
                 if (admitted.crashRerun()) {
                     metrics.crashRerun(Leg.HMPPS);
                 }
-                admitted.replayMessageId().ifPresent(replayId -> {
-                    metrics.replays(route);
-                    LOG.info("replay admitted requestId={} route={} messageId={}",
-                            command.requestId(), route.wireValue(), replayId);
-                });
+                if (admitted.freshReplayAdmission()) {
+                    admitted.replayMessageId().ifPresent(replayId -> {
+                        metrics.replays(route);
+                        LOG.info("replay admitted requestId={} route={} messageId={}",
+                                command.requestId(), route.wireValue(), replayId);
+                    });
+                }
                 if (admitted.terminalSuccess()) {
                     yield completeTerminal(command, admitted.claim(), deliveryCount);
+                }
+                if (admitted.alreadyExhausted()) {
+                    yield failLegExhausted(command, admitted.claim(), deliveryCount, messageId);
                 }
                 yield runAndSettle(command, admitted.claim(), deliveryCount, admitted.gatewayParked(),
                         admitted.replayMessageId(), messageId);
@@ -339,6 +344,25 @@ public final class ProbationMessageListener {
         if (!isExhaustionReason(reason)) {
             return completeTerminal(command, claim, deliveryCount);
         }
+        return failLegExhausted(command, claim, deliveryCount, messageId);
+    }
+
+    /**
+     * Fails the request {@code leg-exhausted} and dead-letters the message under the same reason
+     * (FR-002-047). Shared by a leg that just reached exhaustion on this delivery
+     * ({@link #settleFailed}) and by a reclaim that found the leg's exhaustion outcome already
+     * recorded by a delivery a crash interrupted before this transition committed (FR-002-012,
+     * FR-002-047) — the latter never re-runs the leg; only this transition and the dead-letter were
+     * still owed.
+     *
+     * @param command       the admitted command
+     * @param claim         the request claim fencing the transition
+     * @param deliveryCount the broker delivery count, for a stale-runner hand-back
+     * @param messageId     the identity of the delivery recorded as having exhausted the leg
+     * @return the settlement to apply
+     */
+    private Settlement failLegExhausted(final DistributionCommand command, final RunClaim claim,
+                                        final long deliveryCount, final String messageId) {
         final boolean recorded = processedRequests.markFailed(command.source(), command.requestId(),
                 claim, FailureReason.LEG_EXHAUSTED, messageId);
         if (!recorded) {

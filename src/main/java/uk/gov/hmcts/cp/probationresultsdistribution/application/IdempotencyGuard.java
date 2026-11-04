@@ -110,7 +110,7 @@ public final class IdempotencyGuard {
             case COMPLETED -> new GuardDecision.DuplicateComplete();
             case FAILED -> decideReplayAdmission(command, row, messageId, deliveryCount, route,
                     support);
-            case RECEIVED, RETRYING -> reclaimOrAbandon(command, row);
+            case RECEIVED, RETRYING -> reclaimOrAbandon(command, row, messageId);
             default -> throw new IllegalStateException(
                     "unknown request status: " + row.status());
         };
@@ -150,7 +150,8 @@ public final class IdempotencyGuard {
                             support.get())
                     : repository.admitReplay(command.source(), command.requestId(), claim, route);
             decision = admitted ? new GuardDecision.Admitted(claim, false, false,
-                    Optional.of(messageId), repository.hasTerminalSuccess(command.source(), command.requestId()))
+                    Optional.of(messageId), repository.hasTerminalSuccess(command.source(), command.requestId()),
+                    true)
                     : new GuardDecision.Abandon();
         }
         return decision;
@@ -166,8 +167,28 @@ public final class IdempotencyGuard {
         return inserted ? new GuardDecision.Admitted(claim) : new GuardDecision.Abandon();
     }
 
+    /**
+     * Reclaims an expired claim on a {@code RECEIVED}/{@code RETRYING} request, or abandons over a
+     * live one. A redelivery can land here for a request that is still mid-replay — {@code
+     * replayed_at} set, moved off {@code FAILED} by an earlier replay admission but not yet settled
+     * (its leg parked, or its outcome was written but the crash landed before the request settled) —
+     * and FR-004-007 requires every such delivery, admitting one and redelivery alike, to keep
+     * applying the replay column of the eligibility table rather than falling back to a queue
+     * admission that cannot write over a {@code FAILED} attempt-1 row. A redelivery can equally land
+     * here for an ordinary (non-replay) queue delivery whose leg already reached a final outcome —
+     * {@code SENT}/{@code NOT_APPLICABLE}/terminal {@code FAILED} (recognised by
+     * {@link ProcessedRequestRepository#hasTerminalSuccess}), or an exhaustion-eligible {@code FAILED}
+     * recorded on the final permitted delivery — but the crash landed before the request's own
+     * transition committed (FR-002-012, FR-002-047): the leg needs no further attempt either way.
+     *
+     * @param command   the parsed command
+     * @param row       the request's current state
+     * @param messageId the delivery's {@code messageId}, carried forward as the replay message id
+     *                  when the reclaimed row is still mid-replay (FR-004-007)
+     * @return the guard's decision: admit the reclaim, or abandon a lost race
+     */
     private GuardDecision reclaimOrAbandon(final DistributionCommand command,
-                                           final RequestRecord row) {
+                                           final RequestRecord row, final String messageId) {
         final GuardDecision decision;
         if (row.claimLive()) {
             decision = new GuardDecision.Abandon();
@@ -180,8 +201,18 @@ public final class IdempotencyGuard {
                     "PARKED"::equals).isPresent() && row.attemptOneReason().filter(
                     "gateway-transient"::equals).isPresent() && row.attemptOneHttpStatus()
                     .stream().anyMatch(status -> status >= 500 && status < 600);
+            final Optional<String> replayMessageId = reclaimed && row.replayedAtSet()
+                    ? Optional.of(messageId) : Optional.empty();
+            final boolean alreadyExhausted = reclaimed
+                    && repository.hasRecordedExhaustion(command.source(), command.requestId());
+            // hasTerminalFailure is the plain-reclaim-only half of FR-002-012's "skip it" row: never
+            // call it from decideReplayAdmission, which must keep re-running a FAILED leg of any
+            // reason (FR-004-007). hasTerminalSuccess alone never matches FAILED, so it is safe there.
+            final boolean terminalSuccess = reclaimed && (
+                    repository.hasTerminalSuccess(command.source(), command.requestId())
+                            || repository.hasTerminalFailure(command.source(), command.requestId()));
             decision = reclaimed ? new GuardDecision.Admitted(claim, crashRerun, gatewayParked,
-                    Optional.empty(), repository.hasTerminalSuccess(command.source(), command.requestId()))
+                    replayMessageId, terminalSuccess, false, alreadyExhausted)
                     : new GuardDecision.Abandon();
         }
         return decision;

@@ -146,14 +146,48 @@ public interface ProcessedRequestRepository {
                         SupportSubmission support);
 
     /**
-     * Checks the latest HMPPS attempt before a claimed queue or replay run performs external work.
-     * A terminal-success leg is preserved; only the claim-guarded request completion may change.
+     * Checks the latest HMPPS attempt before a claimed queue or replay run performs external work: a
+     * leg already {@code SENT} or {@code NOT_APPLICABLE} is preserved, never re-run; only the
+     * claim-guarded request completion may change. Safe to consult from a replay admission as well as
+     * a plain reclaim — unlike {@link #hasTerminalFailure} and {@link #hasRecordedExhaustion}, this
+     * check never matches a {@code FAILED} row, so it can never conflict with FR-004-007's requirement
+     * that a replay re-run a leg whose latest row is {@code FAILED} for any reason.
      *
      * @param source the request source
      * @param requestId the claimed request
-     * @return whether its latest HMPPS attempt is SENT or NOT_APPLICABLE
+     * @return whether its latest HMPPS attempt is already a successful terminal and must not be re-run
      */
     boolean hasTerminalSuccess(String source, UUID requestId);
+
+    /**
+     * Checks the latest HMPPS attempt for an already-recorded terminal failure that a crash left
+     * unsettled at the request level (FR-002-012): a {@code FAILED} row with a terminal reason
+     * ({@code receiver-rejected}, {@code rules-exception}) — the leg needs no further attempt; only
+     * the claim-guarded request completion is still owed. <strong>Never consulted on a replay
+     * admission</strong> — only on a plain (non-replay) reclaim: FR-004-007 requires a replay to
+     * re-run a leg whose latest row is {@code FAILED} for any reason, terminal or exhaustion-eligible.
+     *
+     * @param source the request source
+     * @param requestId the claimed request
+     * @return whether its latest HMPPS attempt is a {@code FAILED} row already recording a terminal
+     *     reason
+     */
+    boolean hasTerminalFailure(String source, UUID requestId);
+
+    /**
+     * Checks the latest HMPPS attempt for an already-recorded exhaustion outcome that a crash left
+     * unsettled at the request level (FR-002-012, FR-002-047): a {@code FAILED} row with an
+     * exhaustion-eligible reason ({@code payload-unavailable}, {@code gateway-transient}). The leg
+     * itself needs no further attempt — only the request's {@code FAILED(leg-exhausted)} transition
+     * and the dead-letter are still owed. Never consulted on a replay admission: FR-004-007 requires
+     * a replay to re-run a leg whose latest row is {@code FAILED} for any reason.
+     *
+     * @param source the request source
+     * @param requestId the claimed request
+     * @return whether its latest HMPPS attempt is a {@code FAILED} row already recording an
+     *     exhaustion-eligible reason
+     */
+    boolean hasRecordedExhaustion(String source, UUID requestId);
 
 
     /**
@@ -264,16 +298,19 @@ public interface ProcessedRequestRepository {
      * @param exhaustedMessageId the stored {@code exhausted_message_id}, if any (FR-004-001)
      * @param pendingResendRowLatest whether the leg's latest row is a {@code PENDING} resend row,
      *                               live or expired (FR-004-003)
+     * @param replayedAtSet whether {@code replayed_at} is set: the request is mid-replay, so every
+     *                      delivery for it — the admitting one and each redelivery — must apply the
+     *                      replay column of the eligibility table, not the queue column (FR-004-007)
      */
     record RequestRecord(String status, String fingerprint, boolean claimLive,
                          Optional<String> attemptOneStatus, Optional<String> attemptOneReason,
                          OptionalInt attemptOneHttpStatus, Optional<String> exhaustedMessageId,
-                         boolean pendingResendRowLatest) {
+                         boolean pendingResendRowLatest, boolean replayedAtSet) {
 
         public RequestRecord(final String status, final String fingerprint,
                              final boolean claimLive) {
             this(status, fingerprint, claimLive, Optional.empty(), Optional.empty(),
-                    OptionalInt.empty(), Optional.empty(), false);
+                    OptionalInt.empty(), Optional.empty(), false, false);
         }
 
         public RequestRecord(final String status, final String fingerprint, final boolean claimLive,
@@ -281,7 +318,17 @@ public interface ProcessedRequestRepository {
                              final Optional<String> attemptOneReason,
                              final OptionalInt attemptOneHttpStatus) {
             this(status, fingerprint, claimLive, attemptOneStatus, attemptOneReason,
-                    attemptOneHttpStatus, Optional.empty(), false);
+                    attemptOneHttpStatus, Optional.empty(), false, false);
+        }
+
+        public RequestRecord(final String status, final String fingerprint, final boolean claimLive,
+                             final Optional<String> attemptOneStatus,
+                             final Optional<String> attemptOneReason,
+                             final OptionalInt attemptOneHttpStatus,
+                             final Optional<String> exhaustedMessageId,
+                             final boolean pendingResendRowLatest) {
+            this(status, fingerprint, claimLive, attemptOneStatus, attemptOneReason,
+                    attemptOneHttpStatus, exhaustedMessageId, pendingResendRowLatest, false);
         }
 
         /** Rejects null components. */
