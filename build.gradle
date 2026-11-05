@@ -144,6 +144,15 @@ dependencies {
   // Security: pin transitive tomcat-embed-core to patched version (CVE-2026-41293, -43512, et al.)
   // Brought in transitively via spring-boot-starter-web; >=11.0.0-M1,<11.0.22 are vulnerable
   implementation 'org.apache.tomcat.embed:tomcat-embed-core:11.0.27'
+
+  // Security: pin transitive guava to patched version (CVE-2026-102554, unthrottled memory
+  // allocation during deserialization). Brought in transitively via cp-audit-filter-springboot's
+  // swagger-parser chain, resolved to the -android classifier; 32.1.3-android is vulnerable.
+  implementation 'com.google.guava:guava:33.7.2-android'
+
+  // Security: pin transitive proton-j to patched version (CVE-2026-66274, denial of service via
+  // unbounded type nesting). Brought in transitively via azure-core-amqp (azure-messaging-servicebus).
+  implementation 'org.apache.qpid:proton-j:0.35.0'
 }
 
 // Guard against any legacy javax.jms slipping onto the classpath alongside Spring Boot 4's jakarta.jms.
