@@ -25,6 +25,8 @@ public final class ReplayComparator {
 
     private static final String DEFAULTED_ACTIVE = "UNREADABLE_DEFAULTED_ACTIVE";
     private static final String DEFAULTED_INACTIVE = "UNREADABLE_DEFAULTED_INACTIVE";
+    private static final String STATUS_FAILED = "FAILED";
+    private static final String STATUS_PARKED = "PARKED";
 
     private ReplayComparator() {
     }
@@ -103,6 +105,16 @@ public final class ReplayComparator {
         final SitLoggedShare sit = share.sit().get(0);
         final SteAttempt ste = share.ste().get(0);
 
+        // A FAILED or PARKED attempt never reached HMPPS, even though redaction ran and a body was
+        // digested and stored before the send failed — that stored body can still byte-match SIT's
+        // logged body by coincidence. Treat it as though STE recorded nothing (Edge Cases: "STE
+        // parked or failed a hearing that SIT sent"), so it stays unpaired and blocking rather than
+        // being waved through as a match.
+        if (isUndelivered(ste.status())) {
+            return unpaired(id, HearingComparisonClass.UNPAIRED_SIT_ONLY, wholeExplanation,
+                    Optional.of(ste));
+        }
+
         if (sit.unusableReason().isPresent()) {
             return new HearingComparison(id.hearingId(), id.hearingDay(), id.sharedTime(),
                     HearingComparisonClass.SIT_BODY_UNUSABLE, List.of(), wholeExplanation,
@@ -153,6 +165,10 @@ public final class ReplayComparator {
 
     private static boolean isDefaulted(final String youthSwitch) {
         return DEFAULTED_ACTIVE.equals(youthSwitch) || DEFAULTED_INACTIVE.equals(youthSwitch);
+    }
+
+    private static boolean isUndelivered(final String steStatus) {
+        return STATUS_FAILED.equals(steStatus) || STATUS_PARKED.equals(steStatus);
     }
 
     /**

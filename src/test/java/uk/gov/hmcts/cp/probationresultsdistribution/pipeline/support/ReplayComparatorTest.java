@@ -172,6 +172,77 @@ class ReplayComparatorTest {
     }
 
     @Test
+    @DisplayName("a FAILED STE attempt whose stored body matches SIT's is still unpaired SIT-only, "
+            + "never a match (Edge Cases: STE parked or failed a hearing that SIT sent)")
+    void failed_attempt_with_matching_body_is_not_a_match() {
+        final ShareIdentity identity = identity();
+        final SitLoggedShare sit = sitShare(identity, "{\"a\":1}");
+        final SteAttempt ste = new SteAttempt(identity, node("{\"a\":1}"), "FAILED", "cache-day",
+                "ACTIVE", "1.2.0");
+
+        final ReplayReport report = compare(List.of(sit), List.of(ste), List.of());
+
+        final HearingComparison only = report.comparisons().get(0);
+        assertThat(only.comparisonClass()).isEqualTo(HearingComparisonClass.UNPAIRED_SIT_ONLY);
+        assertThat(only.steStatus()).contains("FAILED");
+        assertThat(report.verdict()).isEqualTo(ReplayReport.VERDICT_BLOCKS_CUTOVER);
+    }
+
+    @Test
+    @DisplayName("a PARKED STE attempt is also treated as undelivered, unpaired SIT-only")
+    void parked_attempt_is_also_undelivered() {
+        final ShareIdentity identity = identity();
+        final SitLoggedShare sit = sitShare(identity, "{\"a\":1}");
+        final SteAttempt ste = new SteAttempt(identity, node("{\"a\":1}"), "PARKED", "cache-day",
+                "ACTIVE", "1.2.0");
+
+        final ReplayReport report = compare(List.of(sit), List.of(ste), List.of());
+
+        final HearingComparison only = report.comparisons().get(0);
+        assertThat(only.comparisonClass()).isEqualTo(HearingComparisonClass.UNPAIRED_SIT_ONLY);
+        assertThat(only.steStatus()).contains("PARKED");
+        assertThat(report.verdict()).isEqualTo(ReplayReport.VERDICT_BLOCKS_CUTOVER);
+    }
+
+    @Test
+    @DisplayName("a paired NOT_APPLICABLE STE attempt is never treated as undelivered: a genuine "
+            + "divergence against a SIT-sent share still surfaces through the ordinary body-diff path")
+    void paired_not_applicable_attempt_is_not_undelivered() {
+        final ShareIdentity identity = identity();
+        final SitLoggedShare sit = sitShare(identity, "{\"a\":1}");
+        final SteAttempt ste = new SteAttempt(identity, node("{\"a\":2}"), "NOT_APPLICABLE",
+                "cache-day", "ACTIVE", "1.2.0");
+
+        final ReplayReport report = compare(List.of(sit), List.of(ste), List.of());
+
+        final HearingComparison only = report.comparisons().get(0);
+        assertThat(only.comparisonClass()).isEqualTo(HearingComparisonClass.UNEXPLAINED_DIFFERENCE);
+        assertThat(only.steStatus()).contains("NOT_APPLICABLE");
+        assertThat(only.differingPaths()).containsExactly("/a");
+        assertThat(report.verdict()).isEqualTo(ReplayReport.VERDICT_BLOCKS_CUTOVER);
+    }
+
+    @Test
+    @DisplayName("an undelivered STE attempt is explained the same way as any unpaired share, by a "
+            + "whole-covering entry")
+    void undelivered_attempt_is_explained_like_any_unpaired_share() {
+        final ShareIdentity identity = identity();
+        final SitLoggedShare sit = sitShare(identity, "{\"a\":1}");
+        final SteAttempt ste = new SteAttempt(identity, node("{\"a\":1}"), "FAILED", "cache-day",
+                "ACTIVE", "1.2.0");
+        final ExplanationEntry wholeExplanation = new ExplanationEntry(identity,
+                "second-line-support", "gateway outage during the replay window", List.of(),
+                Instant.parse("2026-08-25T09:00:00Z"));
+
+        final ReplayReport report = compare(List.of(sit), List.of(ste), List.of(wholeExplanation));
+
+        final HearingComparison only = report.comparisons().get(0);
+        assertThat(only.comparisonClass()).isEqualTo(HearingComparisonClass.UNPAIRED_SIT_ONLY);
+        assertThat(only.explanation()).contains(wholeExplanation);
+        assertThat(report.verdict()).isEqualTo(ReplayReport.VERDICT_NO_UNEXPLAINED_DIFFERENCES);
+    }
+
+    @Test
     @DisplayName("more than one share at the same identity is unpaired ambiguous, never dropped")
     void ambiguous_share_is_reported_never_dropped() {
         final ShareIdentity identity = identity();
