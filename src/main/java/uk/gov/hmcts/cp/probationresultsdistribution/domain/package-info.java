@@ -8,9 +8,14 @@
  * cause, and the completion, failure and dead-letter reasons. Records and enums, immutable, with
  * their invariants checked in their constructors.
  *
- * <p><strong>Dependency direction.</strong> This package depends on nothing in the service and on
- * nothing outside the JDK: no Spring, no Jackson, no JDBC, no Azure SDK. Every other package may
- * depend on it. A domain type that needed an import from another package of this service would be
- * the first sign that it belongs there instead.
+ * <p><strong>Dependency direction.</strong> This package depends on nothing in the service and,
+ * with one exception, on nothing outside the JDK: no Spring, no JDBC, no Azure SDK. The exception
+ * is the Jackson {@code JsonNode} that {@code RedactionResult.Body} carries: the hearing payload
+ * crosses the core as the platform's immutable JSON tree by design (constitution Principle IV), and
+ * the redacted HMPPS body is that tree, not a typed model. That permission covers {@code JsonNode}
+ * and its subtypes only; binding, streaming and {@code ObjectMapper} configuration stay in the
+ * adapters and in {@code config/}. Every other package may depend on this one. A domain type that
+ * needed an import from another package of this service would be the first sign that it belongs
+ * there instead.
  */
 package uk.gov.hmcts.cp.probationresultsdistribution.domain;

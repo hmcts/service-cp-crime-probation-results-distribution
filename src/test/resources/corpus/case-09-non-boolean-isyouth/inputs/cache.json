@@ -1,0 +1,27 @@
+{
+  "hearing": {
+    "id": "00000000-0000-0000-0000-000000000009",
+    "prosecutionCases": [
+      {
+        "defendants": [
+          {
+            "isYouth": "false",
+            "offences": [
+              {
+                "judicialResults": []
+              }
+            ]
+          },
+          {
+            "offences": [
+              {
+                "judicialResults": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sharedTime": "2026-01-01T09:00:00.000Z"
+}

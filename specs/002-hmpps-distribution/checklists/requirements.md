@@ -30,26 +30,22 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain. **Three remain**, each a design gap that digest §16
-      or the design's own answer tables leave open. None can be resolved from the design:
-      - FR-002-024: which unreadable cause labels a 2xx users-groups answer whose `permissions[0]`
-        is `null` (design gap §4.4 / A2-28);
-      - FR-002-038: how a gateway answer outside 2xx, 4xx and 5xx (in practice a 3xx) maps to a
-        leg outcome and an `http` bucket;
-      - FR-002-061: how a crash during the re-run of a `PARKED` row is counted (A3-115).
-
-      The questions and their options are below, in the form slices 001, 003–006 use.
-- [x] Requirements are testable and unambiguous, apart from the three marked above. Every
-      requirement states an observable outcome: a row value, a settlement, a count, a log level or
-      a startup refusal. Twenty-two ambiguities were resolved and recorded under Clarifications:
-      twenty-one from the design, and one, the reading of A2-67's "no settlement", from the
-      constitution's settlement rule.
+- [x] No unresolved clarification markers remain in the spec. The three design gaps were resolved on
+      2026-10-21: FR-002-024 uses `EMPTY_PERMISSIONS` for a null first permission; FR-002-038
+      parks a 3xx with `gateway-transient` and the new `other` HTTP bucket; FR-002-061 does not
+      count a crash during a `PARKED` re-run. The questions and selected answers are retained
+      below as the decision record.
+- [x] Requirements are testable and unambiguous. Every requirement states an observable outcome:
+      a row value, a settlement, a count, a log level or a startup refusal. Twenty-five ambiguities
+      were resolved and recorded under Clarifications:
+      twenty-one from the design, one (A2-67's "no settlement") from the constitution's settlement
+      rule, and the three design gaps answered above.
 - [x] Success criteria are measurable. Each has a count, a percentage or a time bound: 100% of runs,
       0 extra POSTs, 1 or at most 3 POSTs, 215 s, 10 s, 14 of 14 deviations.
 - [x] Success criteria are technology-agnostic. They speak of shares, hearings, deliveries, POSTs,
       stored bodies and the processed log. SC-002-012 refers to the repository's build and quality
       gates by name only.
-- [x] All acceptance scenarios are defined. Six stories carry 59 Given/When/Then scenarios.
+- [x] All acceptance scenarios are defined. Six stories carry 61 Given/When/Then scenarios.
 - [x] Edge cases are identified. There are 16, including the cached `{}`, a payload with no
       `hearing`, a body without `hearing.id`, a re-run that removes an earlier body, a lost lock, a
       database failure between the POST and the record, a `max-delivery-count` mismatch, and bodies
@@ -65,9 +61,8 @@
 
 ## Feature Readiness
 
-- [x] All functional requirements have clear acceptance criteria, apart from FR-002-038, whose
-      outcome is open. Each story lists the requirements it exercises. The rest are covered as the
-      User Scenarios preamble states:
+- [x] All functional requirements have clear acceptance criteria. Each story lists the
+      requirements it exercises. The rest are covered as the User Scenarios preamble states:
       - the foundational requirements, which are V1, the vocabularies, the ports, and the
         configuration with its timing rule (FR-002-014, FR-002-050 to FR-002-056, FR-002-066 to
         FR-002-072), by schema-vocabulary assertions and startup-refusal tests on every build;
@@ -155,10 +150,10 @@
 
 ### Question 1: Which cause labels an unreadable read whose first permission is `null`? (FR-002-024)
 
-**Context**: FR-002-024: "H8 makes a 2xx whose `permissions[0]` is `null` an `UNREADABLE` read,
-with cause [NEEDS CLARIFICATION …]". The design lists a `null` `permissions[0]` among the
-`UNREADABLE` cases, and names four causes (`HTTP_FAILURE`, `TIMEOUT`, `EMPTY_PERMISSIONS`,
-`UNPARSEABLE`; A2-28), but maps none of them to that case (design gap §4.4 / A2-28; digest §16).
+**Context**: FR-002-024 formerly left the cause of a 2xx with `permissions[0] = null` open. The
+design lists a `null` `permissions[0]` among the `UNREADABLE` cases, and names four causes
+(`HTTP_FAILURE`, `TIMEOUT`, `EMPTY_PERMISSIONS`, `UNPARSEABLE`; A2-28), but maps none of them to
+that case (design gap §4.4 / A2-28; digest §16).
 The cause is the `cause` label of `probation_youth_switch_unreadable_total` and a field of the
 outcome log line. It is never stored, and it changes nothing the leg does: the default applies
 and the hearing is sent (H8).
@@ -174,14 +169,14 @@ and the hearing is sent (H8).
 | C | A fifth cause, for example `NULL_PERMISSION` | The most precise label, but the cause vocabulary and the closed label set of design §10.1 grow by one value: a design addition |
 | Custom | Provide your own answer | Name the cause, and say whether the label set changes |
 
-**Your choice**: _for the design owner_
+**Selected answer (2026-10-21)**: A — `EMPTY_PERMISSIONS`.
 
 ### Question 2: How does a gateway answer outside 2xx, 4xx and 5xx map? (FR-002-038)
 
-**Context**: FR-002-038: "A gateway answer outside 2xx, 4xx and 5xx MUST map to [NEEDS
-CLARIFICATION …]". The design's answer table (§9; §4.4) maps any 2xx, a 4xx other than 408 and
-429, a 5xx, a 408, a 429, a read timeout after the write, an I/O failure once writing began and a
-connection failure. The `http` label's buckets are `200`, `2xx-other`, `400`, `401`, `408`,
+**Context**: FR-002-038 formerly left a gateway answer outside 2xx, 4xx and 5xx open. The
+design's answer table (§9; §4.4) maps any 2xx, a 4xx other than 408 and 429, a 5xx, a 408, a 429,
+a read timeout after the write, an I/O failure once writing began and a connection failure. The
+`http` label's buckets are `200`, `2xx-other`, `400`, `401`, `408`,
 `429`, `4xx-other`, `5xx` and `none` (A3-116), and the publisher's outcomes are `SENT(status)`,
 `FAILED_NON_TRANSIENT(status)` and `TRANSIENT_EXHAUSTED`. An answer outside those classes — in
 practice a 3xx that the client does not follow — is mapped by none of them.
@@ -197,7 +192,9 @@ practice a 3xx that the client does not follow — is mapped by none of them.
 | C | Either outcome above, with a new `http` bucket, for example `other` | The label tells the case apart, but the closed label set of A3-116 grows by one value: a design addition |
 | Custom | Provide your own answer | Name the outcome and the bucket |
 
-**Your choice**: _for the design owner_
+**Selected answer (2026-10-21)**: Outcome `PARKED(gateway-transient)`, or
+`FAILED(gateway-transient)` on the final delivery, with a new `other` HTTP bucket (the outcome of
+option A with the bucket of option C).
 
 ### Question 3: How is a crash during the re-run of a `PARKED` row counted? (FR-002-061)
 
@@ -219,4 +216,4 @@ established (§10.1; digest §16). The replay's `FAILED` re-run case is slice 00
 | C | Mark the row before the POST (a `PENDING` write, or a note form) so that a redelivery can tell | Exact, but it reverses A2-39 (an in-place re-run writes no `PENDING` first) and adds a write to every re-run: a design change |
 | Custom | Provide your own answer | Say what is counted, and on what evidence |
 
-**Your choice**: _for the design owner_
+**Selected answer (2026-10-21)**: A — only expired-claim `PENDING` attempt-1 re-runs count.

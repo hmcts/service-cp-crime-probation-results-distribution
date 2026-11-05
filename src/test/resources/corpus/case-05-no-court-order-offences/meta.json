@@ -1,0 +1,48 @@
+{
+  "caseId": "case-05-no-court-order-offences",
+  "environment": "SYNTHETIC",
+  "formsHeld": [
+    "CACHE"
+  ],
+  "share": {
+    "hearingId": "00000000-0000-0000-0000-000000000005",
+    "hearingDay": "2026-01-01",
+    "sharedTimeInstant": "2026-01-01T09:00:00.000Z"
+  },
+  "payloadSourceRead": "UNKNOWN",
+  "expectations": {
+    "ACTIVE": {
+      "CACHE": {
+        "kind": "NO_MESSAGE",
+        "noMessageKind": "RULES_FAILURE",
+        "ruleId": "R7",
+        "source": "EXECUTED_LEGACY"
+      }
+    },
+    "INACTIVE": {
+      "CACHE": {
+        "kind": "NO_MESSAGE",
+        "noMessageKind": "RULES_FAILURE",
+        "ruleId": "R7",
+        "source": "EXECUTED_LEGACY"
+      }
+    }
+  },
+  "provenance": {
+    "syntheticFrom": "hand-built from the legacy Jest fixture shapes; carries no SIT or production payload",
+    "change": "a court application whose courtOrder has no courtOrderOffences: R7 reads courtOrderOffences and throws (P19)",
+    "captureDates": {
+      "cache": "2026-10-21",
+      "outcome": "2026-10-21"
+    },
+    "expectationSources": {
+      "ACTIVE:CACHE": "EXECUTED_LEGACY",
+      "INACTIVE:CACHE": "EXECUTED_LEGACY"
+    },
+    "legacyCommit": "122e215250f6f7c7e646d36cbbaa3a50fd60779a",
+    "runtime": "node v20.9.0"
+  },
+  "digests": {
+    "inputs/cache.json": "2e90a4830e180c85f88cb9f2267b6aef435cacd6359798c6b12dcd9e04af889f"
+  }
+}

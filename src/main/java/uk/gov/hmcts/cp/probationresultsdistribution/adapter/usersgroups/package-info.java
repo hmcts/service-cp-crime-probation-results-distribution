@@ -10,8 +10,8 @@
  * the recorded difference.
  *
  * <p><strong>Dependency direction.</strong> Implements the {@code YouthFilterSource} port declared
- * in {@code application}, and depends on that port, on {@code domain} and on the shared HTTP
- * support only. It never depends on another adapter package, on {@code persistence}, or on the
- * driving adapters {@code inbound} and {@code api}.
+ * in {@code application}, and depends on that port and on {@code domain} only; the legacy retry
+ * rule (DV-24) is implemented inline in the client. It never depends on another adapter package, on
+ * {@code persistence}, or on the driving adapters {@code inbound} and {@code api}.
  */
 package uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups;

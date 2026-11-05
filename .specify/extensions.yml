@@ -1,19 +1,3 @@
-# SPECKIT-LOCAL-PATCH: hooks tuned for this repository's branch workflow.
-# - before_specify (speckit.git.feature) is ENABLED. The project carries no
-#   ticket at bootstrap: the skill answers `none` for the ticket id, which maps
-#   to --no-jira-id and sequential `NNN-slug` numbering (001-..., constitution
-#   Principle VIII). The Jira-id path in the underlying script
-#   (.specify/extensions/git/scripts/bash/create-new-feature.sh) is retained
-#   only for a future ticketed workflow; adopting it is a PATCH amendment to
-#   Principle VIII.
-# - before_constitution (speckit.git.initialize) is DISABLED — repo is already
-#   a git repo; the hook is a no-op.
-# - Every speckit.git.commit hook is DISABLED except after_specify, which stays
-#   ENABLED so a new feature specification is committed as soon as it is
-#   written. The rest are configured as no-ops in
-#   .specify/extensions/git/git-config.yml anyway, so leaving them enabled
-#   produces misleading prompts at every phase. Beyond that one hook, the team
-#   commits manually with Conventional Commits messages.
 installed: []
 settings:
   auto_execute_hooks: true
@@ -50,6 +34,13 @@ hooks:
     prompt: Commit outstanding changes before planning?
     description: Auto-commit before implementation planning
     condition: null
+  - extension: token-budget
+    command: speckit.token-budget.scope
+    enabled: true
+    optional: true
+    prompt: Scope a focused reading manifest for /speckit.plan?
+    description: Scope reading manifest before planning
+    condition: null
   before_tasks:
   - extension: git
     command: speckit.git.commit
@@ -58,6 +49,13 @@ hooks:
     prompt: Commit outstanding changes before task generation?
     description: Auto-commit before task generation
     condition: null
+  - extension: token-budget
+    command: speckit.token-budget.scope
+    enabled: true
+    optional: true
+    prompt: Scope a focused reading manifest for /speckit.tasks?
+    description: Scope reading manifest before task generation
+    condition: null
   before_implement:
   - extension: git
     command: speckit.git.commit
@@ -65,6 +63,13 @@ hooks:
     optional: true
     prompt: Commit outstanding changes before implementation?
     description: Auto-commit before implementation
+    condition: null
+  - extension: token-budget
+    command: speckit.token-budget.scope
+    enabled: true
+    optional: true
+    prompt: Scope a focused reading manifest for /speckit.implement?
+    description: Scope reading manifest before implementation
     condition: null
   before_checklist:
   - extension: git
@@ -104,7 +109,15 @@ hooks:
     enabled: true
     optional: true
     prompt: Commit specification changes?
-    description: 'Auto-commit after specification (writes "docs(spec): add feature specification")'
+    description: 'Auto-commit after specification (writes "docs(spec): add feature
+      specification")'
+    condition: null
+  - extension: token-budget
+    command: speckit.token-budget.compact
+    enabled: true
+    optional: false
+    prompt: Compact spec.md to reduce tokens for /speckit.plan?
+    description: Compact spec after specification
     condition: null
   after_clarify:
   - extension: git
@@ -122,6 +135,13 @@ hooks:
     prompt: Commit plan changes?
     description: Auto-commit after implementation planning
     condition: null
+  - extension: token-budget
+    command: speckit.token-budget.compact
+    enabled: true
+    optional: false
+    prompt: Compact plan and design docs to reduce tokens for /speckit.tasks?
+    description: Compact plan docs after planning
+    condition: null
   after_tasks:
   - extension: git
     command: speckit.git.commit
@@ -129,6 +149,13 @@ hooks:
     optional: true
     prompt: Commit task changes?
     description: Auto-commit after task generation
+    condition: null
+  - extension: token-budget
+    command: speckit.token-budget.compact
+    enabled: true
+    optional: false
+    prompt: Compact tasks.md to reduce tokens for /speckit.implement?
+    description: Compact tasks after task generation
     condition: null
   after_implement:
   - extension: git

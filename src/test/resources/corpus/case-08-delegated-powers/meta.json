@@ -1,0 +1,48 @@
+{
+  "caseId": "case-08-delegated-powers",
+  "environment": "SYNTHETIC",
+  "formsHeld": [
+    "CACHE"
+  ],
+  "share": {
+    "hearingId": "00000000-0000-0000-0000-000000000008",
+    "hearingDay": "2026-01-01",
+    "sharedTimeInstant": "2026-01-01T09:00:00.000Z"
+  },
+  "payloadSourceRead": "UNKNOWN",
+  "expectations": {
+    "ACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/active.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    },
+    "INACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/inactive.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    }
+  },
+  "provenance": {
+    "syntheticFrom": "hand-built from the legacy Jest fixture shapes; carries no SIT or production payload",
+    "change": "a prosecution-case offence with plea.delegatedPowers and a judicialResult.delegatedPowers: R10 removes the judicial result's, plea.delegatedPowers is kept (P35)",
+    "captureDates": {
+      "cache": "2026-10-21",
+      "outcome": "2026-10-21"
+    },
+    "expectationSources": {
+      "ACTIVE:CACHE": "EXECUTED_LEGACY",
+      "INACTIVE:CACHE": "EXECUTED_LEGACY"
+    },
+    "legacyCommit": "122e215250f6f7c7e646d36cbbaa3a50fd60779a",
+    "runtime": "node v20.9.0"
+  },
+  "digests": {
+    "inputs/cache.json": "e074a6bee5a5151cd9bc85e8f55323e151d794283476e9b2343ce4aa70ee6abb",
+    "expectations/active.json": "be98f461021d6c2fbce8921b6f7c489c4b0c4491b11cb34a62ed02456b88c8d5",
+    "expectations/inactive.json": "be98f461021d6c2fbce8921b6f7c489c4b0c4491b11cb34a62ed02456b88c8d5"
+  }
+}

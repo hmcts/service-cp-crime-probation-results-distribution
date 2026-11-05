@@ -139,6 +139,23 @@ This slice adds no deviation (DV) row. The function app has no operator surface 
 - Q: Does the API read App Configuration or the Results switch? → A: Neither (H26; rows A3-69,
   A3-92; Q15).
 
+### Session 2026-10-25
+
+- Q: Does the resend-leg call answer synchronously with the full report, or accept the run and hand
+  back a `resendRunId`? → A: Accepted-run. It answers `202` with `resendRunId` immediately; a run
+  over up to `max-ids-per-run` IDs runs sequentially (004's research.md Decision 4) and can
+  comfortably outlive any sane gateway timeout, so blocking risks the caller timing out while the
+  run continues server-side — and a caller who then repeats a timed-out forced resend sends a
+  further genuine duplicate at HMPPS (H12). No ID's outcome is lost either way: it is on that ID's
+  attempt row and in 004's run-report log line, readable today through 004's `list-requests` runner
+  even without a dedicated HTTP read-back endpoint (O-1).
+- Q: Which users-groups group(s) may call `/operations/**`? → A: `Second Line Support`, for both
+  the `replay` and `resend-leg` actions, as a starting point — the owning team's confirmation or
+  override of this group (H31) is still the authoritative answer and is tracked as an open item,
+  not a question this spec can close on its own, since a forced resend re-sends defendants'
+  personal data to HMPPS as a genuine duplicate (H12), youth defendants included wherever the youth
+  switch does not remove them (H7).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Replay a `FAILED` request over HTTP (Priority: P1)
@@ -403,7 +420,9 @@ an identically seeded store, and compare the reports ID for ID.
 - **A forced resend repeated after a lost answer.** Every call is a new call. A repeated forced
   resend sends the hearing again, a further genuine duplicate at HMPPS (H12); the API takes no
   idempotency key and none is designed. The operator reads the latest row first (the list runner
-  or the documented query). This risk is what the open question in FR-005-015 weighs.
+  or the documented query). The accepted-run answer (FR-005-015) narrows this window to the `202`
+  itself going astray, rather than a long synchronous call timing out mid-run and inviting a retry
+  of a resend that is, in fact, already in flight.
 - **A replay repeated after a lost answer.** A second replay command is enqueued under another
   fresh identity, and the guard makes it harmless: a `COMPLETED` request completes as a no-op, and
   a copy meeting a live claim is abandoned — possibly dead-lettered `exhausted` in seconds, the
@@ -428,12 +447,14 @@ an identically seeded store, and compare the reports ID for ID.
 - **`allowTerminalSuccess` with only `FAILED` IDs.** They proceed as ordinary resends: the
   override is used only by an ID whose latest row is `SENT` or `NOT_APPLICABLE` (004). The answer
   still says the override was requested.
-- **The store becomes unavailable part-way through a resend.** The IDs already taken keep their
-  outcomes on their rows and in 004's run report line. How the answer reports the rest follows the
-  answer to FR-005-015.
+- **The store becomes unavailable part-way through a resend.** The call already answered `202`
+  before this can happen; there is no second HTTP answer to carry it. The IDs already taken keep
+  their outcomes on their rows, the run's result is recorded failed in 004's run report line
+  (FR-005-015), and the operator reads it from there or from the list runner.
 - **A pause that begins during a resend.** Slice 004 claims no further ID and reports the IDs it
-  had not reached as `not-run` (FR-004-021); where the answer carries the report (FR-005-015), it
-  renders them so, under a successful call.
+  had not reached as `not-run` (FR-004-021); since the call already answered `202` before the run
+  reached this point (FR-005-015), the `not-run` entries surface only in 004's run report line and
+  the list runner, never in a second HTTP answer.
 - **The store is unavailable before the call.** `503 store-unavailable`, nothing changed.
   Readiness is the store, so a pod in that state is normally taken out of the route anyway.
 - **The broker cannot take a replay's command.** `503 broker-unavailable`, nothing changed in the
@@ -550,16 +571,16 @@ an identically seeded store, and compare the reports ID for ID.
   unreached (FR-004-021); and the run summary's counts (selected, `SENT`, `NOT_APPLICABLE` by
   reason, `FAILED` by reason, refusals by code). Refusal codes are answer and report codes, never
   row values. *(row A3-56; §4.4 Output row)*
-- **FR-005-015**: The resend-leg call MUST answer [NEEDS CLARIFICATION: synchronously, once every
-  listed ID has run, with the whole report as the runner prints it — or by accepting the run
-  (`202` with its `resendRunId`) and leaving the per-ID outcomes to slice 004's run report line and
-  the attempt rows? The design fixes the report's content (§4.4 Output row; row A3-56) but not
-  whether one HTTP call waits for up to `max-ids-per-run` IDs, each bounded only by the 215 s
-  message budget (§4.7). A call that outlives the route's timeout gives the caller an error while
-  the pod carries on, and a caller who repeats a timed-out forced resend sends a further genuine
-  duplicate (H12); an accepted-run answer has no HTTP read-back while the list action is open
-  (O-1).] Whichever is chosen, no ID's outcome is lost: it is on that ID's attempt row and in 004's
-  run report line.
+- **FR-005-015**: The resend-leg call MUST answer by accepting the run: `202` with the run's
+  `resendRunId`, before any ID has necessarily finished. The design fixes the report's content
+  (§4.4 Output row; row A3-56) but not whether one HTTP call waits for up to `max-ids-per-run` IDs,
+  each bounded only by the 215 s message budget (§4.7); a call that outlives the route's timeout
+  gives the caller an error while the pod carries on, and a caller who repeats a timed-out forced
+  resend sends a further genuine duplicate (H12) — so this spec resolves it against the accepted-run
+  shape rather than a synchronous one (Clarifications, Session 2026-10-25). No ID's outcome is
+  lost: it is on that ID's attempt row and in 004's run report line, readable today through 004's
+  `list-requests` runner even though there is no dedicated HTTP read-back endpoint while the list
+  action is open (O-1).
 - **FR-005-016**: `operator` and `reason` are required on every resend-leg call, forced or not
   (row A3-56). The endpoint MUST pass both unchanged to slice 004, which refuses the whole call when
   either is absent, blank or over its bound (FR-004-020), and MUST render that refusal as
@@ -586,13 +607,14 @@ an identically seeded store, and compare the reports ID for ID.
   (proposed names `probation-results-distribution-operations.replay` and
   `probation-results-distribution-operations.resend-leg`). The forced override is part of
   `resend-leg`, not an action of its own. *(§4.8; row A3-36)*
-- **FR-005-020**: There MUST be exactly one explicit allow rule per action, each admitting
-  [NEEDS CLARIFICATION: which users-groups group or groups? The design copies the API from YOT
-  (§4.8), whose rules admit one estate group, "Second Line Support", but it names no group for this
-  service. A forced resend re-sends defendants' personal data to HMPPS as a genuine duplicate
-  (H12), youth defendants included wherever the youth switch does not remove them (H7), so who may
-  call is a security decision for the owning team (H31), not the spec's.] and no other.
-  An action with no rule MUST be refused, and there MUST be no default-allow. *(§4.8)*
+- **FR-005-020**: There MUST be exactly one explicit allow rule per action, each admitting the
+  `Second Line Support` estate group and no other — this spec's default, reusing YOT's precedent
+  group for the identical API shape (§4.8), pending the owning team's confirmation or override
+  (H31), since a forced resend re-sends defendants' personal data to HMPPS as a genuine duplicate
+  (H12), youth defendants included wherever the youth switch does not remove them (H7), and who may
+  call is ultimately a security decision for that team, not this spec's alone (Clarifications,
+  Session 2026-10-25). An action with no rule MUST be refused, and there MUST be no default-allow.
+  *(§4.8)*
 - **FR-005-021**: A request with no identity, or a blank one, MUST be refused
   `401 unauthenticated`. A caller outside the admitted group or groups, an identity service that
   cannot be asked, and an action with no matching rule MUST be refused `403 forbidden`. Every
@@ -889,10 +911,10 @@ an identically seeded store, and compare the reports ID for ID.
   5).
 - **The estate libraries** `cp-auth-rules-filter` and `cp-audit-filter-springboot`, already on the
   classpath with the scaffold's configuration.
-- **The owning team (H31)**: answers the questions in FR-005-015 and FR-005-020, and owns O-1. It
-  also signs off, before the audit work lands, that a response event lost after the action is an
-  accepted shortfall — logged at ERROR and counted, with no durable outbox to replay it
-  (FR-005-027; assumption 6).
+- **The owning team (H31)**: confirms or overrides this spec's default caller group for
+  FR-005-020 (`Second Line Support`), and owns O-1. It also signs off, before the audit work lands,
+  that a response event lost after the action is an accepted shortfall — logged at ERROR and
+  counted, with no durable outbox to replay it (FR-005-027; assumption 6).
 - **The audit header allowlist**: the sibling service found that the audit library captures request
   headers verbatim and that a header allowlist is to be agreed with the audit owners before a broad
   rollout. That is an estate decision and a rollout matter, not a build gate.
@@ -928,10 +950,10 @@ an identically seeded store, and compare the reports ID for ID.
 | §4.8 (copied from YOT); row A3-56 (refusal codes are API codes) | The error model: problem details, the closed reason set, status families, the closed request contract | FR-005-029, FR-005-030, FR-005-033, FR-005-034 |
 | Row A2-40 | Whole resend refused while intake is paused | FR-005-012 |
 | H17; row A3-57 | `allowChangedPayload` passed through; the check is 004's | FR-005-010, FR-005-013 |
-| §4.4 Output row; §4.7 | The report's content; the open question on the answer's timing | FR-005-014, FR-005-015 |
+| §4.4 Output row; §4.7 | The report's content; the answer's timing (resolved 2026-10-25: accepted-run, `202`) | FR-005-014, FR-005-015 |
 | §4.4 Audit row; row A3-36; row A3-56 (DIGEST §16) | Where operator and reason are recorded; the forced reason's 200-character bound (the rest of the bound proposed) | FR-005-016 |
 | §4.8 gates 1–5; ask 14; ask 12; row A2-21 | Authorisation, audit, the five gates, the authored NetworkPolicy | FR-005-018 – FR-005-028, FR-005-037 |
-| H31 | The owner who answers the caller-group question | FR-005-020 |
+| H31 | The owner who confirms or overrides the default caller group (resolved 2026-10-25: `Second Line Support`, pending H31) | FR-005-020 |
 | Ask 2; §8.2 (DIGEST §16) | Data-sender role for replay's enqueue | FR-005-038 |
 | §8.1 (DIGEST §12) | No new property | FR-005-039 |
 | H26; rows A3-69, A3-92; Q15 | No App Configuration, no switch read, no second lever | FR-005-040 |

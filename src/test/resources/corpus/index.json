@@ -1,0 +1,29 @@
+{
+  "environment": "SYNTHETIC",
+  "captureDateRange": {
+    "from": "2026-10-21",
+    "to": "2026-10-21"
+  },
+  "hearingCount": 11,
+  "casesPerSwitchState": {
+    "ACTIVE": 11,
+    "INACTIVE": 11
+  },
+  "syntheticCount": 11,
+  "excludedCases": [],
+  "comparatorVectorCount": 57,
+  "cases": [
+    { "caseId": "case-01-virtual-box-hearing", "environment": "SYNTHETIC" },
+    { "caseId": "case-02-top-level-members", "environment": "SYNTHETIC" },
+    { "caseId": "case-03-no-masterdefendant", "environment": "SYNTHETIC" },
+    { "caseId": "case-04-no-judicial-results", "environment": "SYNTHETIC" },
+    { "caseId": "case-05-no-court-order-offences", "environment": "SYNTHETIC" },
+    { "caseId": "case-08-delegated-powers", "environment": "SYNTHETIC" },
+    { "caseId": "case-09-non-boolean-isyouth", "environment": "SYNTHETIC" },
+    { "caseId": "case-11-youth-among-adults", "environment": "SYNTHETIC" },
+    { "caseId": "case-12-everything-removed", "environment": "SYNTHETIC" },
+    { "caseId": "case-p21-application-keeps-associated", "environment": "SYNTHETIC" },
+    { "caseId": "case-r0-policecases", "environment": "SYNTHETIC" }
+  ],
+  "note": "The committed corpus is synthetic-only, pending the external SIT-capture dependency (spec.md Dependencies, External; tasks T044/T052). Each case holds the CACHE form with an expectation in both switch states, produced by running the pinned legacy oracle (122e2152); none is excluded. The nine recorded blind-spot cases (1, 2, 3, 4, 5, 8, 9, 11, 12) plus the R0 and P21 proving cases are present. comparatorVectorCount is pinned at 57 (FR-001-014) so a future addition shows as a diff, never a silent drop. casesPerSwitchState counts the cases carrying an expectation in each state; a SIT case will be substituted for a synthetic one, where the shape exists, once SIT capture lands."
+}

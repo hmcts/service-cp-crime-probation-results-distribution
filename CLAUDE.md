@@ -38,7 +38,7 @@ Jira: none — this work carries no ticket; features land on `main` through pull
 | Design digest | `doc/design/DIGEST.md` — the rules of rev 3.6 and H35 for spec authors and implementers, each tagged with its design row id; rules only, no rationale. The design wins where they differ |
 | Constitution | `.specify/memory/constitution.md` |
 | Contracts | `doc/API_CONTRACTS.md` |
-| Deviation register | `doc/DEVIATIONS.md` — seeded from design §7.2 (DV-01 … DV-26) by the first feature that lands behaviour; not present yet |
+| Deviation register | `doc/DEVIATIONS.md` — seeded from design §7.2 (DV-01 … DV-26; next free DV-27); every intended difference from the legacy with its pinning test, plus the carried and pending-external defects |
 | Specifications | none yet — the first feature starts with `/speckit-specify` |
 | Inbound message schema | `src/main/resources/contracts/distribution-command.schema.json` — design Appendix B.1, vendored with the first feature |
 | Outbound HMPPS schema | **none in this release** — outbound schema validation is parked and gate G1 is not a gate (H13); the HMPPS ICD v0.8 is information only (H12) |
@@ -152,15 +152,99 @@ Postgres, Redis, WireMock).
 ## Setup
 
 <!-- SPECKIT START -->
-All six features are specified (design rev 3.6 + H35, constitution v2.0.1); none is planned yet.
-Implement in dependency order: `001-parity-kernel` → `002-hmpps-distribution` (owns the shared core:
-Flyway V1, enums, state machine, ports, metric registry) → `003-body-retention` and `004-recovery`
-→ `005-operations-api` → `006-production-readiness`.
+All six features are specified (design rev 3.6 + H35, constitution v2.0.1). **This branch,
+`002-hmpps-distribution` (PR #8), is now the one common integration branch for every slice**: all
+further work on any spec, for any slice, lands here, rather than spreading across per-slice
+branches — open one long-lived PR, not one per slice. `001-parity-kernel`, `002-hmpps-distribution`
+and `003-body-retention` are implemented here in full (Flyway V1/V2, enums, state machine, ports,
+metric registry, the redaction pipeline, the ported rules, the body-maintenance job) — every task in
+each of their `tasks.md` is checked. `001-parity-kernel`'s own corpus is still **not** a satisfied
+go-live evidence gate (H21, FR-001-017): the committed corpus is synthetic-only, holding only the
+`CACHE` form, pending the owning team's SIT capture (`doc/DEVIATIONS.md` "Corpus status"; an external
+dependency, not a code gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, FR-001-021) are
+resolved (spec.md Clarifications).
 
-To start a feature: branch from `main` with the spec's folder name (e.g. `git switch -c
-002-hmpps-distribution`) — the Spec Kit scripts resolve `specs/<NNN>-*` from the branch prefix —
-then run `/speckit-clarify` for any remaining `[NEEDS CLARIFICATION]` (answers come from the design
-owner), `/speckit-plan`, `/speckit-tasks`, `/speckit-analyze`, `/speckit-implement`. The plan
-(`specs/<NNN-slug>/plan.md`, with `spec.md` and `tasks.md` alongside it) then becomes the current
-context here. Specs are written against `doc/design/DIGEST.md` and the design it cites.
+`004-recovery` (`specs/004-recovery/plan.md`, with `research.md`, `data-model.md`, `quickstart.md`,
+`contracts/` and `tasks.md` alongside it) is implemented: all three confirmed decisions (FR-004-024,
+FR-004-049, FR-004-052) landed, replay is wired through a production `ReplayEnqueuer` in both
+composition roots (T078), and 74 of its 79 tasks are checked. Five remain open, none of them a
+guard/runner/port gap: T037 (the `pause-intake`/`rollback-close-in-flight`/`resume-intake` halves of
+the quickstart's step 6 are proven live against a running instance 2026-11-02, but `purge-queue`
+itself stays open — the installed Service Bus SDK has no native cutoff-delete operation, a dependency
+gap recorded 2026-10-27, not an application bug); T053 (walking the DLQ runbook with the owning team
+— a live session, not a build step, pending T052's 2026-10-30 landing); T075 (run live end to end
+2026-11-02: every other quickstart step, including replay, resend-leg, forced resend and
+submit-hearing, matches `quickstart.md` exactly); T076 (re-checked 2026-11-02: no owning-team change
+has overturned any of the three confirmed decisions since 2026-10-26); and this paragraph (T077).
+
+`005-operations-api` (`specs/005-operations-api/plan.md`, with `research.md`, `data-model.md`,
+`quickstart.md` and `contracts/` alongside it) is **implemented in full — all 52 tasks checked** —
+over 004's real `ReplayAction` and `LegResender`; both `[NEEDS CLARIFICATION]` markers are resolved
+(resend-leg answers `202` accepted-run; the caller group defaults to `Second Line Support` pending
+H31's confirmation). The two audit defects (T051, T052) its own manual quickstart run exposed — the
+transport-off silent-503 bug and the library audit filter's double-publish — are fixed and pinned
+(2026-10-30), and both are now re-confirmed live, not just by the automated suite: a 2026-11-02 run
+with the audit transport off got the documented WARN and normal `200`/`202` answers, never the old
+`503`; a second run with a real Artemis broker (after freeing Docker's VM disk, which had been
+stalling real brokers — see below) put exactly two bounded audit events per call, neither carrying
+the caller's operator, reason or the request body. The `[BLOCKED-ON-004]` tags once attached to
+US2/US3/US7 are gone: 004's T078 wired the real `ReplayAction`/`LegResender` into both composition
+roots, and the same live runs confirmed replay, resend-leg and forced resend all work over real
+HTTP against the real services, with the exact `202`/`200` shapes `quickstart.md` documents, the
+`401` with no `CJSCPPUID`, and the US7 HTTP/CLI parity check. **Nothing left open in 005.**
+`006-production-readiness` (`specs/006-production-readiness/plan.md`, with `research.md`,
+`data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it) is **implemented in
+full — all 43 tasks checked**. All 3 `[NEEDS CLARIFICATION]` markers were resolved 2026-11-02
+before planning (the replay publishes directly onto `probation.requests`, bypassing results, with
+`EXT_` payloads loaded from the SIT export into STE's Redis; the daily reconciliation's
+results-side count comes from a results viewstore query on the UTC calendar day; the row-9
+reachability-proof call is a real hearing via `submit-hearing`, with HMPPS's agreement that the
+duplicate is acceptable). This slice adds nothing to the message path — no new migration, no new
+endpoint, no new metric — only a replay comparator extending 001's `pipeline/support`
+(`ReplayComparator`/`ReplayReport`, over `HearingPairing`/`HearingComparisonClass`/
+`ExplanationEntry`/`PreRunChecks`), a new read-only `evidence` package (`GoNoGoEvidenceQuery`/
+`GoNoGoEvidenceIndex`, `DailyReconciliationQuery`, `DecommissioningEvidenceQuery`,
+`LegacyBothPathsCheck`), and a typed `config.AlertCatalogue` (no new dependency). 001's own
+`JsonParity`/`RegisteredFieldDeviations` moved from `src/test` to `src/main` in the same package
+(2026-11-02) so `ReplayComparator` — production code the owning team runs against real STE data,
+not a JUnit fixture — can depend on them; no import changed. A real staleness was found and fixed
+while implementing User Story 3: FR-006-040 said rollback step 4 had no supported execution path,
+but 004 had already built and wired `rollback-close-in-flight` (commits 33787cf/f1e4c1f) before
+this phase started — the spec, research notes, tasks and runbook doc are corrected to name the
+real runner. One governance item surfaced while planning, not this slice's to fix: the
+constitution (version 2.0.1, last amended 2026-10-21) predates H36–H39 and still describes the
+`outbound_body` digest trigger H39 removed and omits `scheduled_job_status` (H38) — due its own
+amendment separately from any feature, and not closed by this slice.
+
+**Environment note**: this branch's local Docker Desktop VM disk was found at 95% capacity
+(unused build cache and dangling images from unrelated projects sharing the daemon), which makes a
+real or Testcontainers-managed Artemis broker silently block producers rather than error — the
+likely cause of an unrelated `OperationsAuditTransportIT` hang found mid-session. Freed with
+`docker buildx prune -f` (8.376 GB) and `docker image prune -f` (154.4 MB), down to 44% used. If a
+broker-based test or manual run stalls with no error again, check `docker run --rm alpine df -h /`
+before assuming a code regression.
+
+**The Spec Kit scripts resolve the active feature from the current branch name by default**
+(`specs/<NNN>-*` matching the branch's numeric prefix), which only resolves correctly for
+`002-hmpps-distribution` itself while everything lands on this one branch. Before running
+`/speckit-clarify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-analyze` or `/speckit-implement` for
+any other feature (e.g. `004-recovery`, `005-operations-api`), export
+`SPECIFY_FEATURE=<NNN-slug>` first so the scripts resolve that feature's own `specs/<NNN-slug>/`
+folder instead of this branch's. `/speckit-clarify` resolves any remaining `[NEEDS CLARIFICATION]`
+(answers come from the design owner). The plan (`specs/<NNN-slug>/plan.md`, with `spec.md` and
+`tasks.md` alongside it) then becomes the current context here. Specs are written against
+`doc/design/DIGEST.md` and the design it cites.
 <!-- SPECKIT END -->
+
+<!-- BEGIN token-budget compact-backups -->
+
+## Token Budget — backup guard
+
+Files ending in `.full.md` inside `specs/` and `.specify/memory/`
+(e.g. `spec.full.md`, `plan.full.md`) are pre-compaction backups created
+by `/speckit.token-budget.compact`. **Do not read them.** They contain the
+full uncompacted content; loading them cancels the token savings compaction
+achieved. To revert an artifact to its original state, run
+`/speckit.token-budget.restore` instead.
+
+<!-- END token-budget compact-backups -->

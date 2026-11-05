@@ -30,6 +30,12 @@ spring:
 
 server:
   port: ${SERVER_PORT:8082}
+  error:
+    # An unmapped /operations/** path or method answers as the framework answers it, but without a
+    # stack trace or an echoed path in the body (FR-005-034).
+    include-stacktrace: never
+    include-path: never
+    include-message: never
 
 # The property catalogue (design §8.1). Every property has a type, a default, an environment source
 # and a startup check; a property not in this tree does not exist. Secrets are bindings to

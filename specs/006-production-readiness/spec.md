@@ -136,6 +136,26 @@ are not being created). Slice 003 answers its open question 2 with them (003's A
 - Q: Which App Insights resource does the service report to? → A: Not decided (Q29). The catalogue
   names it as an input of each rule. Applied in FR-006-053 and the open items.
 
+### Session 2026-11-02
+
+- Q: What is injected into STE to feed the replay? → A: A `probation.requests` message, published
+  directly by the replay tooling onto the queue. Results' own producer and ingestion play no part;
+  the design's Inputs row assumption that a replay is fed through the producer (results' flag ON in
+  the STE stack) does not hold for this replay and is superseded. Applied in FR-006-010.
+- Q: Where do STE's results, and the service's Redis read and query-API fallback, get the `EXT_`
+  payloads for the replayed SIT hearings? → A: The SIT-exported `EXT_` payloads (FR-006-009) are
+  loaded directly into STE's Redis before the replay runs, keyed exactly as the live cache would be.
+  Nothing populates them organically, since results' own ingestion is bypassed. Applied in
+  FR-006-010.
+- Q: Where does results' daily share count, compared against the service-side counts, come from?
+  → A: A viewstore query over results' own store — a direct count of `Hearing_Resulted` records for
+  the day. Applied in FR-006-024.
+- Q: What day boundary do both sides count on? → A: UTC calendar day, consistent with every other
+  date/time handling in this service. Applied in FR-006-024.
+- Q: Pre-cutover, while the legacy still sends every share, what does the row-9 reachability-proof
+  test call send to HMPPS? → A: A real hearing sent via `submit-hearing`, with HMPPS's explicit
+  agreement that the resulting duplicate is acceptable. Applied in FR-006-032.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A week of real SIT traffic proves the service sends what the legacy sent (Priority: P1)
@@ -467,8 +487,8 @@ and check each item of §9.6 row 1 against its source.
   covered there (FR-006-020).
 - **The row-9 test call in an environment where the legacy still sends.** A real hearing sent
   before cutover would be a genuine duplicate at HMPPS. What the call sends is open (FR-006-032).
-- **A rollback before step 4 has an execution path.** The inputs record the gap and its owner, the
-  design owner (FR-006-040).
+- **Rollback step 4's execution path.** 004 built and wired the `rollback-close-in-flight` CLI
+  action (FR-004-049, confirmed); the inputs name it and its read-back, not a gap (FR-006-040).
 
 ## Requirements *(mandatory)*
 
@@ -551,13 +571,13 @@ and check each item of §9.6 row 1 against its source.
   never quoted in a log, report, document, pull request or finding. The report records the week and
   the export dates. *(A3-78; §6.5 Export and Data rows; §6.4; A3-67)*
 - **FR-006-010**: The replay MUST feed the week's SIT `Hearing_Resulted` shares, one full QA
-  regression cycle, to the service in STE by [NEEDS CLARIFICATION: two things are not established.
-  First, what is injected into STE: an Event Grid event, a results command or event, or a
-  `probation.requests` message. Second, where STE's results, and the service's Redis read and
-  query-API fallback, get the `EXT_` payloads for SIT hearings. The design's Inputs row has
-  results' flag ON in the STE stack so that its producer publishes to the stack's queue, which
-  assumes a replay fed through the producer. The owning team settles this before the replay is
-  planned (A3-78; §6.5 Mechanics row)]. *(H21; A3-68; A3-78; §6.5 Inputs and Mechanics rows)*
+  regression cycle, to the service in STE by publishing each share directly as a
+  `probation.requests` message, bypassing results' own producer and ingestion entirely (the
+  design's Inputs row assumption of a replay fed through results' producer does not hold here;
+  superseded 2026-11-02). The service's Redis read and query-API fallback get their `EXT_`
+  payloads for the replayed SIT hearings from the week's export (FR-006-009), loaded directly into
+  STE's Redis before the replay runs, keyed exactly as the live cache would be. *(H21; A3-68;
+  A3-78; §6.5 Inputs and Mechanics rows)*
 - **FR-006-011**: The report MUST end with one verdict. The verdict is **blocks cutover** while any
   unexplained difference remains, or any unpaired share or share whose SIT body is unusable has no
   explanation entry (FR-006-006, FR-006-007). Otherwise the verdict is **no unexplained
@@ -673,10 +693,9 @@ and check each item of §9.6 row 1 against its source.
   (`outbound_message_latest`), never from `processed_request.status`, because a request's
   completion is historical. *(§10.4; §9.5 row 2; A2-49; DIGEST §8)*
 - **FR-006-024**: The service-side counts MUST be compared with results' daily share count for the
-  same day, obtained from [NEEDS CLARIFICATION: the source of results' daily share count is not
-  established. It could be a viewstore query, the Event Grid publish count or a producer-side
-  counter. With the source, the day boundary that both sides count on is also not established
-  (§10.4; owner: the results team)]. *(§10.4; §9.5 row 2; DIGEST §16)*
+  same day, obtained from a viewstore query over results' own store — a direct count of
+  `Hearing_Resulted` records for the day. Both sides count on the UTC calendar day. *(§10.4; §9.5
+  row 2; DIGEST §16)*
 - **FR-006-025**: Until nothing is in flight, the expected gap MUST be shown as the number of
   latest attempts that are `PARKED` or `PENDING`, beside `probation_oldest_parked_age` and
   `probation_oldest_non_terminal_age`. *(§10.4)*
@@ -711,14 +730,11 @@ and check each item of §9.6 row 1 against its source.
   row 17, answered by H12 and confirmed by row 9's status; row 20, settled (Q18; A3-100); and row 7
   of §9.5, closed (H5). *(§9.2; §9.5; A2-32; DIGEST §15)*
 - **FR-006-032**: Each row the build supports MUST have its evidence as a named artefact or as a
-  read-only query pinned by a test, as below. The row-9 entry MUST also state what the test call
-  sends, and by which action, in an environment where the legacy still sends:
-  [NEEDS CLARIFICATION: the design does not say. Before cutover the legacy still sends every share,
-  so a real hearing sent by the call is a genuine duplicate at HMPPS (H12), in production too,
-  where row 9 is the reachability proof (A3-108). Is the call a real hearing sent by submit-hearing
-  with HMPPS's agreement, a hearing the legacy did not deliver, or is production's row 9 shown by
-  the first shares after the flip?] The row-9 evidence query reads the call's attempt row whatever
-  the answer. *(DIGEST §15; §9.2; §9.5; A2-10; A2-32; H25; A3-87; H30; A3-106; §11.3; A3-108; H12)*
+  read-only query pinned by a test, as below. The row-9 entry's test call, in an environment where
+  the legacy still sends, MUST be a real hearing sent via `submit-hearing`, with HMPPS's explicit
+  agreement that the resulting duplicate (a genuine duplicate at HMPPS, H12, since the legacy sends
+  the same share) is acceptable. The row-9 evidence query reads the call's attempt row. *(DIGEST
+  §15; §9.2; §9.5; A2-10; A2-32; H25; A3-87; H30; A3-106; §11.3; A3-108; H12)*
 
 | Row | Evidence | Supplied by |
 |---|---|---|
@@ -806,8 +822,8 @@ and check each item of §9.6 row 1 against its source.
     secondary check, for the UI only, the users-groups permission shows inactive.
   - 2a: Restore exactly the filter recorded before cutover.
   - 3: Record the cut-off instant.
-  - 4: Close the in-flight rows `FAILED(rolled-back)`, one transaction per row, fencing late
-    runners (FR-006-040).
+  - 4: Run `rollback-close-in-flight`, closing the in-flight rows `FAILED(rolled-back)`, one
+    transaction per row, fencing late runners (FR-006-040).
   - 5: Reconcile the period the service was live, from cutover to the start of the rollback
     window. The legacy app must show no HMPPS send or orchestration in that period.
   - 6: Purge the queue, recording the count removed and the cut-off. This is done only after the
@@ -817,15 +833,16 @@ and check each item of §9.6 row 1 against its source.
   - 7: Repair only the hearings not known to be delivered (FR-006-041).
 
   *(H23; H9; R1-14; R1-28; R1-28b; A2-40; A2-43; A2-51; A2-52; A3-73; §9.4)*
-- **FR-006-040**: Rollback step 4 MUST be executed only through a supported execution path that the
-  design owner places. None exists today: the transition is specified (004's FR-004-049a) and
-  pinned (`RollbackFencingIT`), but no §4.8 action or runner executes it (§9.4 step 4; DIGEST
-  §16), and 004 raises the question (FR-004-049). Until a path is placed, the inputs MUST record the gap and name the design owner as
-  its owner, and MUST NOT describe a statement to run by hand in its place (this slice's rule). The
-  step's read-back is: no leg's latest attempt is `PENDING` or `PARKED`; each request that was
-  `RECEIVED` or `RETRYING` is now `FAILED(rolled-back)`; a `FAILED` request keeps its reason and
-  exhausted id; and no `COMPLETED` request has changed. *(§9.4 step 4; A2-27; A2-43; A2-51;
-  A2-66; DIGEST §16)*
+- **FR-006-040**: Rollback step 4 MUST be executed only through the supported execution path: 004
+  built and wired the `rollback-close-in-flight` CLI action (confirmed FR-004-049), over the
+  transition 004 specifies (FR-004-049a) and pins (`RollbackFencingIT`). The inputs name this
+  runner, never a statement to run by hand. The step's read-back is twofold: the runner's own
+  recorded outcome (`pendingClosed`/`parkedClosed` counts, or `Refused(intake-not-paused)`), and
+  the invariant `RollbackFencingIT` already pins — no leg's latest attempt is `PENDING` or
+  `PARKED`; each request that was `RECEIVED` or `RETRYING` is now `FAILED(rolled-back)`; a
+  `FAILED` request keeps its reason and exhausted id; and no `COMPLETED` request has changed.
+  *(§9.4 step 4; A2-27; A2-43; A2-51; A2-66; DIGEST §16; superseded 2026-11-02: 004 commits
+  33787cf/f1e4c1f landed and confirmed this runner after this slice's spec was first written)*
 - **FR-006-041**: The repair inputs MUST state the following rules.
   - Only these are repaired: legs closed `FAILED(rolled-back)`, legs `FAILED` for another reason,
     and dead-lettered messages.
@@ -1155,10 +1172,9 @@ gate; H18).
   ticket's owner decides.
 - **A3-75**: the query of the legacy-app-active alert is proposed, not designed. The telemetry
   resources for environments other than SIT and PRD are not established.
-- **§9.4 step 4**: the close-in-flight statement is specified in 004 (FR-004-049a), but no
-  supported execution path runs it (DIGEST §16). The design owner places one (004 raises the
-  question, FR-004-049). Once it is placed, the cross-spec pass records which slice builds it, and
-  FR-006-040's inputs name it.
+- **§9.4 step 4**: resolved. The close-in-flight statement 004 specifies (FR-004-049a) runs through
+  004's own `rollback-close-in-flight` CLI action (FR-004-049, confirmed); FR-006-040's inputs
+  name it (superseded 2026-11-02).
 - **Q29 (H36)**: the App Insights resource the service reports to in each environment
   (`APPLICATIONINSIGHTS_CONNECTION_STRING`), which fixes where DevOps create the rules, and the metric
   names as the agent exports them (FR-006-019, FR-006-053).

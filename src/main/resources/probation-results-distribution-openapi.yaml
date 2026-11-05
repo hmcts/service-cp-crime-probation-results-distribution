@@ -1,8 +1,345 @@
-# The operations API's contract, read by cp-audit-filter-springboot to name audited operations.
-# There is no endpoint yet: the empty path set lets the audit filter start wherever
-# CP_AUDIT_ENABLED and HTTP_AUDIT_ENABLED are both true. The operations API feature fills it in.
+# The operations API's contract (design H9, §4.8; slice 005, FR-005-035). Read by
+# cp-audit-filter-springboot to name audited operations (audit.http.openapi-rest-spec) and by this
+# repository's own OperationsContractTest, which asserts the served API and this document agree, both
+# ways, and that every closed value set here equals the service's own vocabulary value for value.
+#
+# Exactly two operations are described, per FR-005-001: replay a FAILED request, and resend-leg (the
+# forced-resend override included). No other operator action is described here while O-1 is open.
+#
+# Replay is served today (api.ReplayController). Resend-leg is described here ahead of its own
+# controller (api-first, constitution Principle III): application.LegResender does not exist on this
+# branch yet (004), so POST /operations/resend-leg answers nothing until it lands; this document is
+# the contract ResendLegController must satisfy once it does.
 openapi: 3.0.3
 info:
   title: Probation Results Distribution operations API
-  version: 0.0.0
-paths: {}
+  description: >-
+    Replay a FAILED request, and resend the HMPPS leg for an explicit list of requestIds (the
+    forced-resend override included). Behind the estate's five deployment gates (design §4.8); the
+    command-line runners in the image are the fallback for both actions.
+  version: 0.1.0
+paths:
+  /operations/requests/{requestId}/replay:
+    post:
+      operationId: probation-results-distribution-operations.replay
+      summary: Replay a FAILED request
+      description: >-
+        Re-sends the stored command for requestId byte for byte under a fresh message identity with
+        origin = REPLAY. Available at any time, including while intake is paused (FR-005-008). Takes
+        no operator or reason (FR-005-009): the caller is named in the call's audit event only.
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmptyReplayBody'
+      responses:
+        '200':
+          description: Enqueued, or the request was already COMPLETED (a no-op)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplayResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: unknown-request — a well-formed requestId names no request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '409':
+          description: resend-in-progress, or not-eligible (the request is RECEIVED or RETRYING)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '503':
+          description: store-unavailable, or broker-unavailable (the enqueue could not be made)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '500':
+          $ref: '#/components/responses/Unexpected'
+  /operations/resend-leg:
+    post:
+      operationId: probation-results-distribution-operations.resend-leg
+      summary: Resend the HMPPS leg for an explicit list of requests
+      description: >-
+        Takes an explicit requestId list (1 .. distribution.resend.max-ids-per-run, default 100),
+        the leg (HMPPS only), an operator and a reason, and the optional allowTerminalSuccess
+        (forced resend) and allowChangedPayload overrides. Answers 202 with the run's resendRunId
+        immediately, before any ID has necessarily finished (FR-005-015); the per-ID report lives in
+        slice 004's run-report log line and the attempt rows, not in this response. Not yet served:
+        application.LegResender (slice 004) does not exist on this branch.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendLegRequest'
+      responses:
+        '202':
+          description: The run is accepted; no ID's outcome is necessarily known yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResendLegAcceptedResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: intake-paused — the whole call is refused, nothing is run
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '503':
+          description: store-unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '500':
+          $ref: '#/components/responses/Unexpected'
+components:
+  responses:
+    BadRequest:
+      description: >-
+        missing-argument, unreadable-argument, argument-too-long, unknown-field, unreadable-body or
+        too-many-request-ids — an argument the caller sent could not be read as its type, or the
+        body does not match this contract. Never quotes the value sent.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Unauthenticated:
+      description: unauthenticated — no, or a blank, CJSCPPUID identity on the request
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Forbidden:
+      description: >-
+        forbidden — the caller is outside the admitted group, or users-groups could not be asked
+        (fail closed)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    UnsupportedContentType:
+      description: unsupported-content-type — the request declares a content type other than JSON
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Unexpected:
+      description: unexpected — an unclassified defect, never the exception's own message
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+  schemas:
+    EmptyReplayBody:
+      type: object
+      description: Replay takes no body fields at all; any field present is unknown-field (FR-005-033)
+      additionalProperties: false
+    ReplayResponse:
+      type: object
+      description: The replay endpoint's success body (FR-005-007)
+      required:
+        - requestId
+        - outcome
+      properties:
+        requestId:
+          type: string
+          format: uuid
+          description: The service's own canonical parse of the replayed request's id (FR-005-031)
+        outcome:
+          type: string
+          enum:
+            - enqueued
+            - no-op
+        messageId:
+          type: string
+          nullable: true
+          description: The fresh message identity the command went under; present only when outcome is enqueued
+    ResendLegRequest:
+      type: object
+      description: The resend-leg endpoint's request body (FR-005-010)
+      additionalProperties: false
+      required:
+        - requestIds
+        - leg
+        - operator
+        - reason
+      properties:
+        requestIds:
+          type: array
+          description: >-
+            The list as sent — no collapse, no cap, no reorder here (FR-005-011, FR-005-013);
+            slice 004's resend-leg capability applies those rules
+          items:
+            type: string
+            format: uuid
+        leg:
+          $ref: '#/components/schemas/Leg'
+        operator:
+          type: string
+          maxLength: 200
+          description: The caller's name for the record, required (FR-005-016)
+        reason:
+          type: string
+          maxLength: 200
+          description: The reason for the record, required (FR-005-016)
+        allowTerminalSuccess:
+          type: boolean
+          default: false
+          description: The forced-resend override (FR-005-017)
+        allowChangedPayload:
+          type: boolean
+          default: false
+          description: Passed through unchanged to slice 004 (FR-005-010)
+    ResendLegAcceptedResponse:
+      type: object
+      description: >-
+        The resend-leg endpoint's 202 body (FR-005-015; research.md Decision 4) — the run id only,
+        no per-ID detail
+      required:
+        - resendRunId
+      properties:
+        resendRunId:
+          type: string
+          format: uuid
+    ResendReportEntry:
+      type: object
+      description: >-
+        One listed id's outcome in slice 004's run report (FR-005-014) — not part of this slice's own
+        HTTP response body, documented here only so its closed value sets are mirrored (FR-005-035)
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/LegStatus'
+        reason:
+          $ref: '#/components/schemas/LegReason'
+        refusalCode:
+          $ref: '#/components/schemas/ResendRefusalCode'
+    Leg:
+      type: string
+      description: The distribution leg. HMPPS only in this release (H5)
+      enum:
+        - HMPPS
+    LegStatus:
+      type: string
+      description: >-
+        One outbound_message leg attempt's status (design §4.5). A resend's own resulting status is
+        only ever SENT, NOT_APPLICABLE or FAILED; PENDING and PARKED never appear as a resend's
+        outcome, but the full vocabulary is mirrored here (FR-005-035)
+      enum:
+        - PENDING
+        - SENT
+        - NOT_APPLICABLE
+        - PARKED
+        - FAILED
+    LegReason:
+      type: string
+      description: >-
+        The bounded reason paired with a non-PENDING, non-SENT leg status. contract-invalid is
+        reserved and unused while outbound schema validation is parked (H13)
+      enum:
+        - sjp-or-box-hearing
+        - nothing-left-after-redaction
+        - receiver-rejected
+        - rules-exception
+        - payload-unavailable
+        - gateway-transient
+        - payload-changed
+        - rolled-back
+        - contract-invalid
+    ResendRefusalCode:
+      type: string
+      description: >-
+        A per-ID resend refusal (row A3-56): the four codes slice 002 defines, plus slice 004's
+        not-run for an ID never claimed (a pause that began mid-run left it unreached, FR-004-021,
+        or the store failed before its claim committed) and claimed-incomplete for an ID whose
+        attempt was claimed but whose outcome could not be recorded (FR-004-039)
+      enum:
+        - unknown-request
+        - not-eligible
+        - resend-in-progress
+        - request-claimed
+        - not-run
+        - claimed-incomplete
+    ProblemDetail:
+      type: object
+      description: >-
+        RFC 9457 problem details (FR-005-029 to FR-005-032). No exception message, stack trace, or
+        far-end's own words ever reach it; a 400 about one argument names the argument, never its
+        value.
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+          nullable: true
+        instance:
+          type: string
+          format: uri
+        reason:
+          type: string
+          description: The closed reason set (FR-005-029)
+          enum:
+            - unauthenticated
+            - forbidden
+            - missing-argument
+            - unreadable-argument
+            - argument-too-long
+            - unknown-field
+            - unreadable-body
+            - too-many-request-ids
+            - unsupported-content-type
+            - unknown-request
+            - not-eligible
+            - resend-in-progress
+            - intake-paused
+            - audit-unavailable
+            - store-unavailable
+            - broker-unavailable
+            - unexpected
+        argumentName:
+          type: string
+          nullable: true
+          description: >-
+            The argument's name, on a 400 about one argument only — never its value. On
+            unknown-field it is present only when the caller's field name is a plain identifier
+            (a letter, then up to 63 letters, digits or underscores), and absent otherwise
+        cap:
+          type: integer
+          nullable: true
+          description: The cap applied, for too-many-request-ids only

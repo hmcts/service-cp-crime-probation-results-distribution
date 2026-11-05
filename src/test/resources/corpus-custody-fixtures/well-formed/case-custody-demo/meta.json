@@ -1,0 +1,37 @@
+{
+  "caseId": "case-custody-demo",
+  "environment": "SYNTHETIC",
+  "formsHeld": ["CACHE"],
+  "share": {
+    "hearingId": "00000000-0000-0000-0000-0000000000aa",
+    "hearingDay": "2026-01-01",
+    "sharedTimeInstant": "2026-01-01T09:00:00.000Z"
+  },
+  "payloadSourceRead": "UNKNOWN",
+  "expectations": {
+    "ACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/active.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    }
+  },
+  "provenance": {
+    "syntheticFrom": "custody-check-seed",
+    "change": "hand-built skeleton used only to exercise the custody checks; carries no SIT or production payload",
+    "captureDates": {
+      "cache": "2026-01-01",
+      "outcome": "2026-01-01"
+    },
+    "expectationSources": {
+      "ACTIVE:CACHE": "EXECUTED_LEGACY"
+    },
+    "legacyCommit": "122e2152",
+    "runtime": "node (custody fixture; not executed)"
+  },
+  "digests": {
+    "inputs/cache.json": "f29cdadb5c8542f220fce90752ea931ee6071f517b251f9d82aa1d241ed84e42",
+    "expectations/active.json": "e72f7a63f5e97d53e0521dbb191afc3f46374207f85e80bab5849922c889c988"
+  }
+}

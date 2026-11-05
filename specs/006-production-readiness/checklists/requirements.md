@@ -26,11 +26,13 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain. **Three remain, deliberately.** Each is a genuine
-      design gap the spec cannot close on its own authority: FR-006-010 (A3-78, the replay
-      mechanics), FR-006-024 (§10.4, the source of results' daily share count and its day boundary)
-      and FR-006-032 (§9.2 row 9: what the test call sends where the legacy still sends). The
-      questions and their options are below.
+- [x] No [NEEDS CLARIFICATION] markers remain. **Resolved 2026-11-02.** All three are answered in
+      the spec's own Clarifications session: FR-006-010 (the replay publishes directly onto
+      `probation.requests`, bypassing results; `EXT_` payloads are loaded from the SIT export into
+      STE's Redis before the run), FR-006-024 (results' daily share count is a viewstore query
+      over results' own store, both sides counting the UTC calendar day), and FR-006-032 (the
+      row-9 test call is a real hearing sent via `submit-hearing`, with HMPPS's agreement that the
+      duplicate is acceptable). Zero markers remain in `spec.md`.
 - [x] Requirements are testable and unambiguous. The only exceptions are the open parts of the
       three marked requirements. Every other FR names its observable outcome, and the
       build-supported ones are pinned by tests (FR-006-019, FR-006-030, FR-006-032, FR-006-046).
@@ -52,12 +54,12 @@
 
 ## Feature Readiness
 
-- [ ] All functional requirements have clear acceptance criteria. 50 of 53 have them.
-      FR-006-010 and FR-006-024 cannot have complete criteria until their markers are answered, and
-      FR-006-032 lacks only its row-9 entry's content. Their decided parts are covered: the
-      comparison independent of the mechanics (US1, scenarios 1–9), the service side of the
-      reconciliation (US5, scenarios 1–5), and every other evidence row (US2, scenarios 1–6). The
-      evidence query for row 9 reads the call's attempt row whatever the answer.
+- [x] All functional requirements have clear acceptance criteria. **Resolved 2026-11-02.** All 53
+      now have complete criteria: FR-006-010 and FR-006-024's mechanics are fixed by the
+      Clarifications session above, and FR-006-032's row-9 entry now states what the test call
+      sends. The comparison independent of the mechanics (US1, scenarios 1–9), the service side of
+      the reconciliation (US5, scenarios 1–5), and every other evidence row (US2, scenarios 1–6)
+      were already covered; nothing conditional remains.
 - [x] User scenarios cover primary flows: the pre-cutover proof, the go/no-go, cutover, the planned
       and urgent rollback and the roll-forward, the paging alerts and the counts, the daily
       reconciliation, the detection of a "both", and decommissioning.
@@ -156,8 +158,9 @@
   personal names, hostnames, URLs, cloud resource names, environment labels, production figures
   and attribution found none. The environment-specific names of the cutover (the subscription, its
   topic, the configuration store and the labels) are placeholders by FR-006-037.
-- Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`. The two
-  open boxes above are the three markers, and they need the owners' answers, not spec edits.
+- **Resolved 2026-11-02**: all three questions below are answered in `spec.md`'s own
+  Clarifications session (`/speckit.clarify`), and the two checklist items they drove are now
+  checked. No item remains incomplete.
 
 ### Question 1: How is the SIT week fed into STE? (FR-006-010; A3-78)
 
@@ -177,7 +180,9 @@ Redis read and query-API fallback get the `EXT_` payloads for SIT hearings.
 | C | Inject upstream Event Grid events and let STE's whole chain run | The broadest proof, with the most moving parts and the most differences that are not the service's |
 | Custom | Provide your own answer | State the injection point and the payload source |
 
-**Your choice**: _awaiting the owning team (owner of A3-78)_
+**Your choice**: B, decided 2026-11-02 — a `probation.requests` message per share, built from the
+week's shares, bypassing results' producer entirely; STE's Redis loaded from the exported `EXT_`
+payloads. See `spec.md`'s Clarifications session and FR-006-010.
 
 ### Question 2: Where does results' daily share count come from? (FR-006-024; §10.4)
 
@@ -196,7 +201,8 @@ sides count on.
 | C | A counter on the producer side of the probation publish | Counts what the producer sent, so it misses shares lost to a failed flag read (the "neither" case the reconciliation is meant to find) |
 | Custom | Provide your own answer | State the source and its day boundary |
 
-**Your choice**: _awaiting the results team_
+**Your choice**: A, decided 2026-11-02 — a results viewstore query, both sides counting the UTC
+calendar day. See `spec.md`'s Clarifications session and FR-006-024.
 
 ### Question 3: What does the row-9 test call send where the legacy still sends? (FR-006-032; §9.2 row 9)
 
@@ -218,4 +224,6 @@ reachability without an unagreed duplicate at HMPPS.
 | C | A real SIT hearing in SIT; in production, row 9 is shown by the first shares after the flip | No duplicate in production. But row 9 is then not a production precondition, which departs from §9.2 (every row holds before the Results switch is turned on) and leaves reachability unproven at the flip |
 | Custom | Provide your own answer | State what is sent, by which action, and who agrees to it |
 
-**Your choice**: _awaiting the design owner, with HMPPS_
+**Your choice**: A, decided 2026-11-02 — a real hearing sent by `submit-hearing`, with HMPPS's
+agreement that the resulting duplicate is acceptable. See `spec.md`'s Clarifications session and
+FR-006-032.

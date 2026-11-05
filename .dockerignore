@@ -1,0 +1,10 @@
+.git/
+.gradle/
+.claude/
+.agents/
+.codex/
+Dockerfile*
+.dockerignore
+*.log*
+.env*
+coverage/

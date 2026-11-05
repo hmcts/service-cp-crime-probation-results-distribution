@@ -14,6 +14,10 @@
  * §4.8, and the command-line runners in the image stay as their fallback. The HTTP exposure of
  * the other actions is still open (O-1); until it is decided they run as command-line runners.
  *
+ * <p>Resend-leg answers as an accepted run (FR-005-015): the controller calls slice 004's accept
+ * step and answers {@code 202} with the run id, and {@code ResendLegExecutor} runs accepted runs
+ * one at a time on one thread fixed in code, stopping them claiming at shutdown.
+ *
  * <p><strong>Dependency direction.</strong> A driving adapter, as {@code inbound} is: it calls into
  * {@code application} and speaks {@code domain}, and never reaches an outbound adapter or the
  * store directly. Nothing in {@code application}, {@code pipeline} or {@code domain} depends on it.

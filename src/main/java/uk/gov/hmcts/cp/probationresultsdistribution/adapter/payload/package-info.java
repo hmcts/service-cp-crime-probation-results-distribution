@@ -10,8 +10,9 @@
  * source used is recorded as {@code cache-day}, {@code cache-nullday} or {@code query}.
  *
  * <p><strong>Dependency direction.</strong> Implements the {@code HearingPayloadSource} port
- * declared in {@code application}, and depends on that port, on {@code domain} and on the shared
- * HTTP retry support only. It never depends on another adapter package, on {@code persistence},
- * or on the driving adapters {@code inbound} and {@code api}.
+ * declared in {@code application}, and depends on that port and on {@code domain} only; the
+ * results-query read's bounded retry and backoff are implemented inline in the client (DV-23). It
+ * never depends on another adapter package, on {@code persistence}, or on the driving adapters
+ * {@code inbound} and {@code api}.
  */
 package uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload;

@@ -1,0 +1,48 @@
+{
+  "caseId": "case-02-top-level-members",
+  "environment": "SYNTHETIC",
+  "formsHeld": [
+    "CACHE"
+  ],
+  "share": {
+    "hearingId": "00000000-0000-0000-0000-000000000002",
+    "hearingDay": "2026-01-01",
+    "sharedTimeInstant": "2026-01-01T09:00:00.000Z"
+  },
+  "payloadSourceRead": "UNKNOWN",
+  "expectations": {
+    "ACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/active.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    },
+    "INACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/inactive.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    }
+  },
+  "provenance": {
+    "syntheticFrom": "hand-built from the legacy Jest fixture shapes; carries no SIT or production payload",
+    "change": "a top-level judiciary and associatedPersons, plus hearing.judiciary and a defendant.associatedPersons, all removed by R8/R9",
+    "captureDates": {
+      "cache": "2026-10-21",
+      "outcome": "2026-10-21"
+    },
+    "expectationSources": {
+      "ACTIVE:CACHE": "EXECUTED_LEGACY",
+      "INACTIVE:CACHE": "EXECUTED_LEGACY"
+    },
+    "legacyCommit": "122e215250f6f7c7e646d36cbbaa3a50fd60779a",
+    "runtime": "node v20.9.0"
+  },
+  "digests": {
+    "inputs/cache.json": "3280c0a1c12bd4e6b69f37d202d2ebcf119dbc1029eb0c62b389121f8af8f9fb",
+    "expectations/active.json": "b29aa9cd802849d773953dc23a1941b037372dbef7926b96945b4598391fbb72",
+    "expectations/inactive.json": "b29aa9cd802849d773953dc23a1941b037372dbef7926b96945b4598391fbb72"
+  }
+}

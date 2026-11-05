@@ -19,8 +19,8 @@
  * the same transaction (design H18, H20). The body is never logged, at any level.
  *
  * <p><strong>Dependency direction.</strong> Implements the {@code HmppsSender} port declared in
- * {@code application}, and depends on that port, on {@code domain} and on the shared HTTP retry
- * support only. It never depends on another adapter package, on {@code persistence}, or on the
- * driving adapters {@code inbound} and {@code api}.
+ * {@code application}, and depends on that port, on {@code domain} and on its in-package
+ * {@code RetryPolicy} only. It never depends on another adapter package, on {@code persistence}, or
+ * on the driving adapters {@code inbound} and {@code api}.
  */
 package uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway;

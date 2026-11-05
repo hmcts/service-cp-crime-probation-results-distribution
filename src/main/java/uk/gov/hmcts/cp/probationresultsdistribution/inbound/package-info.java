@@ -6,6 +6,9 @@
  * before anything else happens, the consumer lifecycle controller behind pause-intake and
  * resume-intake, and the store gate that holds intake until the store is reachable and migrated.
  * A message that fails the schema is dead-lettered at once with no {@code processed_request} row.
+ * The {@code dlq-completed} listing's dead-letter peek ({@code DeadLetterQueuePeeker}, slice 004)
+ * lives here too: it is the one other class that handles a received message, it peeks and never
+ * settles or removes, and it implements the {@code application} port the listing reads through.
  *
  * <p><strong>Dependency direction.</strong> This package calls into {@code application} and
  * speaks {@code domain}. It never reaches an outbound adapter or the store directly, and nothing

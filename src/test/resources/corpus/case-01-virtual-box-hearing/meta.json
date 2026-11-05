@@ -1,0 +1,46 @@
+{
+  "caseId": "case-01-virtual-box-hearing",
+  "environment": "SYNTHETIC",
+  "formsHeld": [
+    "CACHE"
+  ],
+  "share": {
+    "hearingId": "00000000-0000-0000-0000-000000000001",
+    "hearingDay": "2026-01-01",
+    "sharedTimeInstant": "2026-01-01T09:00:00.000Z"
+  },
+  "payloadSourceRead": "UNKNOWN",
+  "expectations": {
+    "ACTIVE": {
+      "CACHE": {
+        "kind": "NO_MESSAGE",
+        "noMessageKind": "EMPTIED_BY_R1",
+        "source": "EXECUTED_LEGACY"
+      }
+    },
+    "INACTIVE": {
+      "CACHE": {
+        "kind": "NO_MESSAGE",
+        "noMessageKind": "EMPTIED_BY_R1",
+        "source": "EXECUTED_LEGACY"
+      }
+    }
+  },
+  "provenance": {
+    "syntheticFrom": "hand-built from the legacy Jest fixture shapes; carries no SIT or production payload",
+    "change": "a virtual-box hearing (isVirtualBoxHearing:true); neither real form carries this flag (A2-8), so case 1 is always synthetic",
+    "captureDates": {
+      "cache": "2026-10-21",
+      "outcome": "2026-10-21"
+    },
+    "expectationSources": {
+      "ACTIVE:CACHE": "EXECUTED_LEGACY",
+      "INACTIVE:CACHE": "EXECUTED_LEGACY"
+    },
+    "legacyCommit": "122e215250f6f7c7e646d36cbbaa3a50fd60779a",
+    "runtime": "node v20.9.0"
+  },
+  "digests": {
+    "inputs/cache.json": "dc5b9b000777ba26c4b79e39e639fde8a52a5be2565be695709ef484e523ef60"
+  }
+}

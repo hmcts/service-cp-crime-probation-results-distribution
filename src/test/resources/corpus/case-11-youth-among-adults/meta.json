@@ -1,0 +1,48 @@
+{
+  "caseId": "case-11-youth-among-adults",
+  "environment": "SYNTHETIC",
+  "formsHeld": [
+    "CACHE"
+  ],
+  "share": {
+    "hearingId": "00000000-0000-0000-0000-000000000011",
+    "hearingDay": "2026-01-01",
+    "sharedTimeInstant": "2026-01-01T09:00:00.000Z"
+  },
+  "payloadSourceRead": "UNKNOWN",
+  "expectations": {
+    "ACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/active.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    },
+    "INACTIVE": {
+      "CACHE": {
+        "kind": "BODY",
+        "bodyFile": "expectations/inactive.json",
+        "source": "EXECUTED_LEGACY"
+      }
+    }
+  },
+  "provenance": {
+    "syntheticFrom": "hand-built from the legacy Jest fixture shapes; carries no SIT or production payload",
+    "change": "a youth defendant beside two adults in an adult-court hearing: under ACTIVE the youth is removed, the adults kept; under INACTIVE all kept",
+    "captureDates": {
+      "cache": "2026-10-21",
+      "outcome": "2026-10-21"
+    },
+    "expectationSources": {
+      "ACTIVE:CACHE": "EXECUTED_LEGACY",
+      "INACTIVE:CACHE": "EXECUTED_LEGACY"
+    },
+    "legacyCommit": "122e215250f6f7c7e646d36cbbaa3a50fd60779a",
+    "runtime": "node v20.9.0"
+  },
+  "digests": {
+    "inputs/cache.json": "3b3df4cd9b7a81748254fd4e682d0dbb8d544f8af1b349137e88dd9ecba16bdd",
+    "expectations/active.json": "de0c7d66828a1fafd64fc643c851586a8426cb99cc88b993b322f9b8fbdd537b",
+    "expectations/inactive.json": "3b3df4cd9b7a81748254fd4e682d0dbb8d544f8af1b349137e88dd9ecba16bdd"
+  }
+}

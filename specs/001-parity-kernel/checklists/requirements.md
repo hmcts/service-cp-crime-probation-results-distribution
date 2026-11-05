@@ -25,11 +25,11 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain. **Two remain**: FR-001-020 (the `INACTIVE` expectation
-      for the payload form SIT's legacy did not read) and FR-001-021 (the `INACTIVE` expectation of a
-      share whose SIT logged body is cut short). Both are genuine design gaps: the first is listed in
-      DIGEST §16 ("§6.1 / A3-67"), and the design does not cover the second at all. Neither is decided
-      here; see Questions 1 and 2 below. Two is within the limit of three.
+- [x] No [NEEDS CLARIFICATION] markers remain. Both were resolved during planning, 2026-10-21 (spec.md
+      Clarifications, "Session 2026-10-21 (planning)"): FR-001-020 and FR-001-021 both took Option B
+      below — no `INACTIVE` expectation for that form/share; it is held to its `ACTIVE` expectation
+      and what is derived from it, and the harness records the reason and never counts it as a pass.
+      See Questions 1 and 2 below for the recorded choice.
 - [x] Requirements are testable and unambiguous. The build checks the mechanical parts. Two custody
       clauses are checked at review, not by the build: FR-001-028's "only under
       `src/test/resources/corpus/`" (no build can recognise SIT data elsewhere) and FR-001-031's
@@ -162,7 +162,7 @@ come from?
 | C | `INACTIVE` expectations for that form only from shares SIT's legacy actually read in that form (a cache miss at the time) | Real SIT evidence for both forms, but the fallback form's `INACTIVE` coverage depends on how many SIT cache misses the capture window holds |
 | Custom | Provide your own answer | State the source and whether it counts towards gate row 4 |
 
-**Your choice**: _for the design owner_
+**Your choice**: B — resolved 2026-10-21 (spec.md Clarifications, "Session 2026-10-21 (planning)").
 
 ### Question 2: The `INACTIVE` expectation of a share whose SIT logged body is cut short
 
@@ -185,4 +185,4 @@ anywhere?
 | C | The kept text compared as a prefix of the port's rendered body, with no executed legacy | SIT's own evidence is used as far as it goes, with no executed legacy. The check compares characters, not JSON: the port's rendering must match the legacy's over the kept part (member order, number and string rendering), which the semantic comparator (FR-001-013) does not require, and the body's bytes are slice 002's. The part the log cut off is not checked |
 | Custom | Provide your own answer | State the source and whether such shares count towards gate row 4 |
 
-**Your choice**: _for the design owner_
+**Your choice**: B — resolved 2026-10-21 (spec.md Clarifications, "Session 2026-10-21 (planning)").
