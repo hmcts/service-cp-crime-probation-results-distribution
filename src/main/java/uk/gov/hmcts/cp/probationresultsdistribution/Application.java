@@ -6,6 +6,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.ReplayController;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.ResendLegController;
+import uk.gov.hmcts.cp.probationresultsdistribution.config.BodyRetentionConfiguration;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.OperatorCommandLine;
 
 /**
@@ -36,10 +37,20 @@ import uk.gov.hmcts.cp.probationresultsdistribution.config.OperatorCommandLine;
  * uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction}) are reliably known to
  * have registered the bean it depends on — confirmed empirically: it intermittently failed to see
  * a sibling bean that was present. A {@code @Bean}-method condition does not have this problem.
+ *
+ * <p>{@link BodyRetentionConfiguration} is excluded from this scan for the same reason, one level
+ * up: its class-level {@code @ConditionalOnBean(JdbcClient.class)} needs {@code JdbcClient} — a
+ * bean Boot's own {@code JdbcClientAutoConfiguration} registers via the deferred auto-configuration
+ * import, processed strictly after every component-scanned {@code @Configuration} class has had its
+ * conditions evaluated. Scanned here, the condition would always see no {@code JdbcClient} yet, in
+ * the real application as much as a test. It is instead registered as this service's own Boot
+ * auto-configuration (see {@code META-INF/spring/org.springframework.boot.autoconfigure
+ * .AutoConfiguration.imports}), ordered after {@code JdbcClientAutoConfiguration} by {@code
+ * @AutoConfiguration(after = ...)} — the one mechanism that actually honours that ordering.
  */
 @SpringBootApplication
 @ComponentScan(excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE,
-        classes = {ReplayController.class, ResendLegController.class}))
+        classes = {ReplayController.class, ResendLegController.class, BodyRetentionConfiguration.class}))
 public class Application {
 
     /**
