@@ -8,6 +8,12 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.JdbcClientAutoConfiguration;
+import org.springframework.boot.jdbc.autoconfigure.JdbcTemplateAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -116,6 +122,45 @@ class ServiceBusConsumerConfigIT {
                         "distribution.gateway.subscription-key=test-subscription-key")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(ProbationMessageListener.class);
+                });
+    }
+
+    @Test
+    @DisplayName("refreshes the whole bean graph even when the store is unreachable (review of PR "
+            + "#8): the pod must be able to start, and tell readiness why, rather than block on "
+            + "Flyway's own eager migration")
+    void refreshes_the_bean_graph_when_the_store_is_unreachable() {
+        new ApplicationContextRunner()
+                .withConfiguration(AutoConfigurations.of(DataSourceAutoConfiguration.class,
+                        DataSourceTransactionManagerAutoConfiguration.class,
+                        JdbcTemplateAutoConfiguration.class, JdbcClientAutoConfiguration.class,
+                        FlywayAutoConfiguration.class))
+                .withUserConfiguration(ServiceBusConsumerConfig.class, MetricRegistryConfiguration.class)
+                .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+                .withBean(DistributionProperties.class, () -> TEST_PROPERTIES)
+                .withPropertyValues(
+                        // Never a listening Postgres: nothing answers, so a connection attempt fails
+                        // fast rather than waiting out a real network timeout.
+                        "spring.datasource.url=jdbc:postgresql://127.0.0.1:1/unreachable",
+                        "spring.datasource.hikari.initialization-fail-timeout=-1",
+                        "spring.flyway.locations=classpath:db/migration",
+                        "distribution.consumer.enabled=true",
+                        "distribution.servicebus.connection-string="
+                                + EndToEndTestSupport.serviceBusConnectionString(),
+                        "distribution.servicebus.namespace=",
+                        "distribution.servicebus.queue-name=probation.requests",
+                        "distribution.servicebus.max-concurrent-calls=2",
+                        "distribution.redis.host=" + EndToEndTestSupport.redisHost(),
+                        "distribution.redis.port=" + EndToEndTestSupport.redisPort(),
+                        "distribution.redis.ssl=false",
+                        "distribution.redis.verify-peer=false",
+                        "distribution.redis.key-prefix=EXT_",
+                        "distribution.usersgroups.youth-filter-key=EMYouthFilter",
+                        "distribution.gateway.subscription-key=test-subscription-key")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(ConsumerLifecycleController.class);
                     assertThat(context).hasSingleBean(ProbationMessageListener.class);
                 });
     }

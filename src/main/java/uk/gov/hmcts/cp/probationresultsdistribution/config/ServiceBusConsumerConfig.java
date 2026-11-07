@@ -7,6 +7,7 @@ import com.azure.messaging.servicebus.ServiceBusSenderClient;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.flywaydb.core.Flyway;
 import org.slf4j.Logger;
@@ -15,6 +16,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.convert.DurationStyle;
+import org.springframework.boot.flyway.autoconfigure.FlywayMigrationStrategy;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -72,6 +74,23 @@ public class ServiceBusConsumerConfig {
     /* default */ @Bean
     AgeGaugeRefresher ageGaugeRefresher(final JdbcClient jdbc, final MetricRegistry metrics) {
         return new AgeGaugeRefresher(jdbc, metrics);
+    }
+
+    /**
+     * Overrides Boot's default of migrating {@link Flyway} eagerly, inside {@code
+     * FlywayMigrationInitializer}, during context refresh. Left at that default, a pod cannot start
+     * while the database is down (review of PR #8): {@code FlywayAutoConfiguration} forces a
+     * connection before refresh ever completes, even though the datasource pool itself initialises
+     * lazily ({@code spring.datasource.hikari.initialization-fail-timeout: -1}) for exactly the
+     * opposite reason. With this no-op in place the {@code Flyway} bean is still built — the
+     * migrations are still validated against the classpath — but nothing connects until
+     * {@link uk.gov.hmcts.cp.probationresultsdistribution.inbound.ConsumerLifecycleController
+     * #migrateOnce()} runs it, on the first successful store probe, before intake starts.
+     */
+    /* default */ @Bean
+    FlywayMigrationStrategy deferredFlywayMigrationStrategy() {
+        return flyway -> LOG.info("Flyway migration deferred to the first successful store probe; "
+                + "not running it during context refresh");
     }
 
     /* default */ @Bean
@@ -185,10 +204,23 @@ public class ServiceBusConsumerConfig {
                 properties.servicebus().maxDeliveryCount());
     }
 
+    /**
+     * The number of deliveries {@link #probationProcessorClient} is currently running. Shared with
+     * {@link ConsumerLifecycleController}, whose {@code stop()} waits for this to reach zero before
+     * returning: the Service Bus SDK's own {@code ServiceBusProcessorClient.stop()} does not wait for
+     * an in-flight delivery to finish, so without this a rolling deploy could kill a run mid-POST
+     * (review of PR #8).
+     */
+    /* default */ @Bean
+    AtomicInteger inFlightRunCounter() {
+        return new AtomicInteger();
+    }
+
     /* default */ @Bean(destroyMethod = "close")
     ServiceBusProcessorClient probationProcessorClient(final ProbationMessageListener listener,
             final ServiceBusHealthIndicator brokerHealth,
             final DistributionProperties properties,
+            final AtomicInteger inFlightRunCounter,
             @Value("${distribution.servicebus.connection-string:}") final String connectionString,
             @Value("${distribution.servicebus.namespace:}") final String namespace,
             @Value("${distribution.servicebus.queue-name}") final String queueName,
@@ -204,7 +236,12 @@ public class ServiceBusConsumerConfig {
                 .maxAutoLockRenewDuration(properties.servicebus().maxAutoLockRenewDuration())
                 .processMessage(context -> {
                     brokerHealth.recordTraffic();
-                    listener.processMessage(context);
+                    inFlightRunCounter.incrementAndGet();
+                    try {
+                        listener.processMessage(context);
+                    } finally {
+                        inFlightRunCounter.decrementAndGet();
+                    }
                 })
                 .processError(context -> {
                     if (!ServiceBusErrorSource.USER_CALLBACK.equals(context.getErrorSource())) {
@@ -244,9 +281,13 @@ public class ServiceBusConsumerConfig {
     ConsumerLifecycleController probationConsumerLifecycle(final ServiceBusProcessorClient processor,
             final ProcessedLogProbe storeProbe, final IntakeControlRepository intakeControl,
             final ObjectProvider<Flyway> flyway, final MetricRegistry metrics,
+            final AtomicInteger inFlightRunCounter, final DistributionProperties properties,
             @Value("${distribution.store.probe-interval:10s}") final String probeInterval) {
+        // At least the enforced bound on a run (design §4.7; processingDeadline), so a run already
+        // under way when shutdown starts is given the time it is allowed to take.
         return new ConsumerLifecycleController(processor, storeProbe, intakeControl,
-                flyway::getIfAvailable, metrics, DurationStyle.detectAndParse(probeInterval));
+                flyway::getIfAvailable, metrics, DurationStyle.detectAndParse(probeInterval),
+                inFlightRunCounter, properties.claim().processingDeadline());
     }
 
     private static String serviceVersion(final ObjectProvider<BuildProperties> buildProperties) {

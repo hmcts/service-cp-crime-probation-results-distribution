@@ -13,7 +13,10 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -136,9 +139,66 @@ class ConsumerLifecycleControllerTest {
         }
     }
 
+    @Nested
+    @DisplayName("when a delivery is in flight at shutdown")
+    class RunInFlightAtShutdown {
+
+        @Test
+        @DisplayName("stop() blocks until the in-flight delivery finishes, then returns")
+        void waits_for_the_in_flight_delivery() throws InterruptedException {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicInteger inFlight = new AtomicInteger();
+            controller = newController(inFlight, Duration.ofSeconds(5L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            inFlight.incrementAndGet();
+            final CountDownLatch stopReturned = new CountDownLatch(1);
+            final Thread stopper = new Thread(() -> {
+                controller.stop();
+                stopReturned.countDown();
+            });
+            stopper.start();
+
+            // A rolling deploy must not kill a run mid-POST (design budget up to 215s): stop() has to
+            // still be blocked a moment later, not have returned while the delivery was in flight.
+            assertThat(stopReturned.await(200L, TimeUnit.MILLISECONDS)).isFalse();
+
+            inFlight.decrementAndGet();
+
+            assertThat(stopReturned.await(AWAIT_LIMIT.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
+        }
+
+        @Test
+        @DisplayName("gives up after the drain timeout rather than blocking for ever")
+        void gives_up_after_the_drain_timeout() {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicInteger inFlight = new AtomicInteger(1);
+            final Duration drainTimeout = Duration.ofMillis(200L);
+            controller = newController(inFlight, drainTimeout);
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            final long startedAt = System.nanoTime();
+            controller.stop();
+            final Duration elapsed = Duration.ofNanos(System.nanoTime() - startedAt);
+
+            assertThat(elapsed).isGreaterThanOrEqualTo(drainTimeout);
+        }
+    }
+
     private ConsumerLifecycleController newController() {
+        return newController(new AtomicInteger(), Duration.ofSeconds(5L));
+    }
+
+    private ConsumerLifecycleController newController(final AtomicInteger inFlightRuns,
+                                                       final Duration drainTimeout) {
         return new ConsumerLifecycleController(processor, storeProbe, intakeControl, () -> null,
-                metrics, PROBE_INTERVAL);
+                metrics, PROBE_INTERVAL, inFlightRuns, drainTimeout);
     }
 
     private double gauge(final String name) {

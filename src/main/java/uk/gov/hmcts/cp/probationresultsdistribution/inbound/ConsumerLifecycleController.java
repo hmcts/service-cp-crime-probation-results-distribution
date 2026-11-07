@@ -7,6 +7,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.flywaydb.core.Flyway;
@@ -42,6 +43,9 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     /** How long shutdown waits for the transition thread to finish what it was doing. */
     private static final Duration SHUTDOWN_GRACE = Duration.ofSeconds(30);
 
+    /** How often {@link #awaitInFlightRunsToDrain()} rechecks the in-flight count. */
+    private static final Duration DRAIN_POLL_INTERVAL = Duration.ofMillis(200);
+
     /** The PMD suppression this class's several deliberately-total catches share. */
     private static final String SUPPRESS_GENERIC_CATCH = "PMD.AvoidCatchingGenericException";
 
@@ -51,6 +55,8 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     private final Supplier<Flyway> flyway;
     private final MetricRegistry metrics;
     private final Duration probeInterval;
+    private final AtomicInteger inFlightRuns;
+    private final Duration drainTimeout;
 
     private final ScheduledExecutorService transitions = Executors.newSingleThreadScheduledExecutor(
             runnable -> {
@@ -77,19 +83,28 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
      * @param flyway        the deferred migration, run once before intake starts
      * @param metrics       the instrument surface suspensions are counted and gauged on
      * @param probeInterval how often the store is asked, driving the start and the resume
+     * @param inFlightRuns  the number of deliveries the processor is currently running; shared
+     *                      with the processor's {@code processMessage} callback, which increments
+     *                      it before a run and decrements it after
+     * @param drainTimeout  how long {@link #stop()} waits for {@code inFlightRuns} to reach zero
+     *                      before giving up, so a rolling deploy does not kill a run mid-POST
      */
     public ConsumerLifecycleController(final ServiceBusProcessorClient processor,
                                        final ProcessedLogProbe storeProbe,
                                        final IntakeControlRepository intakeControl,
                                        final Supplier<Flyway> flyway,
                                        final MetricRegistry metrics,
-                                       final Duration probeInterval) {
+                                       final Duration probeInterval,
+                                       final AtomicInteger inFlightRuns,
+                                       final Duration drainTimeout) {
         this.processor = processor;
         this.storeProbe = storeProbe;
         this.intakeControl = intakeControl;
         this.flyway = flyway;
         this.metrics = metrics;
         this.probeInterval = probeInterval;
+        this.inFlightRuns = inFlightRuns;
+        this.drainTimeout = drainTimeout;
     }
 
     /** What intake is doing. */
@@ -126,6 +141,33 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
         transitions.shutdown();
         awaitTransitionsToFinish();
         shutdownIntake();
+        // Run on this (the container's) shutdown thread, not the transition executor: SmartLifecycle
+        // already blocks the caller until stop() returns, and the processor's own SDK stop() call
+        // above does not wait for an in-flight delivery to finish (review of PR #8) - a rolling
+        // deploy could otherwise kill a run mid-POST, and the redelivery could send it again.
+        awaitInFlightRunsToDrain();
+    }
+
+    /**
+     * Blocks until no delivery is still running, or until {@link #drainTimeout} elapses, whichever
+     * comes first. {@link #shutdownIntake()} has already stopped the processor by the time this runs,
+     * so no further delivery starts while this waits.
+     */
+    private void awaitInFlightRunsToDrain() {
+        final long deadline = System.nanoTime() + drainTimeout.toNanos();
+        while (inFlightRuns.get() > 0 && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(DRAIN_POLL_INTERVAL.toMillis());
+            } catch (final InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        final int stillRunning = inFlightRuns.get();
+        if (stillRunning > 0) {
+            LOG.warn("shutting down with {} delivery(ies) still in flight after waiting {}; their "
+                    + "lock will expire and the broker will redeliver", stillRunning, drainTimeout);
+        }
     }
 
     private void cancelProbeSchedule() {
