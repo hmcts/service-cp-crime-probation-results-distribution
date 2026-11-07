@@ -186,8 +186,13 @@ public final class OperatorCommandLine {
     /**
      * Explicit Boot source, deliberately without {@code @Configuration} or component scanning:
      * the normal server must not discover this separate composition root.
+     *
+     * <p>{@code BodyRetentionConfiguration} is excluded because it is a registered
+     * auto-configuration ({@code AutoConfiguration.imports}), so the bare
+     * {@code @EnableAutoConfiguration} below would otherwise pick it up and register the
+     * body-retention cron in every operator runner, against FR-004-045.
      */
-    @EnableAutoConfiguration
+    @EnableAutoConfiguration(exclude = BodyRetentionConfiguration.class)
     public static class CommandConfiguration {
 
         /* default */ @Bean
