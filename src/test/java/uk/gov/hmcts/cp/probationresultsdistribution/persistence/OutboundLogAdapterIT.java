@@ -45,7 +45,7 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
         seedPendingAttempt(requestId, hearingId, claim);
         final LegOutcome outcome = sentOutcome(requestId, hearingId);
 
-        final boolean recorded = adapter.record(outcome, claim);
+        final boolean recorded = adapter.record(outcome, claim, "unit-test");
 
         assertThat(recorded).isTrue();
         final java.util.Map<String, Object> row = jdbc().sql(
@@ -78,7 +78,7 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
                 Optional.of(Instant.parse("2026-08-19T16:42:07.512Z")), Optional.empty(),
                 OptionalInt.empty(), Optional.empty());
 
-        assertThat(adapter.record(outcome, claim)).isTrue();
+        assertThat(adapter.record(outcome, claim, "unit-test")).isTrue();
         final String status = jdbc().sql("SELECT status FROM outbound_message_latest "
                         + "WHERE source = :s AND request_id = :r")
                 .param("s", SOURCE).param("r", requestId).query(String.class).single();
@@ -101,7 +101,7 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
                 Optional.of(Instant.parse("2026-08-19T16:42:07.512Z")), Optional.of(sha256(BODY)),
                 OptionalInt.of(503), Optional.of(BODY));
 
-        assertThat(adapter.record(outcome, claim)).isTrue();
+        assertThat(adapter.record(outcome, claim, "unit-test")).isTrue();
         final java.util.Map<String, Object> row = jdbc().sql(
                         "SELECT oml.status, oml.reason, oml.http_status, oml.body_digest, ob.body "
                         + "FROM outbound_message_latest oml "
@@ -122,7 +122,7 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
         final UUID hearingId = UUID.randomUUID();
         seedPendingAttempt(requestId, hearingId, RunClaim.fresh());
 
-        final boolean recorded = adapter.record(sentOutcome(requestId, hearingId), RunClaim.fresh());
+        final boolean recorded = adapter.record(sentOutcome(requestId, hearingId), RunClaim.fresh(), "unit-test");
 
         assertThat(recorded).isFalse();
         final String status = jdbc().sql("SELECT status FROM outbound_message_latest "

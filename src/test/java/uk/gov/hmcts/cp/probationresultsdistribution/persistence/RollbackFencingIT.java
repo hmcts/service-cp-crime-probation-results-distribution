@@ -82,7 +82,10 @@ class RollbackFencingIT extends SchemaTestSupport {
             final DistributionCommand command = freshCommand();
             final RunClaim claim = RunClaim.fresh();
             requests.insertClaim(command, "{}", "fp", claim);
-            outbound.writeOutcome(parked(command, "body-1"), claim);
+            // writeOutcome now applies the RETRYING transition in the same write (review of PR #8),
+            // so this explicit markRetrying is redundant, surviving as a no-op the write's own
+            // claim-clearing already fences out; left here to document the state it used to set.
+            outbound.writeOutcome(parked(command, "body-1"), claim, "unit-test");
             requests.markRetrying(SOURCE, command.requestId(), claim);
 
             final CloseInFlightResult result = fencing.closeInFlight();
@@ -103,10 +106,10 @@ class RollbackFencingIT extends SchemaTestSupport {
             // The attempt-1 row must itself be terminal before the request can be FAILED(leg-exhausted)
             // (design settlement order) — left PENDING, it would be a second in-flight row the close
             // statement also closes, which is not this scenario.
-            outbound.writeOutcome(failed(command, "exhausted body"), claim);
-            requests.markFailed(SOURCE, command.requestId(), claim,
-                    uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason.LEG_EXHAUSTED,
-                    "RESULTS:exhausted-id");
+            // The write itself now applies FAILED(leg-exhausted) with this exhausted_message_id in
+            // the same transaction (review of PR #8): an exhaustion-reason outcome always implies
+            // this transition, so there is no longer a separate markFailed step to call.
+            outbound.writeOutcome(failed(command, "exhausted body"), claim, "RESULTS:exhausted-id");
             final UUID originalToken = insertResendPendingRow(command.requestId());
 
             final CloseInFlightResult result = fencing.closeInFlight();
@@ -124,9 +127,9 @@ class RollbackFencingIT extends SchemaTestSupport {
             final RunClaim claim = RunClaim.fresh();
             requests.insertClaim(command, "{}", "fp", claim);
             // As above: attempt 1 must be terminal (SENT) before the request can be COMPLETED.
-            outbound.writeOutcome(sent(command, "first body"), claim);
-            requests.markCompleted(SOURCE, command.requestId(), claim,
-                    uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason.BOTH_LEGS_TERMINAL);
+            // The write itself now applies both-legs-terminal COMPLETED in the same transaction
+            // (review of PR #8), so there is no longer a separate markCompleted step to call.
+            outbound.writeOutcome(sent(command, "first body"), claim, "unit-test");
             insertResendPendingRow(command.requestId());
 
             final CloseInFlightResult result = fencing.closeInFlight();
@@ -151,7 +154,7 @@ class RollbackFencingIT extends SchemaTestSupport {
 
             fencing.closeInFlight();
 
-            final int rows = outbound.writeOutcome(sent(command, "late body"), staleClaim);
+            final int rows = outbound.writeOutcome(sent(command, "late body"), staleClaim, "unit-test");
 
             assertThat(rows).isZero();
             assertLegClosed(command.requestId(), "prev=PENDING/-");
@@ -164,13 +167,13 @@ class RollbackFencingIT extends SchemaTestSupport {
             final DistributionCommand command = freshCommand();
             final RunClaim staleClaim = RunClaim.fresh();
             requests.insertClaim(command, "{}", "fp", staleClaim);
-            outbound.writeOutcome(parked(command, "body-1"), staleClaim);
+            outbound.writeOutcome(parked(command, "body-1"), staleClaim, "unit-test");
             requests.markRetrying(SOURCE, command.requestId(), staleClaim);
 
             fencing.closeInFlight();
 
             final int rows = outbound.writeReplayOutcome(sent(command, "late replay body"),
-                    staleClaim, "RESULTS:a-replay-message-id");
+                    staleClaim, "RESULTS:a-replay-message-id", "unit-test");
 
             assertThat(rows).isZero();
             assertLegClosed(command.requestId(), "prev=PARKED/gateway-transient");

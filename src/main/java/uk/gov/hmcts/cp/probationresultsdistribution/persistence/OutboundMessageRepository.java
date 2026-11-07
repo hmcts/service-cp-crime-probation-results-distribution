@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
@@ -39,6 +40,7 @@ public final class OutboundMessageRepository {
     private static final String SERVICE_VERSION = "serviceVersion";
     private static final String SENT = "sent";
     private static final String TOKEN = "token";
+    private static final String OWNER = "owner";
 
     private final JdbcClient jdbc;
     private final TransactionTemplate transactionTemplate;
@@ -69,15 +71,27 @@ public final class OutboundMessageRepository {
      * NULL. A terminal attempt-1 row never reaches here: its request is {@code COMPLETED} or
      * {@code FAILED}, so the guard settles the delivery before a run begins.
      *
-     * @param outcome the derived leg outcome
-     * @param claim   the request claim fencing the write
+     * <p>Also applies, in the same transaction, the request-level transition the outcome implies —
+     * {@code COMPLETED}, {@code FAILED(leg-exhausted)} or {@code RETRYING} — so a crash between the
+     * two can never strand the request at {@code RECEIVED}/{@code RETRYING} with a terminal leg
+     * (design digest step 4; A2-67, A3-63; review of PR #8). A guarded request transition that
+     * matches no row rolls the whole write back rather than leaving the leg row written with no
+     * matching request transition.
+     *
+     * @param outcome          the derived leg outcome
+     * @param claim            the request claim fencing the write
+     * @param deliveryMessageId the delivery's own {@code messageId}, recorded as
+     *                          {@code exhausted_message_id} on an exhausted outcome
      * @return the number of rows updated: 1 when written, 0 when fenced out (a stale runner)
      */
-    public int writeOutcome(final LegOutcome outcome, final RunClaim claim) {
-        return transactionTemplate.execute(status -> applyOutcome(outcome, claim));
+    public int writeOutcome(final LegOutcome outcome, final RunClaim claim,
+                            final String deliveryMessageId) {
+        return transactionTemplate.execute(status ->
+                applyOutcome(outcome, claim, deliveryMessageId, status));
     }
 
-    private int applyOutcome(final LegOutcome outcome, final RunClaim claim) {
+    private int applyOutcome(final LegOutcome outcome, final RunClaim claim,
+                             final String deliveryMessageId, final TransactionStatus status) {
         final String bodyDigest = outcome.bodyDigest().orElse(null);
         // service_version is written only with a body_digest (H19): precomputed here, as NULL, so the
         // bound parameters always carry a determinable type — a bare NULL inside a CASE leaves the
@@ -120,7 +134,7 @@ public final class OutboundMessageRepository {
                 .param(SENT, sent)
                 .param(SOURCE, outcome.command().source())
                 .param(REQUEST_ID, outcome.command().requestId())
-                .param("owner", claim.owner().toString())
+                .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
                 .query(UUID.class)
                 .optional();
@@ -130,9 +144,120 @@ public final class OutboundMessageRepository {
             rows = 0;
         } else {
             replaceBody(updatedId.get(), outcome.body().orElse(null));
-            rows = 1;
+            rows = settleRequestOrRollback(outcome, claim, deliveryMessageId, status);
         }
         return rows;
+    }
+
+    /**
+     * Applies the request-level transition a just-written leg outcome implies, in the same
+     * transaction as that write, rolling the whole write back if the guarded transition matches no
+     * row (review of PR #8; design digest step 4).
+     *
+     * @param outcome            the derived leg outcome, already written
+     * @param claim              the request claim fencing the transition
+     * @param deliveryMessageId  the delivery's own {@code messageId}, for an exhausted outcome
+     * @param status             the active transaction, rolled back on a fenced-out transition
+     * @return 1 when both writes took effect; 0 when the request transition matched no row
+     */
+    // The early return on success avoids marking the transaction for rollback on the path that
+    // never needs it.
+    @SuppressWarnings("PMD.OnlyOneReturn")
+    private int settleRequestOrRollback(final LegOutcome outcome, final RunClaim claim,
+                                        final String deliveryMessageId, final TransactionStatus status) {
+        if (applyRequestTransition(outcome, claim, deliveryMessageId)) {
+            return 1;
+        }
+        status.setRollbackOnly();
+        return 0;
+    }
+
+    /**
+     * Derives and applies the one request-level transition a leg outcome implies (design §4.5): a
+     * terminal leg completes the request; an exhausted leg fails it {@code leg-exhausted}; a park
+     * retries it. {@code PARKED} is only ever produced on a non-final delivery, and {@code FAILED}
+     * with an exhaustion reason only ever on the final one, by construction in the application
+     * core's pipeline — the same invariant {@code ProbationMessageListener#settleFailed} relied on
+     * before this transition moved here.
+     *
+     * @param outcome            the derived leg outcome
+     * @param claim              the request claim fencing the transition
+     * @param deliveryMessageId  the delivery's own {@code messageId}, for an exhausted outcome
+     * @return whether the guarded transition took effect
+     */
+    private boolean applyRequestTransition(final LegOutcome outcome, final RunClaim claim,
+                                           final String deliveryMessageId) {
+        return switch (outcome.status()) {
+            case SENT, NOT_APPLICABLE -> markRequestCompleted(outcome, claim);
+            case FAILED -> isExhaustionReason(outcome.reason())
+                    ? markRequestFailedExhausted(outcome, claim, deliveryMessageId)
+                    : markRequestCompleted(outcome, claim);
+            case PARKED -> markRequestRetrying(outcome, claim);
+            case PENDING -> throw new IllegalStateException("a run never ends PENDING");
+        };
+    }
+
+    private static boolean isExhaustionReason(final Optional<LegReason> reason) {
+        return reason.filter(r -> r == LegReason.PAYLOAD_UNAVAILABLE
+                || r == LegReason.GATEWAY_TRANSIENT).isPresent();
+    }
+
+    /**
+     * Completes the request {@code both-legs-terminal} — or {@code recovered} whenever
+     * {@code audit_note} holds the replay marker, even though the caller's reason here is always
+     * {@code both-legs-terminal} (FR-004-012): a replayed run's first delivery may park and a later
+     * redelivery settle it, so the marker, not which run settled it, decides.
+     */
+    private boolean markRequestCompleted(final LegOutcome outcome, final RunClaim claim) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'COMPLETED', "
+                        + "completion_reason = CASE "
+                        + "WHEN audit_note LIKE '%REPLAYED_AFTER_FAILURE%' THEN 'recovered' "
+                        + "ELSE 'both-legs-terminal' END, "
+                        + "failure_reason = NULL, replayed_at = NULL, claim_owner = NULL, "
+                        + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
+                        + "WHERE source = :source AND request_id = :requestId "
+                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + "AND claim_owner = :owner AND claim_token = :token")
+                .param(SOURCE, outcome.command().source())
+                .param(REQUEST_ID, outcome.command().requestId())
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .update();
+        return rows > 0;
+    }
+
+    private boolean markRequestRetrying(final LegOutcome outcome, final RunClaim claim) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'RETRYING', "
+                        + "failure_reason = NULL, claim_owner = NULL, claim_token = NULL, "
+                        + "claim_expires_at = NULL, updated_at = now() "
+                        + "WHERE source = :source AND request_id = :requestId "
+                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + "AND claim_owner = :owner AND claim_token = :token")
+                .param(SOURCE, outcome.command().source())
+                .param(REQUEST_ID, outcome.command().requestId())
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .update();
+        return rows > 0;
+    }
+
+    private boolean markRequestFailedExhausted(final LegOutcome outcome, final RunClaim claim,
+                                               final String deliveryMessageId) {
+        final int rows = jdbc.sql("UPDATE processed_request SET status = 'FAILED', "
+                        + "failure_reason = 'leg-exhausted', "
+                        + "exhausted_message_id = :exhaustedMessageId, "
+                        + "completion_reason = NULL, replayed_at = NULL, claim_owner = NULL, "
+                        + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
+                        + "WHERE source = :source AND request_id = :requestId "
+                        + "AND status IN ('RECEIVED', 'RETRYING') "
+                        + "AND claim_owner = :owner AND claim_token = :token")
+                .param("exhaustedMessageId", deliveryMessageId)
+                .param(SOURCE, outcome.command().source())
+                .param(REQUEST_ID, outcome.command().requestId())
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .update();
+        return rows > 0;
     }
 
     /**
@@ -146,20 +271,25 @@ public final class OutboundMessageRepository {
      * from the match, so it is re-run at most once per replay message (FR-004-010); a {@code PARKED}
      * row carries no such exclusion.
      *
-     * @param outcome          the derived leg outcome
-     * @param claim            the request claim fencing the write
-     * @param rerunByMessageId the replay message's {@code messageId}
+     * <p>Also applies, in the same transaction, the request-level transition the outcome implies, as
+     * {@link #writeOutcome} does (review of PR #8).
+     *
+     * @param outcome            the derived leg outcome
+     * @param claim              the request claim fencing the write
+     * @param rerunByMessageId   the replay message's {@code messageId}, recorded in {@code note}
+     * @param deliveryMessageId  the replay delivery's own {@code messageId}, for an exhausted outcome
      * @return the number of rows updated: 1 when written, 0 when fenced out or already re-run by this
      *     message
      */
     public int writeReplayOutcome(final LegOutcome outcome, final RunClaim claim,
-                                  final String rerunByMessageId) {
+                                  final String rerunByMessageId, final String deliveryMessageId) {
         return transactionTemplate.execute(status ->
-                applyReplayOutcome(outcome, claim, rerunByMessageId));
+                applyReplayOutcome(outcome, claim, rerunByMessageId, deliveryMessageId, status));
     }
 
     private int applyReplayOutcome(final LegOutcome outcome, final RunClaim claim,
-                                   final String rerunByMessageId) {
+                                   final String rerunByMessageId, final String deliveryMessageId,
+                                   final TransactionStatus status) {
         // An empty leg history has nothing to re-run or append over, so it fences to 0 rows. A FAILED
         // row at attempt >= 2 (a resend row or an earlier replay row) is never re-run in place: a new
         // replay row is appended over it (FR-004-009). The replay column re-runs in place only
@@ -168,23 +298,25 @@ public final class OutboundMessageRepository {
         // guarded by its own leg claim, not the request claim, so the replay path MUST NOT rewrite it
         // in place: it fences to 0 rows (FR-004-009; design_rules.md).
         return latestLegRow(outcome.command().source(), outcome.command().requestId())
-                .map(row -> routeReplayWrite(outcome, claim, rerunByMessageId, row))
+                .map(row -> routeReplayWrite(outcome, claim, rerunByMessageId, deliveryMessageId, row,
+                        status))
                 .orElse(0);
     }
 
     private int routeReplayWrite(final LegOutcome outcome, final RunClaim claim,
-                                 final String rerunByMessageId, final LatestLegRow row) {
+                                 final String rerunByMessageId, final String deliveryMessageId,
+                                 final LatestLegRow row, final TransactionStatus status) {
         final boolean appendOver = row.attempt() >= 2 && "FAILED".equals(row.status());
         final boolean inPlaceEligible = row.attempt() == 1 || "replay".equals(row.attemptOrigin());
-        final int rows;
+        final int written;
         if (appendOver) {
-            rows = appendReplayRowOrSkip(outcome, claim, rerunByMessageId, row);
+            written = appendReplayRowOrSkip(outcome, claim, rerunByMessageId, row);
         } else if (inPlaceEligible) {
-            rows = inPlaceReplayOutcome(outcome, claim, rerunByMessageId, row.attempt());
+            written = inPlaceReplayOutcome(outcome, claim, rerunByMessageId, row.attempt());
         } else {
-            rows = 0;
+            written = 0;
         }
-        return rows;
+        return written == 1 ? settleRequestOrRollback(outcome, claim, deliveryMessageId, status) : 0;
     }
 
     /**
@@ -237,7 +369,7 @@ public final class OutboundMessageRepository {
                 .param("messageId", rerunByMessageId)
                 .param(SOURCE, outcome.command().source())
                 .param(REQUEST_ID, outcome.command().requestId())
-                .param("owner", claim.owner().toString())
+                .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
                 .query(UUID.class)
                 .optional();
@@ -304,7 +436,7 @@ public final class OutboundMessageRepository {
                 .param("targetAttempt", targetAttempt)
                 .param(SOURCE, outcome.command().source())
                 .param(REQUEST_ID, outcome.command().requestId())
-                .param("owner", claim.owner().toString())
+                .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
                 .query(UUID.class)
                 .optional();

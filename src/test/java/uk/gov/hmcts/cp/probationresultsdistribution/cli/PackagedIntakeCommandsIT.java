@@ -23,6 +23,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,7 +82,8 @@ class PackagedIntakeCommandsIT extends EndToEndTestSupport {
                 }).buildProcessorClient()) {
             final ConsumerLifecycleController controller = new ConsumerLifecycleController(processor,
                     new ProcessedLogProbe(jdbc()), new JdbcIntakeControlRepository(jdbc()), () -> null,
-                    new MetricRegistry(new SimpleMeterRegistry()), Duration.ofMillis(50));
+                    new MetricRegistry(new SimpleMeterRegistry()), Duration.ofMillis(50),
+                    new AtomicInteger(), Duration.ofSeconds(5));
             try {
                 controller.start();
                 await(controller::pausedByOperator);

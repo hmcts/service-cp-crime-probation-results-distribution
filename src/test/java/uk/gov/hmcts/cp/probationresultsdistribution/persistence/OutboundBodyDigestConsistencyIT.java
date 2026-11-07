@@ -46,7 +46,7 @@ class OutboundBodyDigestConsistencyIT extends SchemaTestSupport {
         final UUID requestId = UUID.randomUUID();
         final RunClaim claim = seedPendingRequestAndAttempt(requestId);
 
-        repository.writeOutcome(outcome(requestId, LegStatus.SENT, "the first body"), claim);
+        repository.writeOutcome(outcome(requestId, LegStatus.SENT, "the first body"), claim, "unit-test");
 
         assertStoredBodyMatchesDigest(requestId);
     }
@@ -57,9 +57,12 @@ class OutboundBodyDigestConsistencyIT extends SchemaTestSupport {
         final UUID requestId = UUID.randomUUID();
         final RunClaim claim = seedPendingRequestAndAttempt(requestId);
         repository.writeOutcome(
-                parkedOutcome(requestId, "the parked body"), claim);
+                parkedOutcome(requestId, "the parked body"), claim, "unit-test");
+        // The PARKED outcome's RETRYING transition clears the request claim in the same write
+        // (review of PR #8); a real redelivery would reclaim it afresh through the guard first.
+        reclaimRequest(requestId, claim);
 
-        repository.writeOutcome(outcome(requestId, LegStatus.SENT, "the re-run body"), claim);
+        repository.writeOutcome(outcome(requestId, LegStatus.SENT, "the re-run body"), claim, "unit-test");
 
         assertThat(storedBody(requestId)).isEqualTo("the re-run body");
         assertStoredBodyMatchesDigest(requestId);
@@ -122,6 +125,20 @@ class OutboundBodyDigestConsistencyIT extends SchemaTestSupport {
         return new DistributionCommand(SOURCE, requestId, UUID.randomUUID(),
                 LocalDate.parse("2026-08-19"), Instant.parse("2026-08-19T16:42:07.512Z"),
                 "Hearing_Resulted", Optional.empty());
+    }
+
+    /**
+     * Re-establishes the request's claim, as a redelivery's reclaim through {@code IdempotencyGuard}
+     * would in production, after an atomic write's own request transition cleared it (review of PR
+     * #8). This test exercises the repository directly, with no guard in the loop.
+     */
+    private void reclaimRequest(final UUID requestId, final RunClaim claim) {
+        jdbc().sql("UPDATE processed_request SET status = 'RETRYING', claim_owner = :owner, "
+                        + "claim_token = :token, claim_expires_at = now() + interval '1 hour' "
+                        + "WHERE source = :source AND request_id = :requestId")
+                .param("owner", claim.owner().toString()).param("token", claim.token())
+                .param("source", SOURCE).param("requestId", requestId)
+                .update();
     }
 
     /** Seeds a {@code RECEIVED} request, claimed, with a {@code PENDING} attempt-1 row. */

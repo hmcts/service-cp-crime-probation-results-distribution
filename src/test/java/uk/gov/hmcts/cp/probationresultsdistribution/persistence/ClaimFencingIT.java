@@ -85,7 +85,7 @@ class ClaimFencingIT extends SchemaTestSupport {
     void stale_runner_write_matches_no_row() {
         requests.insertClaim(command, "{}", "fp", RunClaim.fresh());
 
-        final int rows = outbound.writeOutcome(sent("the bytes"), RunClaim.fresh());
+        final int rows = outbound.writeOutcome(sent("the bytes"), RunClaim.fresh(), "unit-test");
 
         assertThat(rows).isZero();
         assertThat(attemptStatus()).isEqualTo("PENDING");
@@ -97,7 +97,7 @@ class ClaimFencingIT extends SchemaTestSupport {
         final RunClaim claim = RunClaim.fresh();
         requests.insertClaim(command, "{}", "fp", claim);
 
-        final int rows = outbound.writeOutcome(sent("the exact bytes"), claim);
+        final int rows = outbound.writeOutcome(sent("the exact bytes"), claim, "unit-test");
 
         assertThat(rows).isEqualTo(1);
         assertThat(attemptStatus()).isEqualTo("SENT");
@@ -113,8 +113,11 @@ class ClaimFencingIT extends SchemaTestSupport {
         final RunClaim claim = RunClaim.fresh();
         requests.insertClaim(command, "{}", "fp", claim);
 
-        outbound.writeOutcome(parked("first body"), claim);
-        outbound.writeOutcome(sent("second body"), claim);
+        outbound.writeOutcome(parked("first body"), claim, "unit-test");
+        // The PARKED outcome's RETRYING transition clears the request claim in the same write
+        // (review of PR #8); a real redelivery would reclaim it afresh through the guard first.
+        assertThat(requests.reclaim("RESULTS", command.requestId(), claim)).isTrue();
+        outbound.writeOutcome(sent("second body"), claim, "unit-test");
 
         assertThat(attemptStatus()).isEqualTo("SENT");
         assertThat(storedBody()).isEqualTo("second body");
