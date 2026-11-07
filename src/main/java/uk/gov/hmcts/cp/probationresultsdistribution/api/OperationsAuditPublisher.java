@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.api;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -9,6 +10,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jms.JmsException;
 import org.springframework.jms.core.JmsTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsFailure;
@@ -36,6 +39,8 @@ public final class OperationsAuditPublisher {
     private static final Logger LOG = LoggerFactory.getLogger(OperationsAuditPublisher.class);
     private static final String AUDIT_TOPIC = "jms.topic.auditing.event";
     private static final String ACTION_FIELD = "action";
+    private static final String CALLER_ID_FIELD = "callerId";
+    private static final String CALLER_ID_HEADER = "CJSCPPUID";
 
     private final Optional<JmsTemplate> jmsTemplate;
     private final ObjectMapper objectMapper;
@@ -97,14 +102,17 @@ public final class OperationsAuditPublisher {
     }
 
     /**
-     * Serialises one event's bounded fields with the action named alongside them (FR-005-026): the
-     * action; the outcome or refusal reason; for replay the requestId; whether either override was
-     * requested — never a request/response body, the operator or reason text, a hearing payload or a
-     * stored body.
+     * Serialises one event's bounded fields with the action and the caller named alongside them
+     * (FR-005-026): the action; the authenticated caller id, from the request's own {@code
+     * CJSCPPUID} header, never the body (review of PR #8) — so a forced resend can be traced to a
+     * person, not just the operator free text the caller supplies; the outcome or refusal reason;
+     * for replay the requestId; whether either override was requested — never a request/response
+     * body, the operator or reason text, a hearing payload or a stored body.
      */
     private String toJson(final OperationsAction action, final Map<String, Object> fields) {
         final Map<String, Object> event = new LinkedHashMap<>();
         event.put(ACTION_FIELD, action.wireValue());
+        currentCallerId().ifPresent(callerId -> event.put(CALLER_ID_FIELD, callerId));
         event.putAll(fields);
         try {
             return objectMapper.writeValueAsString(event);
@@ -112,5 +120,22 @@ public final class OperationsAuditPublisher {
             throw new IllegalStateException("operations audit event fields not serialisable",
                     notSerialisable);
         }
+    }
+
+    /**
+     * The calling request's {@code CJSCPPUID} header: the identity the {@code cp-auth-rules-filter}
+     * authorisation chain already validated before this call was ever admitted. Empty off the
+     * request-handling thread (a unit test with no servlet request bound) or where the authorisation
+     * filter is off ({@code authz.http.enabled=false}, local and test profiles), in which case no
+     * caller id is recorded rather than a blank or placeholder one.
+     */
+    @SuppressWarnings("PMD.OnlyOneReturn")
+    private static Optional<String> currentCallerId() {
+        if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs)) {
+            return Optional.empty();
+        }
+        final HttpServletRequest request = attrs.getRequest();
+        final String header = request.getHeader(CALLER_ID_HEADER);
+        return header == null || header.isBlank() ? Optional.empty() : Optional.of(header);
     }
 }
