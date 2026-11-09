@@ -1088,7 +1088,7 @@ Assumptions.
   The runner of FR-004-053 MUST stay in the image as the backup and the scriptable route, under the
   same rules. While the installed Service Bus SDK has no delete-before-time operation it MUST refuse
   `unsupported-broker-operation`, removing nothing, and its refusal MUST point the operator to the
-  manual route. *(H42; §4.8 action 6; §9.4 step 6)*
+  manual route. *(H42)*
 
 **Close-expired-resend and shutdown**
 
@@ -1105,7 +1105,7 @@ Assumptions.
   resend-eligible (FR-004-023); its POST may have reached HMPPS, so the runbook tells the operator
   to confirm with HMPPS first. A late runner's completion of the closed row updates no row and is
   counted as a stale-runner rejection. Its HTTP exposure is part of O-1. *(H40; FR-004-024;
-  FR-004-049a; A2-51)*
+  FR-004-049a)*
 - **FR-004-060**: On shutdown the service MUST wait for resend-leg runs in progress, as it does for
   queue deliveries, up to the processing deadline, before it stops; a run still going at the
   deadline is logged at WARN and left to FR-004-059. *(H40)*
