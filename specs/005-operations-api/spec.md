@@ -21,7 +21,8 @@ only route back, because the rollback purges the queue and the dead-letter queue
 each checked and refused on its own; with the `allowTerminalSuccess` override it sends again a
 hearing already recorded `SENT` or `NOT_APPLICABLE` — a forced resend, a genuine duplicate at HMPPS
 because the results POST is not idempotent (H9 (c), H12, H16; rows A3-36, A3-56). The HTTP exposure
-of the other operator actions — list, pause and resume intake, submit-hearing, purge-queue, the
+of the other operator actions — list, pause and resume intake, submit-hearing, purge-queue,
+close-expired-resend (H40), the
 optional flag check and the recommended `dlq-completed` listing — is still open (O-1).
 
 This slice is the HTTP surface for those two actions and nothing behind it. The actions are slice
@@ -60,7 +61,8 @@ This slice adds no deviation (DV) row. The function app has no operator surface 
 
 - Q: Which operator actions does this slice put on HTTP? → A: Replay and resend-leg, the
   forced-resend override included, and nothing else. O-1 is still open for list, pause and resume
-  intake, submit-hearing, purge-queue, the optional flag check and the `dlq-completed` listing;
+  intake, submit-hearing, purge-queue, close-expired-resend (H40), the optional flag check and the
+  `dlq-completed` listing;
   each stays a command-line runner, and exposing one takes O-1 decided plus a constitution
   amendment (H9; rows A3-35, A3-36; §11.1 O-1; constitution Principle III).
 - Q: §4.1's identity table still calls the operations API "recommended, open". Is it in scope? →
@@ -441,9 +443,9 @@ an identically seeded store, and compare the reports ID for ID.
   first makes that ID's resend entry `request-claimed` (rows A2-70, A2-72).
 - **Two resend calls listing the same ID at once.** One takes the leg; the other's entry is
   `resend-in-progress` or `request-claimed`. There are never two POSTs for it (row A2-65).
-- **An expired `PENDING` resend row.** The design conflicts: reclaimed in place (§4.4 claim
-  contract (c)) or refused `resend-in-progress` (row A3-56) (DIGEST §16). The entry is whatever
-  slice 004 settles; the API adds nothing of its own.
+- **An expired `PENDING` resend row.** Settled by slice 004 (FR-004-024; H40): refused
+  `resend-in-progress`, live or expired, never reclaimed; the row is closed by
+  `close-expired-resend`, a command-line runner (FR-004-059). The API adds nothing of its own.
 - **`allowTerminalSuccess` with only `FAILED` IDs.** They proceed as ordinary resends: the
   override is used only by an ID whose latest row is `SENT` or `NOT_APPLICABLE` (004). The answer
   still says the override was requested.
@@ -490,7 +492,8 @@ an identically seeded store, and compare the reports ID for ID.
   `POST /operations/requests/{requestId}/replay` and `POST /operations/resend-leg`, fixed in the
   OpenAPI document (FR-005-035). *(H9; rows A3-35, A3-36; §4.8 actions 2 and 3)*
 - **FR-005-002**: No other §4.8 action — list requests, pause and resume intake, submit-hearing,
-  purge-queue, the optional flag check, the recommended `dlq-completed` listing — MUST be
+  purge-queue, close-expired-resend (H40), the optional flag check, the recommended
+  `dlq-completed` listing — MUST be
   reachable over HTTP. They stay command-line runners while O-1 is open, and exposing one needs
   O-1 decided and a constitution amendment, not a change to this spec. Nor MUST the rollback's
   close-in-flight step be reachable over HTTP: the design gives it no action at all.
@@ -896,7 +899,8 @@ an identically seeded store, and compare the reports ID for ID.
 - **006-production-readiness** (downstream): lists platform asks 12 and 14, the five gates, among
   its external preconditions — not a cutover precondition, since the runners serve without them —
   and its rollback runbook inputs send replay through the service's replay action, which this
-  slice exposes (§9.4 step 6a). The purge-queue count the rollback records may include replay
+  slice exposes (§9.4 step 6a). The purge count the rollback records (DevOps' record of the manual portal purge, H42) may include
+  replay
   commands enqueued while intake was paused (assumption 11).
 - **001-parity-kernel** and **003-body-retention**: none.
 
@@ -921,7 +925,8 @@ an identically seeded store, and compare the reports ID for ID.
 
 ## Out of Scope (this slice)
 
-- HTTP exposure of list, pause and resume intake, submit-hearing, purge-queue, the optional flag
+- HTTP exposure of list, pause and resume intake, submit-hearing, purge-queue,
+  close-expired-resend (H40), the optional flag
   check and the `dlq-completed` listing (O-1), and of the rollback's close-in-flight step, for which
   no action is designed (§9.4 step 4; DIGEST §16).
 - Any dead-letter-queue operation over HTTP — peeking, resubmitting or removing entries. A

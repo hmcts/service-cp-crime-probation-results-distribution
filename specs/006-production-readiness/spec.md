@@ -54,7 +54,7 @@ So every ordering rule prefers a known gap that can be repaired to a duplicate a
   counted daily. The thresholds are proposals, tuned after go-live (H34; A3-115; A3-116; R1-31).
 - Q: Does the leg-failed alert include `receiver-rejected`? Is a 2xx other than 200 alerted?
   → A: No to both. 400s are counted, and case-hearing 400s have a spike alert. 401s have their own
-  alert. A non-200 2xx goes to the daily report. `payload-changed` and `rolled-back` stay on the
+  alert (since 2026-11-09 with 403s, 404s and other 4xx refusals, H41). A non-200 2xx goes to the daily report. `payload-changed` and `rolled-back` stay on the
   leg-failed alert until Q28 is decided (A3-115; A3-116; Q28).
 - Q: Is deployed alerting a cutover precondition? → A: It is not a §9.2 row. Deployed alerting,
   which closes P36, is a post-soak acceptance criterion (§9.6 row 1). This spec adds no gate
@@ -135,6 +135,17 @@ are not being created). Slice 003 answers its open question 2 with them (003's A
   Applied in FR-006-014, assumptions 3 and 7, and Dependencies.
 - Q: Which App Insights resource does the service report to? → A: Not decided (Q29). The catalogue
   names it as an input of each rule. Applied in FR-006-053 and the open items.
+
+### Session 2026-11-09
+
+- Q: Should alert 6 page on a 403 or 404 from the gateway, not only a 401? → A: Yes. Alert 6 becomes
+  "Gateway refusing": `http` 401 or `4xx-other`, more than 3 in an hour, no longer a proposal; the
+  threshold is still tuned after go-live. A 403 or 404 is as silent a credential or route failure as
+  a 401. 400s stay counted, and only the case-hearing 400 spike pages (alert 8) (H41).
+- Q: Who purges the queue at rollback and roll-forward, and how? → A: DevOps, by hand, in the Azure
+  portal's Service Bus Explorer (Purge messages, active queue only, intake paused), recording the
+  count, the time, who ran it and the cut-off on the ticket. The `purge-queue` runner is the backup
+  (H42; 004's FR-004-061).
 
 ### Session 2026-11-02
 
@@ -310,7 +321,8 @@ appears.
 
 Eleven conditions page, because each needs someone to act: the dead-letter queue not empty; a leg
 parked, or a request not terminal, for over 30 minutes; a send still failing after its last
-delivery, or a rules exception; repeated 401s; a hearing sent on an assumed youth-switch value;
+delivery, or a rules exception; the gateway refusing the service (401s and other 4xx refusals); a
+hearing sent on an assumed youth-switch value;
 a send re-run after a crash; a body-maintenance failure; a spike in case-hearing 400s; Results
 unable to read its switch; and the legacy function app sending after cutover. Known lift-and-shift
 behaviour is counted on the dashboard and in the daily reconciliation, and pages no one.
@@ -335,8 +347,8 @@ it.
 3. **Given** case-hearing 400s at more than double the environment's normal daily level, **When**
    the day's count is evaluated, **Then** the spike alert pages. At or below that level nothing
    pages, and the count is still shown.
-4. **Given** more than three 401s in an hour, **When** the repeated-401 alert evaluates, **Then**
-   it pages.
+4. **Given** more than three 401s, 403s, 404s or other 4xx refusals (not 400, 408 or 429) in an
+   hour, **When** the gateway-refusing alert evaluates, **Then** it pages.
 5. **Given** a 2xx other than 200, or a 500 or 429 that is later recovered, **When** the alerts
    evaluate, **Then** nothing pages, and each is counted on the daily report.
 6. **Given** a resend that ends `FAILED(payload-changed)`, **When** the leg-failed alert
@@ -612,7 +624,7 @@ and check each item of §9.6 row 1 against its source.
 | 3 | Silent drop | `probation_oldest_non_terminal_age` | > 30 min | The oldest request that is not terminal: the silent-drop detector | §10.3; §10.1 |
 | 4 | Leg failed | `probation_leg_outcomes_total{status="FAILED", reason=~"gateway-transient\|payload-unavailable\|rules-exception\|payload-changed\|rolled-back"}`, every origin | Any | FR-006-016, FR-006-017 | H34; A3-115; Q28 |
 | 5 | Youth switch unreadable | rate of `probation_youth_switch_unreadable_total{cause, defaulted}` | Not zero for > 5 min | Each counted read is a hearing sent on an assumed switch value. Re-check the default against the live toggle (FR-006-033) | §10.3; H8; A3-27; A3-29 |
-| 6 | Repeated 401s | `probation_leg_outcomes_total{reason="receiver-rejected", http="401"}` | > 3 in an hour (proposal) | The gateway is refusing the service's credentials. A 401 is terminal at once | H34; A3-115 |
+| 6 | Gateway refusing | `probation_leg_outcomes_total{reason="receiver-rejected", http=~"401\|4xx-other"}` | > 3 in an hour | The gateway is refusing the service: its credentials (401), its key or a policy (403), or its route (404). Each is terminal at once, and the request is `COMPLETED`; once fixed, the affected legs are `FAILED` and resend-eligible | H34; A3-115; H41 |
 | 7 | Send re-run after a crash | `probation_crash_reruns_total` | Any increase | A possible duplicate at HMPPS: record the hearing for HMPPS | A3-115; A3-47 |
 | 8 | Case-hearing 400 spike | daily increase of `probation_leg_outcomes_total{reason="receiver-rejected", http="400", shape="case"}` | > 2 × the environment's normal daily level (proposal) | The daily count itself is counted, not paged (FR-006-022) | H34; A3-116 |
 | 9 | Body partition maintenance | `probation_body_default_partition_rows` (003's FR-003-022), `probation_body_partitions_ahead_months` (FR-003-031), `probation_body_maintenance_last_success_seconds` (FR-003-032) — all three read from the database at collection on every pod, `-1` on a failed read; `probation_body_maintenance_failures_total{step}` | DEFAULT partition not empty; any `create` or `drop` failure; fewer than 2 consecutive months ahead (H37); more than 48 h since the last success (H38); any pod reporting `-1`; or a body gauge with no sample in the window. Evaluated hourly over 2 h, each pod's latest sample first (proposals) | 003's runbook: for a DEFAULT spill, detach the DEFAULT partition, create the missing month, move its rows, re-attach; for partitions not being created, check the scheduler and the advisory lock, wait for the next run, or create the missing month by hand with V1's name and bounds; for `-1`, check the database connection. The ERROR lines give the cause (003's FR-003-017; FR-003-032 for a `state` or `read` failure), and the run lines show whether the job ran (FR-003-020, FR-003-030) | H20; A3-64; A3-118; H37; H38; 003's AS-15 |
@@ -625,14 +637,15 @@ and check each item of §9.6 row 1 against its source.
 - **FR-006-016**: The leg-failed alert MUST select `status="FAILED"` with `reason` in
   {`gateway-transient`, `payload-unavailable`, `rules-exception`, `payload-changed`,
   `rolled-back`}, and nothing else. `receiver-rejected` is outside it: 400s are counted, and 401s
-  have their own alert. `contract-invalid` is reserved and unused (H13). `payload-changed` and
+  and other 4xx refusals have their own alert (alert 6, H41). `contract-invalid` is reserved and unused (H13). `payload-changed` and
   `rolled-back` stay in the alert until Q28 is decided. *(H34; A3-115; Q28; H13)*
 - **FR-006-017**: The leg-failed alert's runbook entry MUST state that a `FAILED(gateway-transient)`
   after a 5xx, a 408 or a read timeout is outcome-unknown, because HMPPS may have accepted the
   hearing. Such a leg is confirmed with HMPPS before any re-send. *(H11; H15; A3-115; A3-117 (i);
   §9.4 step 7)*
 - **FR-006-018**: The thresholds the design marks as proposals MUST be parameters of their rules.
-  They are: more than three 401s in an hour; a day's case-hearing 400s above double the normal
+  They are: more than three 401s or other 4xx refusals in an hour (fixed by H41, still a
+  parameter); a day's case-hearing 400s above double the normal
   daily level; the 15-minute schedule of the legacy-app query; and alert 9's fewer than two months
   ahead, its 48 hours since the last success, and its hourly evaluation over 2 hours (A3-118, H37,
   H38). The normal daily level is set
@@ -827,7 +840,8 @@ and check each item of §9.6 row 1 against its source.
   - 5: Reconcile the period the service was live, from cutover to the start of the rollback
     window. The legacy app must show no HMPPS send or orchestration in that period.
   - 6: Purge the queue, recording the count removed and the cut-off. This is done only after the
-    reconciliation, and only while intake is paused.
+    reconciliation, and only while intake is paused. DevOps purge by hand in the Azure portal's
+    Service Bus Explorer, the active queue only; the `purge-queue` runner is the backup (H42).
   - 6a: Once the Results switch is on again, replay goes only through the service's replay action:
     the operations API (005), with its runner as the fallback. The dead-letter queue holds no copy.
   - 7: Repair only the hearings not known to be delivered (FR-006-041).
@@ -873,11 +887,13 @@ and check each item of §9.6 row 1 against its source.
   5. Reconcile the paused queue against T. Messages for shares before T reached neither path, and
      are repaired by a court re-share, not by the service. Messages for shares after T were handled
      by the function app, and are purged. Intake is not resumed. Then do planned steps 5–7.
-  6. Purge the queue, recording the count and the cut-off.
+  6. Purge the queue, recording the count and the cut-off: by DevOps in the Azure portal's
+     Service Bus Explorer, as planned step 6 (H42).
 
   *(H32; A3-113; A3-117 (iii); §9.4)*
 - **FR-006-043**: The roll-forward inputs MUST state the steps below, in this order, with intake
-  still paused: (1) purge-queue; (2) reconcile every message received since the recorded cut-off;
+  still paused: (1) purge the queue, by DevOps in the Azure portal's Service Bus Explorer as
+  planned step 6, with the `purge-queue` runner as the backup (H42); (2) reconcile every message received since the recorded cut-off;
   (3) run a full new cutover in a weekend window: the subscription off, then the Results flag on,
   then the 10-minute wait; (4) only then resume intake. *(A2-52; A3-117 (ii); §9.3)*
 - **FR-006-044**: The inputs MUST also state what a rollback does not bring back. Events filtered
@@ -891,8 +907,9 @@ and check each item of §9.6 row 1 against its source.
   reads the Results switch, and pause-intake is its only service-side stop. *(H22; H26; A3-92;
   Q15; constitution Principle IX)*
 - **FR-006-046**: Each service-side read-back that the inputs name MUST be an evidence query, or a
-  recorded output of the action (for example the purge's count and cut-off), and MUST be pinned by
-  a test. *(§9.4; §4.8 actions 4 and 6)*
+  recorded output of the action, and MUST be pinned by a test. A manual step's read-back — the
+  portal purge's count before and after and its cut-off (H42) — is the actor's own record on the
+  ticket, as for the DevOps switch steps. *(§9.4; §4.8 actions 4 and 6; H42)*
 
 **Decommissioning inputs**
 
@@ -1048,7 +1065,8 @@ and check each item of §9.6 row 1 against its source.
   (H38), and the failure counter — the run log lines (FR-003-020, FR-003-030), and the runbook for
   the DEFAULT partition. 003's open question 2 is answered (A3-118; its AS-15).
 - **004-recovery**: the command-line runners (FR-004-042, FR-004-043) for the actions the runbook
-  inputs use: pause and resume intake (FR-004-051), purge-queue (FR-004-053), replay (FR-004-014),
+  inputs use: pause and resume intake (FR-004-051), purge-queue as the backup to the manual portal
+  purge (FR-004-053, FR-004-061), replay (FR-004-014),
   submit-hearing (FR-004-054) and the request listing; replay of a request closed
   `FAILED(rolled-back)` (FR-004-048); the dead-letter runbook (FR-004-046); and the pinned
   `RequestIdRecipe` vector (FR-004-055). How an operator pause holds on every replica and across a

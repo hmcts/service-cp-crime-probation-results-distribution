@@ -60,13 +60,19 @@ provide the precise, testable contract for these operator behaviours.
 
 ## Clarifications
 
+### Session 2026-11-09
+
+- Q: How is an expired `PENDING` resend row recovered without the full rollback close-in-flight? → A: It is still never reclaimed (FR-004-024 option B stands). A single-row command, `close-expired-resend` (name proposed), closes that one row `FAILED(rolled-back)` with no intake pause; the operator then confirms with HMPPS and resends it (H40, FR-004-059).
+- Q: Does shutdown wait for a resend-leg run in progress? → A: Yes, as it does for a queue delivery, bounded by the processing deadline, so a rolling deploy does not leave a resend row stuck `PENDING` (H40, FR-004-060).
+- Q: How is the queue purged at rollback and roll-forward, given the Service Bus SDK has no delete-before-time operation? → A: By DevOps in the Azure portal's Service Bus Explorer (Purge messages, active queue only, intake paused). The `purge-queue` runner stays as the backup and the scriptable route, and is usable once the SDK can delete (H42, FR-004-061).
+
 ### Session 2026-10-26
 
 - Q: How does operator pause reach every replica and survive restart? → A: Persist it in `intake_control`; each pod reads it before starting consumption and reconciles on the store-probe interval. Only operator resume clears it; database recovery does not (option A, FR-004-052).
 
 - Q: Who executes rollback close-in-flight? → A: This service owns the `rollback-close-in-flight` CLI runner, refused `intake-not-paused` unless intake is paused by an operator; no HTTP exposure (option A, FR-004-049).
 
-- Q: Should resend-leg reclaim an expired `PENDING` resend row? → A: No. Refuse `resend-in-progress` for live or expired leases; never reclaim automatically (option B, FR-004-024). Recovery requires the guarded rollback close-in-flight procedure.
+- Q: Should resend-leg reclaim an expired `PENDING` resend row? → A: No. Refuse `resend-in-progress` for live or expired leases; never reclaim automatically (option B, FR-004-024). Recovery requires the guarded rollback close-in-flight procedure. *(Amended 2026-11-09, H40: `close-expired-resend` closes the one row instead, FR-004-059.)*
 
 ### Session 2026-10-21
 
@@ -166,7 +172,8 @@ provide the precise, testable contract for these operator behaviours.
   purge-queue, submit-hearing, the request listing and the `dlq-completed` listing (§4.8 actions 1
   and 4–6; A3-33), each as a command-line runner. Slice 002 hands it the operator pause,
   submit-hearing, purge-queue and the runners; slice 006's rollback inputs use them. The optional
-  flag check (action 7) is not built (H26; A3-92).
+  flag check (action 7) is not built (H26; A3-92). *(Amended 2026-11-09, H40: also
+  close-expired-resend, a command-line runner, FR-004-059.)*
 - Q: Where does submit-hearing read the hearing from? → A: From Redis only — the `EXT_` dated key,
   then the undated key — because the command's `sharedTime` must be the raw string the producer
   hashed, never parsed, re-rendered or read back from `shared_time`; with neither key present it is
@@ -502,8 +509,10 @@ the seeded state.
 
 When a rollback starts, the operator pauses intake — the service's only stop — so that nothing more
 is taken from the queue while the legacy function app sends again. Once the live period has been
-reconciled, they purge the paused queue and record how many messages went and up to when. Intake is
-resumed only as the last step of a new cutover.
+reconciled, the paused queue is purged and the count and the cut-off are recorded. Intake is
+resumed only as the last step of a new cutover. The purge itself is done by DevOps in the Azure
+portal's Service Bus Explorer; the `purge-queue` runner is the backup, usable once the Service Bus
+SDK can delete (H42, FR-004-061).
 
 **Why this priority**: Rollback steps 1 and 6, the urgent rollback and the roll-forward all depend
 on it (§9.4; H23; H32; A2-52), and resend-leg's refusal and purge-queue's permission both read the
@@ -512,7 +521,8 @@ pause. It is needed before go-live, but not for the first recoveries.
 **Independent Test**: With messages on the queue, pause intake and enqueue more; observe that no
 delivery is taken, `probation_intake_suspended{cause="operator"}` reads 1, resend-leg is refused
 `intake-paused` and purge-queue is allowed; purge; observe the count and the cut-off reported and
-the messages from before the cut-off gone; resume; observe intake taking deliveries again.
+the messages from before the cut-off gone (the runner once the Service Bus SDK can delete; until
+then the manual portal purge, FR-004-061); resume; observe intake taking deliveries again.
 Separately, run the close-in-flight statement of FR-004-049a over seeded in-flight rows and check
 its outcome; run it through the guarded CLI runner (FR-004-049), verifying that an unpaused
 intake refuses the operation without changing rows.
@@ -535,7 +545,7 @@ intake refuses the operation without changing rows.
 6. **Given** intake paused and messages on the queue, **When** the operator runs purge-queue,
    **Then** every message enqueued before its cut-off instant is removed, the dead-letter queue is
    untouched, and the report and its log line give the number removed and the cut-off; a message
-   enqueued after the cut-off stays, for the reconciliation that follows.
+   enqueued after the cut-off stays, for the reconciliation that follows. *(Once the Service Bus SDK can delete; until then the runner refuses `unsupported-broker-operation` and removes nothing, and the manual portal purge is used — FR-004-061, H42.)*
 7. **Given** a `RECEIVED` request with a `PENDING` attempt-1 row, a `RETRYING` request with a
    `PARKED` row, a `FAILED(leg-exhausted)` request with a `PENDING` resend row and a `COMPLETED`
    request with a `PENDING` resend row, **When** the close-in-flight statement runs over them
@@ -621,8 +631,9 @@ and its outcomes labelled `origin = queue`.
   counted; how to count it is open (A3-115).
 - **A resend runner that dies after committing its claim.** The `PENDING` resend row's lease
   expires. Resend-leg refuses `resend-in-progress` without reclaiming or sending; replays remain
-  refused or deferred until the guarded rollback close-in-flight procedure closes the row
-  (FR-004-024, FR-004-049/FR-004-049a).
+  refused or deferred until the row is closed — by `close-expired-resend` for that one row
+  (FR-004-059, H40), or by the guarded rollback close-in-flight procedure (FR-004-024,
+  FR-004-049/FR-004-049a).
 - **The store fails during a resend run.** The IDs already completed keep their outcomes; the IDs
   not reached are reported `not-run`; an ID claimed but not completed is left as a `PENDING` resend
   row, as above; the run's result is failed. A store that is down before the run starts fails it
@@ -794,7 +805,7 @@ Assumptions.
   startup as at least 1, the refusal naming the property. *(H16; A3-56; §8.1; DIGEST §12;
   Assumption 6)*
 - **FR-004-020**: Every action of this slice that takes arguments — replay, resend-leg,
-  submit-hearing and the request listing — MUST refuse incomplete or unreadable input whole, before
+  submit-hearing, close-expired-resend (FR-004-059) and the request listing — MUST refuse incomplete or unreadable input whole, before
   any store, cache or broker read and with nothing changed, and the refusal MUST NOT echo the text
   supplied: a missing or blank required argument, an operator or reason where the action takes one
   included, is `missing-argument`; an identifier that is not a UUID (the replay's `requestId`, an
@@ -825,8 +836,8 @@ Assumptions.
 - **FR-004-024**: When the leg's latest row is a `PENDING` resend row, resend-leg MUST
   refuse the ID `resend-in-progress` whether its lease is live or expired. It MUST NOT reclaim,
   rotate the claim or send again automatically. Expiry alone changes no row. A row left by a dead
-  runner requires operator recovery through the guarded rollback close-in-flight procedure
-  (FR-004-049/FR-004-049a); until it is closed, replay remains refused or deferred (FR-004-003,
+  runner requires operator recovery: `close-expired-resend` for that one row (FR-004-059, H40), or
+  the guarded rollback close-in-flight procedure (FR-004-049/FR-004-049a); until it is closed, replay remains refused or deferred (FR-004-003,
   FR-004-014). *(A3-56; §4.4 Selects row; clarification 2026-10-26, option B, resolves the conflict
   with claim contract (c), §4.5 and A2-72 for this feature)*
 - **FR-004-025**: For an eligible ID the run MUST insert, in the transaction that checked it, a new
@@ -945,7 +956,8 @@ Assumptions.
 
 - **FR-004-042**: The image MUST carry a command-line runner for each action of this slice — replay;
   resend-leg, with the forced-resend override and `allow-changed-payload`; pause intake; resume
-  intake; purge-queue; and submit-hearing — taking the same inputs as the action, applying exactly
+  intake; purge-queue (the backup route, FR-004-061); close-expired-resend (FR-004-059); and
+  submit-hearing — taking the same inputs as the action, applying exactly
   the same rules through the same application service, and giving the same outcomes, codes and
   report. For replay and resend-leg the runners are the fallback for slice 005's endpoints and the
   only operator surface until they are deployed; the other actions are runners only while O-1 is
@@ -1069,6 +1081,34 @@ Assumptions.
   untouched, and report, and write as one structured log line, the number removed and the cut-off
   instant. A message enqueued after the cut-off stays, for the reconciliation that follows.
   *(§4.8 action 6; R1-28b; §9.4 step 6; A2-52; Assumption 18)*
+- **FR-004-061**: The primary route for a rollback or roll-forward purge MUST be the manual one: DevOps
+  purge the `probation.requests` active queue in the Azure portal's Service Bus Explorer (Purge
+  messages), never the dead-letter queue, only while intake is paused, repeating until the active
+  count reads 0, and record the count before, the time, who ran it and the cut-off on the ticket.
+  The runner of FR-004-053 MUST stay in the image as the backup and the scriptable route, under the
+  same rules. While the installed Service Bus SDK has no delete-before-time operation it MUST refuse
+  `unsupported-broker-operation`, removing nothing, and its refusal MUST point the operator to the
+  manual route. *(H42)*
+
+**Close-expired-resend and shutdown**
+
+- **FR-004-059**: The service MUST provide `close-expired-resend` (name proposed), a command-line
+  runner taking one `requestId`, an operator and a reason (bounds as FR-004-020). In one
+  transaction, under the request-row then leg-row lock order, it MUST close the leg whose latest row
+  is a `PENDING` resend row (attempt ≥ 2, `attempt_origin = resend`) with an expired lease: the row
+  → `FAILED(rolled-back)`, its `note` `prev=PENDING/-` (replacing any earlier `prev=`), a fresh
+  `claim_token`, every outcome and evidence column preserved — the per-row transition of
+  FR-004-049a — and append the operator and the sanitised reason to `audit_note`. It MUST NOT need
+  intake paused and MUST NOT change `processed_request.status`. It MUST refuse `unknown-request`
+  (no request row), `not-eligible` (the leg's latest row is not a `PENDING` resend row) or
+  `resend-in-progress` (its lease is still live), changing nothing. The closed row is then
+  resend-eligible (FR-004-023); its POST may have reached HMPPS, so the runbook tells the operator
+  to confirm with HMPPS first. A late runner's completion of the closed row updates no row and is
+  counted as a stale-runner rejection. Its HTTP exposure is part of O-1. *(H40; FR-004-024;
+  FR-004-049a)*
+- **FR-004-060**: On shutdown the service MUST wait for resend-leg runs in progress, as it does for
+  queue deliveries, up to the processing deadline, before it stops; a run still going at the
+  deadline is logged at WARN and left to FR-004-059. *(H40)*
 
 **Submit-hearing**
 
@@ -1130,13 +1170,17 @@ Assumptions.
 - **Submit-hearing command**: a normal command built from the cached payload's raw strings, with the
   recipe's `requestId`, no `userId`, and the application properties `origin = SUPPORT`, operator,
   run id and reason.
-- **Purge record**: the number of messages a purge removed and its cut-off instant, reported and
+- **Purge record**: the number of messages a purge removed and its cut-off instant — for the manual
+  portal purge, DevOps' record on the ticket (FR-004-061); for the backup runner, reported and
   logged; nothing about it is stored.
 - **Outcome and refusal codes**: per ID, `unknown-request`, `not-eligible`, `resend-in-progress`,
-  `request-claimed` (the design's); `not-run`; for a whole run or an action, `intake-paused`,
-  `intake-not-paused`, `too-many-request-ids`, `store-unavailable`, `broker-unavailable`, and
+  `request-claimed` (the design's; close-expired-resend uses the first three, FR-004-059);
+  `not-run`; for a whole run or an action, `intake-paused`, `intake-not-paused`,
+  `too-many-request-ids`, `store-unavailable`, `broker-unavailable`,
+  `unsupported-broker-operation` (the backup purge runner, FR-004-061), and
   submit-hearing's `payload-unavailable` (the design's); for the input of every action that takes
-  arguments — replay, resend-leg, submit-hearing and the request listing — `missing-argument`,
+  arguments — replay, resend-leg, submit-hearing, close-expired-resend and the request listing —
+  `missing-argument`,
   `unreadable-argument` and `argument-too-long` (FR-004-020); and the outcomes `enqueued` and
   `no-op`. All are answer and report codes, never written to a row.
 - **Class-1 and class-2 `FAILED`**: class 1 (`receiver-rejected`, `rules-exception`; `contract-invalid`
@@ -1188,7 +1232,7 @@ Assumptions.
   including after a store outage and its recovery; after a resume, intake takes deliveries again.
 - **SC-004-015**: Purge-queue is refused in 100% of attempts while intake is running; while it is
   paused, it removes every message enqueued before its cut-off and none enqueued after, and reports
-  both the number removed and the cut-off.
+  both the number removed and the cut-off. *(Once the Service Bus SDK can delete; until then the runner refuses `unsupported-broker-operation` and removes nothing, and the manual portal purge is used — FR-004-061, H42.)*
 - **SC-004-016**: `RequestIdRecipe` reproduces the pinned vector exactly; every submit-hearing
   command's `requestId` equals the recipe over the payload's raw strings; and zero commands are built
   from the results query API.
@@ -1260,7 +1304,8 @@ Assumptions.
     removed and the cut-off instant" and has the roll-forward reconcile "every message received
     since the recorded cut-off" (A2-52), so the cut-off is the boundary: messages enqueued before it
     are removed, later ones stay for that reconciliation. Nothing about a purge is stored; the
-    operator records the report on the rollback ticket.
+    operator records the report on the rollback ticket — for the manual portal purge, DevOps record
+    the count, the time, who ran it and the cut-off (FR-004-061, H42).
 19. **Submit-hearing's refusal and run id.** The design refuses submit-hearing when the payload is
     absent from Redis. A cached payload that cannot be read, or that carries no `sharedTime`, cannot
     give a `requestId` either and is refused the same way, `payload-unavailable`. The run id is a new
@@ -1415,6 +1460,8 @@ UPDATE of a queue or replay row, FR-004-013; a late resend runner, FR-004-028), 
 | R1-31; §10.1; §10.2; §10.3 | One outcome metric labelled by origin and `forced`; alerts read all origins; log fields | FR-004-011, FR-004-017, FR-004-038–FR-004-040 |
 | §4.4 claim contract (b), (d), (e) | Resend claim committed before the POST; token-guarded completion | FR-004-025, FR-004-028 |
 | §4.4 claim contract (c) against A3-56 | An expired `PENDING` resend row — refuse without reclaim (clarification 2026-10-26) | FR-004-024 |
+| H40 | `close-expired-resend` closes one expired `PENDING` resend row; shutdown waits for resend runs | FR-004-059, FR-004-060 |
+| H42 | The manual portal purge is the primary route; the `purge-queue` runner is the backup | FR-004-061, FR-004-053 |
 | §4.4 Exposure row; §4.8 | Runners in the image, as the pod | FR-004-042–FR-004-045 |
 | §4.8 action 1 | The read-only request listing | FR-004-043 |
 | §4.8 runbook; "Resending a leg" | The dead-letter and resend runbook | FR-004-046, FR-004-047 |

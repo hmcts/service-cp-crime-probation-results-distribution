@@ -4,8 +4,9 @@ This service is a **message-driven pipeline**, not a REST application. There is 
 API. The HTTP surface is actuator plus the operations API under `/operations/**`, which is in scope
 for **replay** and **resend-leg** (the forced-resend override included), behind YOT's five
 deployment gates, with the command-line runners in the image as the fallback (H9; design §4.8). The
-other operator actions (list, pause and resume intake, submit-hearing, purge-queue, the optional
-flag check, the recommended `dlq-completed` listing) run as command-line runners; their HTTP
+other operator actions (list, pause and resume intake, submit-hearing, purge-queue,
+close-expired-resend (H40), the optional flag check, the recommended `dlq-completed` listing) run
+as command-line runners; their HTTP
 exposure is open (O-1). Everything below assumes that shape. Section references are to the design,
 rev 3.6 (decisions H1–H34) and H35 (2026-10-21); `doc/design/DIGEST.md` restates its rules with
 their row ids.
@@ -234,7 +235,8 @@ deployed environments.
   or `NOT_APPLICABLE` on a new `resend` attempt row with `override=force-resend`; the request stays
   `COMPLETED`; a genuine duplicate at HMPPS.
 - **Rollback constraints** (rows A2-40, A2-52, A3-117): resend-leg is refused while intake is
-  paused, and purge-queue is allowed only while it is paused. After a rollback intake stays paused
+  paused, and the queue is purged only while it is paused — by DevOps in the Azure portal's Service
+  Bus Explorer, with the `purge-queue` runner as the backup (H42). After a rollback intake stays paused
   until a full new cutover — purge, reconcile, cutover, then resume.
 
 ## Outbound Send (design §3.1, §4.4, §4.7)
@@ -309,7 +311,8 @@ The rules and what is sent are **lift-and-shift** (D1): ported verbatim, quirks 
   `probation_crash_reruns_total`.
 - **Alerts page only for genuine issues** (H34): DLQ not empty; a send parked, or a request
   non-terminal, over 30 minutes; a send still failing after its last delivery or on a resend
-  (`gateway-transient`, `payload-unavailable`), or a rules exception; repeated 401s; a hearing sent on
+  (`gateway-transient`, `payload-unavailable`), or a rules exception; the gateway refusing (401s and
+  other 4xx refusals, H41); a hearing sent on
   an assumed youth-switch value; a send re-run after a crash; body-retention failures; the legacy
   function app sending after cutover; and, results-side, failed reads of the Results switch.
   **Counted, not paged** (dashboard and daily reconciliation):
