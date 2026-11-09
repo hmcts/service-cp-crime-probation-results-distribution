@@ -213,8 +213,23 @@ Failure reasons:
 
 A `claimed-incomplete` ID, and a `PENDING` resend row that outlived its lease (a runner that died),
 is never reclaimed automatically. Until it is closed, `resend-leg` refuses it `resend-in-progress`
-and a replay of its request is refused or deferred. It is closed by the guarded rollback
-close-in-flight procedure:
+and a replay of its request is refused or deferred.
+
+Close the one row with `close-expired-resend` (H40; 004's FR-004-059; name proposed, not yet
+packaged in this build; its flags are proposed too). It needs no intake pause and changes no
+other row's status; it appends your name and reason to the request's audit note:
+
+1. Confirm with HMPPS whether the attempt's POST arrived. The row may hold no `body_digest`, even
+   though a body was sent.
+2. Run `java -jar app.jar close-expired-resend --request-id <id> --operator <your-name> --reason
+   "<why>"`. It is refused `resend-in-progress` while the row's lease is still live, and
+   `not-eligible` if the leg's latest row is not a `PENDING` resend row. It closes the row
+   `FAILED(rolled-back)` with `prev=PENDING/-` in `note` and a fresh claim token, so a late
+   runner's completion changes nothing.
+3. If HMPPS did not receive the attempt, resend it with `resend-leg`.
+
+Until `close-expired-resend` is packaged, or when a rollback is under way anyway, the row is closed
+by the guarded rollback close-in-flight procedure:
 
 1. Confirm with HMPPS whether the attempt's POST arrived. The row may hold no `body_digest`, even
    though a body was sent.

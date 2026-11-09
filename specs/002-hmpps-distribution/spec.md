@@ -1223,7 +1223,7 @@ section of `doc/design/DIGEST.md`. A bare "§n" is a section of design rev 3.6.
   | a leg parked for more than 30 min | `probation_oldest_parked_age` |
   | a request non-terminal for more than 30 min (silent drop) | `probation_oldest_non_terminal_age` |
   | a send still failing after its last delivery, or a rules exception | `probation_leg_outcomes_total{status="FAILED", reason=~"gateway-transient\|payload-unavailable\|rules-exception"}`; slice 004's `payload-changed` and `rolled-back` join it until Q28 is decided |
-  | repeated 401s | `probation_leg_outcomes_total{reason="receiver-rejected", http="401"}` |
+  | gateway refusing (H41; was "repeated 401s") | `probation_leg_outcomes_total{reason="receiver-rejected", http=~"401\|4xx-other"}` |
   | a hearing sent on an assumed switch value | the rate of `probation_youth_switch_unreadable_total` |
   | an expired-claim re-run of a `PENDING` attempt-1 row | `probation_crash_reruns_total` |
   | a spike in case-hearing 400s | the daily `probation_leg_outcomes_total{reason="receiver-rejected", http="400", shape="case"}` |
