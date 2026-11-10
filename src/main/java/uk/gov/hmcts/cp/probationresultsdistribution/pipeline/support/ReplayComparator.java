@@ -27,6 +27,7 @@ public final class ReplayComparator {
     private static final String DEFAULTED_INACTIVE = "UNREADABLE_DEFAULTED_INACTIVE";
     private static final String STATUS_FAILED = "FAILED";
     private static final String STATUS_PARKED = "PARKED";
+    private static final String STATUS_NOT_APPLICABLE = "NOT_APPLICABLE";
 
     private ReplayComparator() {
     }
@@ -111,6 +112,25 @@ public final class ReplayComparator {
         // parked or failed a hearing that SIT sent"), so it stays unpaired and blocking rather than
         // being waved through as a match.
         if (isUndelivered(ste.status())) {
+            return unpaired(id, HearingComparisonClass.UNPAIRED_SIT_ONLY, wholeExplanation,
+                    Optional.of(ste));
+        }
+
+        // A genuine NOT_APPLICABLE attempt (sjp-or-box-hearing, nothing-left-after-redaction) never
+        // serialises a body (H20; outbound_body has no row for it), so ste.body() is null here by
+        // construction — never an empty object a real diff could run against. It must never reach
+        // JsonParity.differencePaths, which assumes two real trees and NPEs on a null side (M14, PR
+        // #23 review). A share with no SIT body either is a genuine match: both sides legitimately
+        // sent nothing. One with a SIT body is the same "nothing reached HMPPS" divergence the
+        // FAILED/PARKED undelivered branch above already reports.
+        if (STATUS_NOT_APPLICABLE.equals(ste.status()) && ste.body() == null) {
+            if (sit.loggedBody().isEmpty() && sit.unusableReason().isEmpty()) {
+                return new HearingComparison(id.hearingId(), id.hearingDay(), id.sharedTime(),
+                        HearingComparisonClass.MATCH, List.of(), Optional.empty(), Optional.empty(),
+                        Optional.of(ste.status()), Optional.of(ste.payloadSource()),
+                        Optional.of(ste.youthSwitch()), Optional.of(ste.serviceVersion()),
+                        Optional.empty());
+            }
             return unpaired(id, HearingComparisonClass.UNPAIRED_SIT_ONLY, wholeExplanation,
                     Optional.of(ste));
         }
