@@ -30,6 +30,18 @@ public class StartupValidationConfig {
                     !environment.acceptsProfiles(Profiles.of("local", "test"));
             validator.validate(properties, requireSecrets);
             validator.validateNoForbiddenProperties(environment);
+            final String connectionString =
+                    environment.getProperty("distribution.servicebus.connection-string", "");
+            final String namespace = environment.getProperty("distribution.servicebus.namespace", "");
+            validator.validateServiceBusCredential(connectionString, namespace, requireSecrets);
+            validator.validateWorkloadIdentity(namespace, environment, requireSecrets);
+            validator.validateConcurrency(environment.getProperty(
+                    "distribution.servicebus.max-concurrent-calls", Integer.class, 2));
+            validator.validateRedisRequired(
+                    environment.getProperty("distribution.redis.host", "localhost"),
+                    environment.getProperty("distribution.redis.key", ""), requireSecrets);
+            validator.validateRedisPort(
+                    environment.getProperty("distribution.redis.port", Integer.class, 10_000));
             validator.validateGatewayKey(
                     environment.getProperty("distribution.gateway.subscription-key", ""),
                     requireSecrets);

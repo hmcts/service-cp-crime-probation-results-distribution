@@ -177,6 +177,137 @@ class StartupValidationTest {
                 .hasMessageContaining("distribution.resend.max-ids-per-run");
     }
 
+    @Test
+    @DisplayName("refuses a client attempt count below 1 for each of the gateway, results and "
+            + "users-groups clients")
+    void refuses_an_attempt_count_below_one() {
+        assertThatThrownBy(() -> validator.validate(
+                valid().withGateway(new Gateway(Duration.ofSeconds(5), Duration.ofSeconds(60), 0,
+                        Duration.ofMillis(500), Duration.ofSeconds(10))).build(), false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.gateway.max-attempts");
+        assertThatThrownBy(() -> validator.validate(
+                valid().withResults(new Results("http://results", "system-user",
+                        Duration.ofSeconds(5), Duration.ofSeconds(30), 0, Duration.ofMillis(500),
+                        Duration.ofSeconds(20))).build(), false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.results.max-attempts");
+        assertThatThrownBy(() -> validator.validate(
+                valid().withUsersgroups(new UsersGroups("http://usersgroups", "system-user",
+                        Duration.ofSeconds(2), Duration.ofSeconds(5), 0, Duration.ofSeconds(1)))
+                        .build(), false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.usersgroups.max-attempts");
+    }
+
+    @Test
+    @DisplayName("refuses neither or both Service Bus credentials, accepts exactly one")
+    void refuses_neither_or_both_service_bus_credentials() {
+        assertThatThrownBy(() -> validator.validateServiceBusCredential("", "", true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.servicebus.connection-string");
+        assertThatThrownBy(() -> validator.validateServiceBusCredential("Endpoint=sb://x",
+                "a-namespace", true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.servicebus.connection-string");
+        assertThatCode(() -> validator.validateServiceBusCredential("Endpoint=sb://x", "", true))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> validator.validateServiceBusCredential("", "a-namespace", true))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("accepts neither Service Bus credential only when secrets are not required (test "
+            + "profile)")
+    void accepts_no_service_bus_credential_when_secrets_not_required() {
+        assertThatCode(() -> validator.validateServiceBusCredential("", "", false))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> validator.validateServiceBusCredential("Endpoint=sb://x",
+                "a-namespace", false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.servicebus.connection-string");
+    }
+
+    @Test
+    @DisplayName("refuses the namespace credential outside local/test with any workload identity "
+            + "variable missing")
+    void refuses_namespace_credential_without_workload_identity() {
+        final MockEnvironment complete =
+                new MockEnvironment()
+                        .withProperty("AZURE_CLIENT_ID", "a-client-id")
+                        .withProperty("AZURE_TENANT_ID", "a-tenant-id")
+                        .withProperty("AZURE_FEDERATED_TOKEN_FILE", "/var/run/secrets/token");
+        assertThatCode(() -> validator.validateWorkloadIdentity("a-namespace", complete, true))
+                .doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> validator.validateWorkloadIdentity("a-namespace",
+                new MockEnvironment()
+                        .withProperty("AZURE_TENANT_ID", "a-tenant-id")
+                        .withProperty("AZURE_FEDERATED_TOKEN_FILE", "/var/run/secrets/token"), true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_CLIENT_ID");
+        assertThatThrownBy(() -> validator.validateWorkloadIdentity("a-namespace",
+                new MockEnvironment()
+                        .withProperty("AZURE_CLIENT_ID", "a-client-id")
+                        .withProperty("AZURE_FEDERATED_TOKEN_FILE", "/var/run/secrets/token"), true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_TENANT_ID");
+        assertThatThrownBy(() -> validator.validateWorkloadIdentity("a-namespace",
+                new MockEnvironment()
+                        .withProperty("AZURE_CLIENT_ID", "a-client-id")
+                        .withProperty("AZURE_TENANT_ID", "a-tenant-id"), true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AZURE_FEDERATED_TOKEN_FILE");
+    }
+
+    @Test
+    @DisplayName("never checks workload identity for the connection-string path or when secrets "
+            + "are not required")
+    void skips_workload_identity_check_when_not_applicable() {
+        final MockEnvironment empty =
+                new MockEnvironment();
+        assertThatCode(() -> validator.validateWorkloadIdentity("", empty, true))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> validator.validateWorkloadIdentity("a-namespace", empty, false))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("refuses a blank Redis host always, and a blank key only when secrets are required")
+    void refuses_a_blank_redis_host_or_key() {
+        assertThatThrownBy(() -> validator.validateRedisRequired("", "a-key", false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.redis.host");
+        assertThatThrownBy(() -> validator.validateRedisRequired("a-host", "", true))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.redis.key");
+        assertThatCode(() -> validator.validateRedisRequired("a-host", "", false))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> validator.validateRedisRequired("a-host", "a-key", true))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("refuses a Redis port outside the valid TCP range")
+    void refuses_an_invalid_redis_port() {
+        assertThatThrownBy(() -> validator.validateRedisPort(0))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.redis.port");
+        assertThatThrownBy(() -> validator.validateRedisPort(70_000))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.redis.port");
+        assertThatCode(() -> validator.validateRedisPort(10_000)).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("refuses a Service Bus concurrency below 1")
+    void refuses_a_concurrency_below_one() {
+        assertThatThrownBy(() -> validator.validateConcurrency(0))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("distribution.servicebus.max-concurrent-calls");
+        assertThatCode(() -> validator.validateConcurrency(2)).doesNotThrowAnyException();
+    }
+
     private static Builder valid() {
         return new Builder();
     }
