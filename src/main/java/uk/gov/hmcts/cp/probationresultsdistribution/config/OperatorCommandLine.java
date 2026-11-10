@@ -309,13 +309,15 @@ public final class OperatorCommandLine {
                     metrics);
             final BuildProperties build = buildProperties.getIfAvailable();
             final String serviceVersion = build == null ? "unknown" : build.getVersion();
+            final JdbcProcessedRequestRepository processedRequests = new JdbcProcessedRequestRepository(
+                    jdbc, tx, properties.claim().lease());
             final OutboundLogAdapter outboundLog = new OutboundLogAdapter(
-                    new OutboundMessageRepository(jdbc, tx, serviceVersion));
+                    new OutboundMessageRepository(jdbc, tx, serviceVersion, processedRequests));
             final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
                     outboundLog, YouthSwitchRecordedValue.fromValue(
                             properties.youthSwitch().defaultWhenUnreadable()), metrics);
-            final LegResender resender = new LegResender(gate, new JdbcProcessedRequestRepository(jdbc,
-                    tx, properties.claim().lease()), runner, metrics, properties.resend().maxIdsPerRun());
+            final LegResender resender = new LegResender(gate, processedRequests, runner, metrics,
+                    properties.resend().maxIdsPerRun());
             return new ResendLegRunner(resender);
         }
 

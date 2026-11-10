@@ -53,7 +53,7 @@ class RollbackFencingIT extends SchemaTestSupport {
         final TransactionTemplate tx =
                 new TransactionTemplate(new DataSourceTransactionManager(datasource()));
         requests = new JdbcProcessedRequestRepository(client, tx, Duration.ofSeconds(270));
-        outbound = new OutboundMessageRepository(client, tx, "test-service-1");
+        outbound = new OutboundMessageRepository(client, tx, "test-service-1", requests);
         fencing = new JdbcRollbackFencingRepository(client, tx);
     }
 

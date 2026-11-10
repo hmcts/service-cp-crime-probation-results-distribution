@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HexFormat;
@@ -37,8 +38,12 @@ class OutboundBodyDigestConsistencyIT extends SchemaTestSupport {
 
     private static final String SOURCE = "RESULTS";
 
-    private final OutboundMessageRepository repository = new OutboundMessageRepository(jdbc(),
-            new TransactionTemplate(new DataSourceTransactionManager(datasource())), "test-version");
+    private final TransactionTemplate tx =
+            new TransactionTemplate(new DataSourceTransactionManager(datasource()));
+    private final ProcessedRequestRepository processedRequests =
+            new JdbcProcessedRequestRepository(jdbc(), tx, Duration.ofMinutes(4).plusSeconds(30));
+    private final OutboundMessageRepository repository = new OutboundMessageRepository(jdbc(), tx,
+            "test-version", processedRequests);
 
     @Test
     @DisplayName("a first send stores the exact bytes digested")

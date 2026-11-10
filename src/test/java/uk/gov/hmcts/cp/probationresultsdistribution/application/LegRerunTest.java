@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HexFormat;
@@ -26,7 +27,9 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.SchemaTestSupport;
 
 /**
@@ -45,9 +48,12 @@ class LegRerunTest extends SchemaTestSupport {
     private static final String SENT_BODY = "{\"hearing\":{\"id\":\"x\"}}";
     private static final String PRIOR_DIGEST = sha256("prior-failed-body");
 
+    private final TransactionTemplate tx =
+            new TransactionTemplate(new DataSourceTransactionManager(datasource()));
+    private final ProcessedRequestRepository processedRequests =
+            new JdbcProcessedRequestRepository(jdbc(), tx, Duration.ofMinutes(4).plusSeconds(30));
     private final OutboundMessageRepository repository = new OutboundMessageRepository(
-            jdbc(), new TransactionTemplate(new DataSourceTransactionManager(datasource())),
-            "test-version");
+            jdbc(), tx, "test-version", processedRequests);
     private final OutboundLogAdapter adapter = new OutboundLogAdapter(repository);
 
     @Test

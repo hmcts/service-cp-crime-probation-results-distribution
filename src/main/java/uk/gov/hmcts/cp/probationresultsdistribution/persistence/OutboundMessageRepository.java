@@ -9,6 +9,8 @@ import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegOutcome;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
@@ -45,6 +47,7 @@ public final class OutboundMessageRepository {
     private final JdbcClient jdbc;
     private final TransactionTemplate transactionTemplate;
     private final String serviceVersion;
+    private final ProcessedRequestRepository processedRequests;
 
     /**
      * Creates the repository.
@@ -52,13 +55,20 @@ public final class OutboundMessageRepository {
      * @param jdbc                the JDBC client
      * @param transactionTemplate the transaction template binding the UPDATE and body write
      * @param serviceVersion      the build version written with every {@code body_digest} (H19)
+     * @param processedRequests   the request-level store the implied transition is applied through
+     *                            (review of PR #8): both repositories share the same transaction
+     *                            manager, so the call joins this write's own transaction rather than
+     *                            opening one of its own — keeping one copy of the request state
+     *                            machine instead of a second one reproduced here
      */
     public OutboundMessageRepository(final JdbcClient jdbc,
                                      final TransactionTemplate transactionTemplate,
-                                     final String serviceVersion) {
+                                     final String serviceVersion,
+                                     final ProcessedRequestRepository processedRequests) {
         this.jdbc = jdbc;
         this.transactionTemplate = transactionTemplate;
         this.serviceVersion = serviceVersion;
+        this.processedRequests = processedRequests;
     }
 
     /**
@@ -204,60 +214,26 @@ public final class OutboundMessageRepository {
 
     /**
      * Completes the request {@code both-legs-terminal} — or {@code recovered} whenever
-     * {@code audit_note} holds the replay marker, even though the caller's reason here is always
+     * {@code audit_note} holds the replay marker, even though the reason passed here is always
      * {@code both-legs-terminal} (FR-004-012): a replayed run's first delivery may park and a later
-     * redelivery settle it, so the marker, not which run settled it, decides.
+     * redelivery settle it, so the marker, not which run settled it, decides. Delegates to
+     * {@link ProcessedRequestRepository#markCompleted}, which applies that same marker rule, so the
+     * transition is written in one place (review of PR #8).
      */
     private boolean markRequestCompleted(final LegOutcome outcome, final RunClaim claim) {
-        final int rows = jdbc.sql("UPDATE processed_request SET status = 'COMPLETED', "
-                        + "completion_reason = CASE "
-                        + "WHEN audit_note LIKE '%REPLAYED_AFTER_FAILURE%' THEN 'recovered' "
-                        + "ELSE 'both-legs-terminal' END, "
-                        + "failure_reason = NULL, replayed_at = NULL, claim_owner = NULL, "
-                        + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
-                        + "WHERE source = :source AND request_id = :requestId "
-                        + "AND status IN ('RECEIVED', 'RETRYING') "
-                        + "AND claim_owner = :owner AND claim_token = :token")
-                .param(SOURCE, outcome.command().source())
-                .param(REQUEST_ID, outcome.command().requestId())
-                .param(OWNER, claim.owner().toString())
-                .param(TOKEN, claim.token())
-                .update();
-        return rows > 0;
+        return processedRequests.markCompleted(outcome.command().source(),
+                outcome.command().requestId(), claim, CompletionReason.BOTH_LEGS_TERMINAL);
     }
 
     private boolean markRequestRetrying(final LegOutcome outcome, final RunClaim claim) {
-        final int rows = jdbc.sql("UPDATE processed_request SET status = 'RETRYING', "
-                        + "failure_reason = NULL, claim_owner = NULL, claim_token = NULL, "
-                        + "claim_expires_at = NULL, updated_at = now() "
-                        + "WHERE source = :source AND request_id = :requestId "
-                        + "AND status IN ('RECEIVED', 'RETRYING') "
-                        + "AND claim_owner = :owner AND claim_token = :token")
-                .param(SOURCE, outcome.command().source())
-                .param(REQUEST_ID, outcome.command().requestId())
-                .param(OWNER, claim.owner().toString())
-                .param(TOKEN, claim.token())
-                .update();
-        return rows > 0;
+        return processedRequests.markRetrying(outcome.command().source(),
+                outcome.command().requestId(), claim);
     }
 
     private boolean markRequestFailedExhausted(final LegOutcome outcome, final RunClaim claim,
                                                final String deliveryMessageId) {
-        final int rows = jdbc.sql("UPDATE processed_request SET status = 'FAILED', "
-                        + "failure_reason = 'leg-exhausted', "
-                        + "exhausted_message_id = :exhaustedMessageId, "
-                        + "completion_reason = NULL, replayed_at = NULL, claim_owner = NULL, "
-                        + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
-                        + "WHERE source = :source AND request_id = :requestId "
-                        + "AND status IN ('RECEIVED', 'RETRYING') "
-                        + "AND claim_owner = :owner AND claim_token = :token")
-                .param("exhaustedMessageId", deliveryMessageId)
-                .param(SOURCE, outcome.command().source())
-                .param(REQUEST_ID, outcome.command().requestId())
-                .param(OWNER, claim.owner().toString())
-                .param(TOKEN, claim.token())
-                .update();
-        return rows > 0;
+        return processedRequests.markFailed(outcome.command().source(),
+                outcome.command().requestId(), claim, FailureReason.LEG_EXHAUSTED, deliveryMessageId);
     }
 
     /**

@@ -309,7 +309,7 @@ public class EndToEndTestSupport {
         final ProcessedRequestRepository processedRequests =
                 new JdbcProcessedRequestRepository(jdbc(), tx, Duration.ofMinutes(4).plusSeconds(30));
         final OutboundMessageRepository outboundMessages =
-                new OutboundMessageRepository(jdbc(), tx, "test-version");
+                new OutboundMessageRepository(jdbc(), tx, "test-version", processedRequests);
         final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
         final ChainedHearingPayloadSource payload = chainedPayloadSource();
         final MetricRegistry registry = new MetricRegistry(meters);
@@ -389,7 +389,8 @@ public class EndToEndTestSupport {
         final ProcessedRequestRepository processedRequests = new JdbcProcessedRequestRepository(
                 JdbcClient.create(store), tx, Duration.ofMinutes(4).plusSeconds(30));
         final OutboundMessageRepository outboundMessages =
-                new OutboundMessageRepository(JdbcClient.create(store), tx, "test-version");
+                new OutboundMessageRepository(JdbcClient.create(store), tx, "test-version",
+                        processedRequests);
         final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
         final ChainedHearingPayloadSource payload = chainedPayloadSource();
         final MetricRegistry registry = new MetricRegistry(meters);

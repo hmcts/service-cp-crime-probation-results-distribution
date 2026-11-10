@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HexFormat;
@@ -31,9 +32,12 @@ class OutboundLogAdapterIT extends SchemaTestSupport {
     private static final String SOURCE = "RESULTS";
     private static final String BODY = "{\"hearing\":{\"id\":\"x\"}}";
 
+    private final TransactionTemplate tx =
+            new TransactionTemplate(new DataSourceTransactionManager(datasource()));
+    private final ProcessedRequestRepository processedRequests =
+            new JdbcProcessedRequestRepository(jdbc(), tx, Duration.ofMinutes(4).plusSeconds(30));
     private final OutboundMessageRepository repository = new OutboundMessageRepository(
-            jdbc(), new TransactionTemplate(new DataSourceTransactionManager(datasource())),
-            "test-version");
+            jdbc(), tx, "test-version", processedRequests);
     private final OutboundLogAdapter adapter = new OutboundLogAdapter(repository);
 
     @Test

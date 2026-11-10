@@ -82,10 +82,14 @@ public class ServiceBusConsumerConfig {
      * while the database is down (review of PR #8): {@code FlywayAutoConfiguration} forces a
      * connection before refresh ever completes, even though the datasource pool itself initialises
      * lazily ({@code spring.datasource.hikari.initialization-fail-timeout: -1}) for exactly the
-     * opposite reason. With this no-op in place the {@code Flyway} bean is still built — the
-     * migrations are still validated against the classpath — but nothing connects until
+     * opposite reason. With this no-op in place the {@code Flyway} bean is still built from the
+     * classpath migrations, but nothing connects, validates or applies them until
      * {@link uk.gov.hmcts.cp.probationresultsdistribution.inbound.ConsumerLifecycleController
-     * #migrateOnce()} runs it, on the first successful store probe, before intake starts.
+     * #migrateOnce()} runs it, on the first successful store probe, before intake starts (review of
+     * PR #8). Until that first probe succeeds — most visibly against a brand-new, unmigrated
+     * database — anything else that queries the schema (the 30-second {@link AgeGaugeRefresher},
+     * an operations API call) fails and logs its own error; that is expected noise during the
+     * window before the first successful probe, not a regression, and clears once migration runs.
      */
     /* default */ @Bean
     FlywayMigrationStrategy deferredFlywayMigrationStrategy() {
@@ -109,9 +113,10 @@ public class ServiceBusConsumerConfig {
     /* default */ @Bean
     OutboundMessageRepository outboundMessageRepository(final JdbcClient jdbc,
             final TransactionTemplate transactionTemplate,
-            final ObjectProvider<BuildProperties> buildProperties) {
+            final ObjectProvider<BuildProperties> buildProperties,
+            final ProcessedRequestRepository processedRequests) {
         return new OutboundMessageRepository(jdbc, transactionTemplate,
-                serviceVersion(buildProperties));
+                serviceVersion(buildProperties), processedRequests);
     }
 
     /* default */ @Bean

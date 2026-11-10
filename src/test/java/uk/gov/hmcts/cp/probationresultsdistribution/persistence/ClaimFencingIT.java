@@ -42,7 +42,7 @@ class ClaimFencingIT extends SchemaTestSupport {
         final TransactionTemplate tx =
                 new TransactionTemplate(new DataSourceTransactionManager(datasource()));
         requests = new JdbcProcessedRequestRepository(client, tx, Duration.ofSeconds(270));
-        outbound = new OutboundMessageRepository(client, tx, "test-service-1");
+        outbound = new OutboundMessageRepository(client, tx, "test-service-1", requests);
         command = new DistributionCommand(
                 "RESULTS", UUID.randomUUID(), UUID.randomUUID(), LocalDate.parse("2026-08-19"),
                 Instant.parse("2026-08-19T16:42:07.512Z"), "Hearing_Resulted", Optional.empty());
