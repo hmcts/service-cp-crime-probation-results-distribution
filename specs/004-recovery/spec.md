@@ -60,6 +60,10 @@ provide the precise, testable contract for these operator behaviours.
 
 ## Clarifications
 
+### Session 2026-11-10
+
+- Q: When does a command-line runner's gate count intake as paused, given a consumer pod can still be mid-POST after `intake_control` says paused? → A: Only once `paused_at` is at least the store probe interval plus the drain timeout (the processing deadline) in the past. Until then `rollback-close-in-flight` and `purge-queue` refuse `intake-not-paused`, and the operator re-runs them; the runbook also waits for every replica's operator-pause gauge to read 1 (H43, FR-004-049, FR-004-053).
+
 ### Session 2026-11-09
 
 - Q: How is an expired `PENDING` resend row recovered without the full rollback close-in-flight? → A: It is still never reclaimed (FR-004-024 option B stands). A single-row command, `close-expired-resend` (name proposed), closes that one row `FAILED(rolled-back)` with no intake pause; the operator then confirms with HMPPS and resends it (H40, FR-004-059).
@@ -1014,7 +1018,10 @@ Assumptions.
 - **FR-004-049**: The rollback's close-in-flight transition (§9.4 step 4; its statement is
   FR-004-049a) MUST be executable by an operator through this service's
   `rollback-close-in-flight` command-line runner. It MUST refuse `intake-not-paused`, changing
-  nothing, unless intake is paused by an operator. Once admitted it MUST execute FR-004-049a
+  nothing, unless intake is paused by an operator and the pause has had time to drain: `paused_at`
+  is at least `distribution.store.probe-interval` plus the drain timeout (the processing deadline)
+  in the past, so no consumer pod can still be running a delivery it started before the pause
+  (H43). Once admitted it MUST execute FR-004-049a
   through the service's application action and report its result. It MUST NOT be exposed over
   HTTP. *(§9.4 step 4; A2-51; A2-43; clarification 2026-10-26, option A)*
 - **FR-004-049a**: The close-in-flight statement of rollback step 4 MUST close every leg row that
@@ -1076,7 +1083,7 @@ Assumptions.
 **Purge-queue**
 
 - **FR-004-053**: Purge-queue MUST be refused `intake-not-paused`, removing nothing, unless intake is
-  paused by an operator. While intake is paused it MUST remove the messages on `probation.requests`
+  paused by an operator and the pause has had time to drain, by the same rule as FR-004-049 (H43). While intake is paused it MUST remove the messages on `probation.requests`
   enqueued before its cut-off instant — the instant it starts — leave the dead-letter queue
   untouched, and report, and write as one structured log line, the number removed and the cut-off
   instant. A message enqueued after the cut-off stays, for the reconciliation that follows.

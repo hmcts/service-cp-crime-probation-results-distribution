@@ -835,8 +835,9 @@ and check each item of §9.6 row 1 against its source.
     secondary check, for the UI only, the users-groups permission shows inactive.
   - 2a: Restore exactly the filter recorded before cutover.
   - 3: Record the cut-off instant.
-  - 4: Run `rollback-close-in-flight`, closing the in-flight rows `FAILED(rolled-back)`, one
-    transaction per row, fencing late runners (FR-006-040).
+  - 4: First wait until every running replica reports `probation_intake_suspended{cause="operator"} = 1`: a pod sets it only once its
+    in-flight runs have drained (H43). Then run `rollback-close-in-flight`, closing the in-flight
+    rows `FAILED(rolled-back)`, one transaction per row, fencing late runners (FR-006-040).
   - 5: Reconcile the period the service was live, from cutover to the start of the rollback
     window. The legacy app must show no HMPPS send or orchestration in that period.
   - 6: Purge the queue, recording the count removed and the cut-off. This is done only after the

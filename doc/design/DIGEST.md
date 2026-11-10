@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Baseline | Design rev 3.6 (draft, 2026-10-20), decisions H1–H42 (H35 decided 2026-10-21; H36–H38 and rows A3-118, A3-119 on 2026-10-23; H39 on 2026-10-30; H40–H42 on 2026-11-09). Frozen for this repo until a later amendment. |
+| Baseline | Design rev 3.6 (draft, 2026-10-20), decisions H1–H43 (H35 decided 2026-10-21; H36–H38 and rows A3-118, A3-119 on 2026-10-23; H39 on 2026-10-30; H40–H42 on 2026-11-09; H43 on 2026-11-10). Frozen for this repo until a later amendment. |
 | Source of truth | [Probation Results Distribution Service](https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service) (Confluence) |
 | How to use | Rules only; the reasoning is on Confluence. Where this digest differs from the design, the design wins. A Confluence section that still predates a rev 3.6 decision (H1–H34) or H35 does not override that decision: the decision applies, and the difference is raised with the design owner as an open issue (constitution, Governance). |
 | Tags | Ids from the design record: H-n, D-n decisions; A2-n, A3-n, R1-n, R2-n, Q-n, O-n design rows; DV-n deviations; P-n legacy defects; R0–R12 HMPPS rules; §n and App. A/B are sections of design rev 3.6. The Confluence page states the same design in plain English, without ids. |
@@ -43,7 +43,7 @@
 - Reused from the informant parity pack: the `recorded/` layout with pinned digests, `comparator-vectors/vectors.json`, `JsonParity`, `ParityCase`, and `RegisteredFieldDeviations` keyed on `doc/DEVIATIONS.md` (§6.1).
 - Before cutover: one week of SIT events is replayed into STE against a stub gateway. STE's `outbound_body` is compared hearing by hearing with SIT's logged bodies; any unexplained difference blocks cutover (A3-68, §6.5).
 
-## 3. Decisions H1–H42
+## 3. Decisions H1–H43
 
 | Id | Rule |
 |---|---|
@@ -89,6 +89,7 @@
 | H40 | An expired `PENDING` resend row is never reclaimed automatically: resend-leg refuses it `resend-in-progress`, live or expired (FR-004-024 option B stands; resolves the §16 conflict below, where the digest both reclaimed and refused such a row). An operator closes it with a single-row command, `close-expired-resend` *(proposed)*, taking a `requestId`, an operator and a reason: the same per-row transition as rollback step 4 — the row → `FAILED(rolled-back)`, `note` `prev=PENDING/-`, a fresh `claim_token` — with no intake pause needed. It is refused `unknown-request`, `not-eligible` (the leg's latest row is not a `PENDING` resend row) or `resend-in-progress` (its lease is still live); the reason (sanitised, ≤ 200 chars) is appended to `audit_note`. A command-line runner, its HTTP exposure joining O-1. The closed row is resend-eligible; its POST may have reached HMPPS, so the operator confirms with HMPPS before resending. Shutdown also waits for resend-leg runs in progress, not only queue deliveries, bounded by the processing deadline (decided 2026-11-09). |
 | H41 | Alert 6 "Repeated 401s" becomes "Gateway refusing": `probation_leg_outcomes_total{reason="receiver-rejected", http=~"401\|4xx-other"}` > 3 in an hour, no longer a proposal (the threshold is still tuned after go-live, H34). A 403 or 404 from the gateway is as silent a credential or route failure as a 401. 400s stay counted, and only the case-hearing 400 spike pages (alert 8; H33) (decided 2026-11-09). |
 | H42 | The rollback and roll-forward queue purge is done by hand in the Azure portal, by DevOps: the queue's Service Bus Explorer, Purge messages, on the active queue only (never the dead-letter queue), with intake paused, repeated until the active count reads 0; the count before, the time, who ran it and the cut-off are recorded on the ticket. The `purge-queue` runner (action 6) stays in the image as the backup and the scriptable route: the installed Service Bus SDK has no delete-before-time operation, so until it has one the runner refuses `unsupported-broker-operation` and removes nothing (decided 2026-11-09). |
+| H43 | A command-line runner's pause gate waits for the drain. A consumer pod confirms an operator pause, and sets `probation_intake_suspended{cause="operator"}` to 1, only once its in-flight runs have drained, but a runner in its own process cannot see that. So `rollback-close-in-flight` and `purge-queue` count intake as paused only once `intake_control.paused_at` is at least the store probe interval plus the drain timeout (the processing deadline) in the past, and refuse `intake-not-paused` until then. Rollback step 4 also waits until every running replica's gauge reads 1. Resend-leg's refusal while paused stays on the raw row (decided 2026-11-10). |
 
 **Other decisions in force**
 - D1: lift and shift. Rules and payload are copied verbatim; delivery and reliability defects are fixed by construction, each as a numbered DV with its own test.
