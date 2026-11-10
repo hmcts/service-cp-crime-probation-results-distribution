@@ -32,11 +32,15 @@ public final class SupportLookupRepository {
     }
 
     /**
-     * Looks a hearing's HMPPS leg up by hearing id and hearing day.
+     * Looks a hearing's HMPPS leg up by hearing id and hearing day, answering with its latest share
+     * when the hearing was re-shared that day (S10 review of PR #8/#23): {@code (hearing_id,
+     * hearing_day)} is not unique on {@code processed_request}, so without the ordering and limit
+     * below more than one row would reach {@code optional()}, which throws rather than answering.
      *
      * @param hearingId  the hearing id
      * @param hearingDay the hearing day
-     * @return the request, its latest HMPPS attempt and any stored body; empty when none matches
+     * @return the latest share's request, its latest HMPPS attempt and any stored body; empty when
+     *     none matches
      */
     public Optional<SupportLookupResult> lookup(final UUID hearingId, final LocalDate hearingDay) {
         return jdbc.sql("SELECT pr.source, pr.request_id, pr.status AS request_status, "
@@ -47,7 +51,8 @@ public final class SupportLookupRepository {
                         + "JOIN outbound_message_latest oml ON oml.source = pr.source "
                         + "AND oml.request_id = pr.request_id "
                         + "LEFT JOIN outbound_body ob ON ob.outbound_message_id = oml.id "
-                        + "WHERE pr.hearing_id = :hearingId AND pr.hearing_day = :hearingDay")
+                        + "WHERE pr.hearing_id = :hearingId AND pr.hearing_day = :hearingDay "
+                        + "ORDER BY pr.shared_time DESC, pr.updated_at DESC LIMIT 1")
                 .param("hearingId", hearingId)
                 .param("hearingDay", hearingDay)
                 .query((rs, rowNum) -> map(rs))
