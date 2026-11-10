@@ -5,6 +5,7 @@ import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -191,6 +192,84 @@ class ConsumerLifecycleControllerTest {
         }
     }
 
+    @Nested
+    @DisplayName("when an operator pause is requested while a delivery is in flight")
+    class OperatorPauseWithRunInFlight {
+
+        @Test
+        @DisplayName("confirms the operator pause only after the in-flight delivery drains, not "
+                + "when the pause request is first read (M3)")
+        void confirms_paused_only_after_the_in_flight_delivery_drains() throws InterruptedException {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicBoolean paused = new AtomicBoolean(false);
+            when(intakeControl.pausedByOperator()).thenAnswer(invocation -> paused.get());
+            final AtomicInteger inFlight = new AtomicInteger();
+            controller = newController(inFlight, Duration.ofSeconds(5L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            inFlight.incrementAndGet();
+            paused.set(true);
+
+            // Several probe ticks (PROBE_INTERVAL = 20ms) go by: the request drives processor.stop(),
+            // but must never confirm pausedByOperator() - or its gauge - while the delivery this pod
+            // started is still running, since resend-leg, purge-queue and rollback-close-in-flight
+            // all gate on exactly that flag.
+            Thread.sleep(200L);
+            assertThat(controller.pausedByOperator()).isFalse();
+            assertThat(gauge("probation_intake_suspended", "operator")).isEqualTo(0.0d);
+
+            inFlight.decrementAndGet();
+
+            awaitUntil(controller::pausedByOperator);
+            assertThat(gauge("probation_intake_suspended", "operator")).isEqualTo(1.0d);
+        }
+
+        @Test
+        @DisplayName("confirms the operator pause after the drain timeout rather than waiting for "
+                + "ever (M3)")
+        void confirms_paused_after_the_drain_timeout() {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicBoolean paused = new AtomicBoolean(false);
+            when(intakeControl.pausedByOperator()).thenAnswer(invocation -> paused.get());
+            final AtomicInteger inFlight = new AtomicInteger(1);
+            final Duration drainTimeout = Duration.ofMillis(200L);
+            controller = newController(inFlight, drainTimeout);
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            final long startedAt = System.nanoTime();
+            paused.set(true);
+
+            awaitUntil(controller::pausedByOperator);
+            final Duration elapsed = Duration.ofNanos(System.nanoTime() - startedAt);
+
+            assertThat(elapsed).isGreaterThanOrEqualTo(drainTimeout);
+        }
+    }
+
+    @Nested
+    @DisplayName("when an operator pause is requested with nothing consuming")
+    class OperatorPauseWithNothingRunning {
+
+        @Test
+        @DisplayName("confirms the pause immediately: there is no delivery to race (M3)")
+        void confirms_paused_immediately_when_never_started() {
+            when(intakeControl.pausedByOperator()).thenReturn(true);
+            controller = newController();
+
+            controller.start();
+
+            awaitUntil(controller::pausedByOperator);
+            assertThat(gauge("probation_intake_suspended", "operator")).isEqualTo(1.0d);
+            verify(processor, never()).stop();
+        }
+    }
+
     private ConsumerLifecycleController newController() {
         return newController(new AtomicInteger(), Duration.ofSeconds(5L));
     }
@@ -202,7 +281,11 @@ class ConsumerLifecycleControllerTest {
     }
 
     private double gauge(final String name) {
-        final Gauge found = meter.find(name).tag("cause", "database").gauge();
+        return gauge(name, "database");
+    }
+
+    private double gauge(final String name, final String cause) {
+        final Gauge found = meter.find(name).tag("cause", cause).gauge();
         return found == null ? Double.NaN : found.value();
     }
 

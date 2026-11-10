@@ -72,14 +72,15 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     private volatile ScheduledFuture<?> probeSchedule;
     private volatile boolean gatedStartCompleted;
     private volatile boolean operatorPaused;
+    private volatile boolean requestedPause;
 
     /**
      * Creates the controller over everything a gated start needs.
      *
      * @param processor     the client it owns and is the only thing to start
      * @param storeProbe    the availability question the gated start waits on
-     * @param intakeControl the persisted operator-pause record (slice 004, provisional
-     *                      FR-004-052), reconciled into {@link #operatorPaused} on every probe
+     * @param intakeControl the persisted operator-pause record (slice 004, FR-004-052), reconciled
+     *                      on every probe
      * @param flyway        the deferred migration, run once before intake starts
      * @param metrics       the instrument surface suspensions are counted and gauged on
      * @param probeInterval how often the store is asked, driving the start and the resume
@@ -150,8 +151,9 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
 
     /**
      * Blocks until no delivery is still running, or until {@link #drainTimeout} elapses, whichever
-     * comes first. {@link #shutdownIntake()} has already stopped the processor by the time this runs,
-     * so no further delivery starts while this waits.
+     * comes first. Both callers — {@link #shutdownIntake()} and {@link #stopForOperatorPause()} —
+     * have already stopped the processor by the time this runs, so no further delivery starts while
+     * this waits.
      */
     private void awaitInFlightRunsToDrain() {
         final long deadline = System.nanoTime() + drainTimeout.toNanos();
@@ -165,8 +167,8 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
         }
         final int stillRunning = inFlightRuns.get();
         if (stillRunning > 0) {
-            LOG.warn("shutting down with {} delivery(ies) still in flight after waiting {}; their "
-                    + "lock will expire and the broker will redeliver", stillRunning, drainTimeout);
+            LOG.warn("{} delivery(ies) still in flight after waiting {}; their lock will expire and "
+                    + "the broker will redeliver", stillRunning, drainTimeout);
         }
     }
 
@@ -234,10 +236,15 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     }
 
     /**
-     * The reconciled, in-memory operator-pause flag (slice 004, provisional FR-004-052). Read by
-     * resend-leg and purge-queue (research.md Decision 3) rather than asking the store afresh.
+     * The confirmed operator-pause flag (slice 004, FR-004-052): {@code true} only once the
+     * processor has actually stopped and any run it had in flight has drained — or immediately, when
+     * nothing was consuming to begin with — never merely because the operator's pause request has
+     * been read off {@code intake_control} (review of PR #8/#23, M3). Read by resend-leg,
+     * purge-queue and rollback-close-in-flight (research.md Decisions 2, 3) rather than asking the
+     * store afresh, so none of them can proceed while a send this pod is still running could race
+     * their work.
      *
-     * @return {@code true} while intake is paused by an operator, as of the last reconciliation
+     * @return {@code true} while intake is confirmed paused by an operator
      */
     @Override
     public boolean pausedByOperator() {
@@ -245,18 +252,31 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     }
 
     /**
-     * Reads {@code intake_control.paused_by_operator} and reconciles the in-memory flag and the
-     * {@code cause="operator"} gauge to it (research.md Decision 3). Run on every probe, before the
-     * store-outage decision, so a pod that starts (or restarts) with the row already paused never
-     * reaches {@link #resume()} on its first tick.
+     * Reads {@code intake_control.paused_by_operator} into {@link #requestedPause}, the signal
+     * {@link #probe()} dispatches on. {@link #operatorPaused} (and its gauge) is confirmed here,
+     * immediately, only when nothing could possibly be mid-delivery: unpausing (always safe to
+     * report at once), or a pause requested while intake was not {@code RUNNING}/{@code SUSPENDING}
+     * — including a pod that starts (or restarts) with the row already paused, which never reaches
+     * {@link #resume()} on its first tick and so never runs a delivery to race. A pause requested
+     * while {@code RUNNING} or {@code SUSPENDING} is left to {@link #stopForOperatorPause()}, which
+     * confirms it only once the processor has stopped and {@link #inFlightRuns} has drained (M3).
      */
     private void reconcileOperatorPause() {
         final boolean paused = intakeControl.pausedByOperator();
-        final boolean changed = paused != operatorPaused;
-        operatorPaused = paused;
-        metrics.recordOperatorPause(paused);
+        final boolean changed = paused != requestedPause;
+        requestedPause = paused;
+        if (!paused || (state.get() != State.RUNNING && state.get() != State.SUSPENDING)) {
+            setOperatorPaused(paused);
+        }
         if (changed) {
-            LOG.info("intake operator-pause reconciled to {}", paused);
+            LOG.info("intake operator-pause requested to {}", paused);
+        }
+    }
+
+    private void setOperatorPaused(final boolean paused) {
+        if (paused != operatorPaused) {
+            operatorPaused = paused;
+            metrics.recordOperatorPause(paused);
         }
     }
 
@@ -279,7 +299,7 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
             // with the row already paused must never reach resume() on its first tick, whatever the
             // store answers (research.md Decision 3; provisional FR-004-052).
             reconcileOperatorPause();
-            if (operatorPaused) {
+            if (requestedPause) {
                 suspendForOperatorPause();
             } else if (state.get() != State.RUNNING && !closing() && storeProbe.available()) {
                 resume();
@@ -292,7 +312,7 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
 
     private synchronized void resume() {
         final State from = state.get();
-        if (from != State.RUNNING && !terminal(from) && !operatorPaused) {
+        if (from != State.RUNNING && !terminal(from) && !requestedPause) {
             migrateOnce();
             if (state.compareAndSet(from, State.RUNNING)) {
                 startConsuming(from);
@@ -330,7 +350,14 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
             return;
         }
         processorRunning = false;
+        // The SDK's own stop() does not wait for an in-flight delivery to finish, so a POST could
+        // still be going out here. Blocking this transition tick on the drain (bounded at
+        // drainTimeout, the same wait stop() itself uses) is what keeps resend-leg, purge-queue and
+        // rollback-close-in-flight from proceeding against a run that has not actually finished
+        // (review of PR #8/#23, M3): none of them sees pausedByOperator() = true until this returns.
+        awaitInFlightRunsToDrain();
         if (state.compareAndSet(State.SUSPENDING, State.SUSPENDED)) {
+            setOperatorPaused(true);
             LOG.info("intake suspended by an operator pause; queue={}", processor.getQueueName());
         }
     }
