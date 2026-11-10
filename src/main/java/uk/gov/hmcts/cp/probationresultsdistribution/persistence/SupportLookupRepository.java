@@ -5,6 +5,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -32,17 +33,20 @@ public final class SupportLookupRepository {
     }
 
     /**
-     * Looks a hearing's HMPPS leg up by hearing id and hearing day, answering with its latest share
-     * when the hearing was re-shared that day (S10 review of PR #8/#23): {@code (hearing_id,
-     * hearing_day)} is not unique on {@code processed_request}, so without the ordering and limit
-     * below more than one row would reach {@code optional()}, which throws rather than answering.
+     * Looks a hearing's HMPPS leg up by hearing id and hearing day, newest share first, each with
+     * its own latest HMPPS attempt and any stored body (S10 review of PR #8/#23): {@code
+     * (hearing_id, hearing_day)} is not unique on {@code processed_request} — a re-shared hearing has
+     * one row per share — so a plain {@code optional()} either threw on more than one match, or, with
+     * a {@code LIMIT 1}, silently hid every earlier share's own outcome behind the latest one's. An
+     * earlier share that failed is exactly what support needs to see even when a later share sent
+     * cleanly.
      *
      * @param hearingId  the hearing id
      * @param hearingDay the hearing day
-     * @return the latest share's request, its latest HMPPS attempt and any stored body; empty when
-     *     none matches
+     * @return every share's request, its latest HMPPS attempt and any stored body, newest first;
+     *     empty when none matches
      */
-    public Optional<SupportLookupResult> lookup(final UUID hearingId, final LocalDate hearingDay) {
+    public List<SupportLookupResult> lookup(final UUID hearingId, final LocalDate hearingDay) {
         return jdbc.sql("SELECT pr.source, pr.request_id, pr.status AS request_status, "
                         + "oml.status AS leg_status, oml.reason, oml.http_status, "
                         + "oml.youth_switch, oml.payload_source, oml.body_digest, "
@@ -52,11 +56,11 @@ public final class SupportLookupRepository {
                         + "AND oml.request_id = pr.request_id "
                         + "LEFT JOIN outbound_body ob ON ob.outbound_message_id = oml.id "
                         + "WHERE pr.hearing_id = :hearingId AND pr.hearing_day = :hearingDay "
-                        + "ORDER BY pr.shared_time DESC, pr.updated_at DESC LIMIT 1")
+                        + "ORDER BY pr.shared_time DESC, pr.updated_at DESC")
                 .param("hearingId", hearingId)
                 .param("hearingDay", hearingDay)
                 .query((rs, rowNum) -> map(rs))
-                .optional();
+                .list();
     }
 
     private static SupportLookupResult map(final ResultSet rs) throws SQLException {

@@ -9,7 +9,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
-import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,10 +31,10 @@ class SupportLookupIT extends SchemaTestSupport {
         final String body = "{\"hearing\":{\"id\":\"" + hearingId + "\"}}";
         insertCompletedSentLeg(requestKey(requestId, hearingId, hearingDay), legId, body);
 
-        final Optional<SupportLookupResult> found = repository.lookup(hearingId, hearingDay);
+        final List<SupportLookupResult> found = repository.lookup(hearingId, hearingDay);
 
-        assertThat(found).isPresent();
-        final SupportLookupResult result = found.get();
+        assertThat(found).hasSize(1);
+        final SupportLookupResult result = found.get(0);
         assertThat(result.source()).isEqualTo(SOURCE);
         assertThat(result.requestId()).isEqualTo(requestId);
         assertThat(result.requestStatus()).isEqualTo("COMPLETED");
@@ -56,9 +56,9 @@ class SupportLookupIT extends SchemaTestSupport {
     }
 
     @Test
-    @DisplayName("answers with the latest share when a hearing was re-shared the same day, instead "
-            + "of throwing on more than one matching request (S10)")
-    void returns_the_latest_share_when_resent_the_same_day() {
+    @DisplayName("answers with every share when a hearing was re-shared the same day, newest "
+            + "first, instead of throwing on more than one matching request (S10)")
+    void returns_every_share_newest_first_when_resent_the_same_day() {
         final UUID hearingId = UUID.randomUUID();
         final LocalDate hearingDay = LocalDate.parse("2026-08-19");
         final UUID earlierRequestId = UUID.randomUUID();
@@ -69,11 +69,36 @@ class SupportLookupIT extends SchemaTestSupport {
         insertCompletedSentLeg(requestKey(laterRequestId, hearingId, hearingDay), UUID.randomUUID(),
                 "{\"hearing\":{\"shared\":\"second\"}}", Instant.parse("2026-08-19T15:00:00Z"));
 
-        final Optional<SupportLookupResult> found = repository.lookup(hearingId, hearingDay);
+        final List<SupportLookupResult> found = repository.lookup(hearingId, hearingDay);
 
-        assertThat(found).isPresent();
-        assertThat(found.get().requestId()).isEqualTo(laterRequestId);
-        assertThat(found.get().body()).contains("{\"hearing\":{\"shared\":\"second\"}}");
+        assertThat(found).hasSize(2);
+        assertThat(found.get(0).requestId()).isEqualTo(laterRequestId);
+        assertThat(found.get(0).body()).contains("{\"hearing\":{\"shared\":\"second\"}}");
+        assertThat(found.get(1).requestId()).isEqualTo(earlierRequestId);
+        assertThat(found.get(1).body()).contains("{\"hearing\":{\"shared\":\"first\"}}");
+    }
+
+    @Test
+    @DisplayName("still shows an earlier share's own failure even when a later share of the same "
+            + "hearing sent cleanly, instead of hiding it behind the newest share (S10)")
+    void surfaces_an_earlier_failed_share_alongside_a_later_sent_one() {
+        final UUID hearingId = UUID.randomUUID();
+        final LocalDate hearingDay = LocalDate.parse("2026-08-19");
+        final UUID failedRequestId = UUID.randomUUID();
+        final UUID sentRequestId = UUID.randomUUID();
+        insertFailedExhaustedLeg(requestKey(failedRequestId, hearingId, hearingDay),
+                Instant.parse("2026-08-19T09:00:00Z"));
+        insertCompletedSentLeg(requestKey(sentRequestId, hearingId, hearingDay), UUID.randomUUID(),
+                "{\"hearing\":{\"shared\":\"second\"}}", Instant.parse("2026-08-19T15:00:00Z"));
+
+        final List<SupportLookupResult> found = repository.lookup(hearingId, hearingDay);
+
+        assertThat(found).hasSize(2);
+        assertThat(found.get(0).requestId()).isEqualTo(sentRequestId);
+        assertThat(found.get(0).legStatus()).isEqualTo("SENT");
+        assertThat(found.get(1).requestId()).isEqualTo(failedRequestId);
+        assertThat(found.get(1).requestStatus()).isEqualTo("FAILED");
+        assertThat(found.get(1).legStatus()).isEqualTo("FAILED");
     }
 
     private record RequestKey(UUID requestId, UUID hearingId, LocalDate hearingDay) {
@@ -114,6 +139,30 @@ class SupportLookupIT extends SchemaTestSupport {
         jdbc().sql("INSERT INTO outbound_body (outbound_message_id, body) VALUES (:id, :body)")
                 .param("id", legId)
                 .param("body", body)
+                .update();
+    }
+
+    /** Seeds a request whose HMPPS leg exhausted its deliveries, never sent (DV-05, FR-002-047). */
+    private void insertFailedExhaustedLeg(final RequestKey key, final Instant sharedTime) {
+        jdbc().sql("INSERT INTO processed_request (source, request_id, hearing_id, hearing_day, "
+                        + "shared_time, event_type, request_fingerprint, status, attempts, "
+                        + "failure_reason, exhausted_message_id, command) VALUES (:source, "
+                        + ":requestId, :hearingId, :hearingDay, :sharedTime, 'Hearing_Resulted', "
+                        + "'fp', 'FAILED', 5, 'leg-exhausted', 'RESULTS:exhausted', '{}')")
+                .param("source", SOURCE)
+                .param("requestId", key.requestId())
+                .param("hearingId", key.hearingId())
+                .param("hearingDay", key.hearingDay())
+                .param("sharedTime", OffsetDateTime.ofInstant(sharedTime, ZoneOffset.UTC))
+                .update();
+        jdbc().sql("INSERT INTO outbound_message (id, source, request_id, leg, attempt, "
+                        + "attempt_origin, status, reason, attempts, payload_source, youth_switch, "
+                        + "body_digest, service_version, updated_at) VALUES (gen_random_uuid(), "
+                        + ":source, :requestId, 'HMPPS', 1, 'queue', 'FAILED', 'gateway-transient', "
+                        + "5, 'cache-day', 'ACTIVE', :digest, 'test-version', now())")
+                .param("source", SOURCE)
+                .param("requestId", key.requestId())
+                .param("digest", sha256("exhausted"))
                 .update();
     }
 
