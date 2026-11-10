@@ -8,6 +8,7 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -20,6 +21,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.convert.DurationStyle;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -36,6 +38,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.Outbound
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusCommandEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusReplayEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ConfirmedIntakePauseGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DlqCompletedListingQuery;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IntakePauseAction;
@@ -200,10 +203,25 @@ public final class OperatorCommandLine {
             return new JdbcIntakeControlRepository(jdbc);
         }
 
+        /**
+         * A standalone command has no running pod's in-memory, drain-confirmed pause flag to
+         * reconcile against, so it reads {@code intake_control} directly and applies the same
+         * confirmation window a live pod would have needed to reach {@code SUSPENDED}: one more
+         * probe tick to notice the request, then the full processing deadline for an in-flight
+         * delivery to drain (review of PR #8/#23, M3 follow-up). Read directly from the
+         * environment rather than the validated {@link DistributionProperties} bean, so pause,
+         * resume, rollback-close-in-flight and purge-queue keep needing no more configuration than
+         * the store connection they already require.
+         */
         /* default */ @Bean
-        IntakePauseGate commandPauseGate(final IntakeControlRepository repository) {
-            // A fresh standalone process reconciles from the persisted state before its guard.
-            return repository::pausedByOperator;
+        IntakePauseGate commandPauseGate(final IntakeControlRepository repository,
+                final Environment environment) {
+            final Duration probeInterval = DurationStyle.detectAndParse(
+                    environment.getProperty("distribution.store.probe-interval", "10s"));
+            final Duration drainTimeout = DurationStyle.detectAndParse(
+                    environment.getProperty("distribution.claim.processing-deadline", "4m"));
+            return new ConfirmedIntakePauseGate(repository, probeInterval.plus(drainTimeout),
+                    Clock.systemUTC());
         }
 
         /* default */ @Bean

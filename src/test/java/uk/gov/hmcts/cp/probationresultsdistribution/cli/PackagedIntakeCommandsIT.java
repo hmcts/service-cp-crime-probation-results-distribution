@@ -174,7 +174,15 @@ class PackagedIntakeCommandsIT extends EndToEndTestSupport {
                 "SPRING_DATASOURCE_USERNAME", source.getUsername(), "SPRING_DATASOURCE_PASSWORD", source.getPassword(),
                 "SERVICEBUS_CONNECTION_STRING", serviceBusConnectionString(),
                 "AUTHZ_HTTP_ENABLED", "false", "HTTP_AUDIT_ENABLED", "false",
-                "REDIS_PORT", "1"));
+                "REDIS_PORT", "1",
+                // The CLI's own confirmed-pause gate (M3 follow-up) only treats intake as paused
+                // once probe-interval + processing-deadline has passed since paused_at — ~4m10s at
+                // the packaged defaults. Shortened here so purge-queue and rollback-close-in-flight
+                // confirm within this test's own timeouts instead of racing the real window; neither
+                // of these commands validates the full DistributionProperties budget, so shrinking
+                // processing-deadline affects nothing else here.
+                "DISTRIBUTION_STORE_PROBE_INTERVAL", "50ms",
+                "DISTRIBUTION_CLAIM_PROCESSING_DEADLINE", "200ms"));
         builder.environment().putAll(environment);
         final Process process = builder.start();
         try {

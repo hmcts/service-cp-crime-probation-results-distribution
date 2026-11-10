@@ -1,5 +1,8 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.persistence;
 
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 /**
@@ -23,6 +26,18 @@ public final class JdbcIntakeControlRepository implements IntakeControlRepositor
         return Boolean.TRUE.equals(jdbc.sql("SELECT paused_by_operator FROM intake_control WHERE id = 1")
                 .query(Boolean.class)
                 .single());
+    }
+
+    @Override
+    public Optional<Instant> pausedSince() {
+        // The row mapper returns the Optional itself, never a bare null: JdbcClient's single()
+        // rejects a null mapped value even when exactly one row matched, which a NULL paused_at
+        // column on the (always-present) row would otherwise trigger.
+        return jdbc.sql("SELECT paused_at FROM intake_control WHERE id = 1")
+                .query((rs, rowNum) ->
+                        Optional.ofNullable(rs.getObject("paused_at", OffsetDateTime.class)))
+                .single()
+                .map(OffsetDateTime::toInstant);
     }
 
     @Override
