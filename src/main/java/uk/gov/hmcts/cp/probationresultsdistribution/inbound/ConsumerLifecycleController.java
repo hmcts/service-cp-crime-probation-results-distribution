@@ -151,9 +151,9 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
 
     /**
      * Blocks until no delivery is still running, or until {@link #drainTimeout} elapses, whichever
-     * comes first. Both callers — {@link #shutdownIntake()} and {@link #stopForOperatorPause()} —
-     * have already stopped the processor by the time this runs, so no further delivery starts while
-     * this waits.
+     * comes first. Every caller — {@link #stop()}, {@link #stopForOperatorPause()} and
+     * {@link #stopForSuspension()} — has already stopped the processor by the time this runs, so no
+     * further delivery starts while this waits.
      */
     private void awaitInFlightRunsToDrain() {
         final long deadline = System.nanoTime() + drainTimeout.toNanos();
@@ -428,6 +428,12 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
             return;
         }
         processorRunning = false;
+        // The SDK's own stop() does not wait for an in-flight delivery to finish, and reconcileOperatorPause()
+        // treats any SUSPENDED state as proof nothing could be mid-delivery (review of PR #23 round 5): without
+        // this wait, a store-outage suspension could reach SUSPENDED while a delivery begun before the outage
+        // was still sending, and an operator pause requested in that window would be confirmed at once,
+        // letting rollback-close-in-flight/purge-queue proceed against a run that has not actually finished.
+        awaitInFlightRunsToDrain();
         if (state.compareAndSet(State.SUSPENDING, State.SUSPENDED)) {
             metrics.intakeSuspension();
             metrics.recordIntakeSuspended(true);

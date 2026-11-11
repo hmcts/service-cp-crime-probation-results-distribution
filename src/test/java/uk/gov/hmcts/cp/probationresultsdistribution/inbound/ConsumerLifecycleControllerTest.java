@@ -193,6 +193,46 @@ class ConsumerLifecycleControllerTest {
     }
 
     @Nested
+    @DisplayName("when a delivery is in flight during a store-outage suspension")
+    class StoreOutageSuspensionWithRunInFlight {
+
+        @Test
+        @DisplayName("does not confirm SUSPENDED until the in-flight delivery drains, so an operator "
+                + "pause requested in that window is not confirmed either (review of PR #23 round 5)")
+        void waits_for_the_in_flight_delivery_before_suspending() throws InterruptedException {
+            final AtomicBoolean storeUp = new AtomicBoolean(true);
+            when(storeProbe.available()).thenAnswer(invocation -> storeUp.get());
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicBoolean paused = new AtomicBoolean(false);
+            when(intakeControl.pausedByOperator()).thenAnswer(invocation -> paused.get());
+            final AtomicInteger inFlight = new AtomicInteger();
+            controller = newController(inFlight, Duration.ofSeconds(5L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            inFlight.incrementAndGet();
+            storeUp.set(false);
+            controller.suspendIntake();
+
+            // The store-outage suspension must not reach SUSPENDED while the delivery this pod
+            // started is still running: stopForSuspension() now drains the same way
+            // stopForOperatorPause() always has, so an operator pause requested in this window is
+            // not confirmed off a stale SUSPENDED read either (reconcileOperatorPause()).
+            Thread.sleep(200L);
+            assertThat(gauge("probation_intake_suspended")).isEqualTo(0.0d);
+            paused.set(true);
+            Thread.sleep(200L);
+            assertThat(controller.pausedByOperator()).isFalse();
+
+            inFlight.decrementAndGet();
+
+            awaitUntil(() -> gauge("probation_intake_suspended") == 1.0d);
+            awaitUntil(controller::pausedByOperator);
+        }
+    }
+
+    @Nested
     @DisplayName("when an operator pause is requested while a delivery is in flight")
     class OperatorPauseWithRunInFlight {
 
