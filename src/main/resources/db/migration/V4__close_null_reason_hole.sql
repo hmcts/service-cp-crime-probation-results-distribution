@@ -8,8 +8,7 @@ ALTER TABLE processed_request ADD CONSTRAINT processed_request_completion_reason
     CHECK ((status <> 'COMPLETED'
             OR (completion_reason IS NOT NULL
                 AND completion_reason IN ('both-legs-terminal', 'recovered')))
-           AND (completion_reason IS NULL
-                OR completion_reason IN ('both-legs-terminal', 'recovered')));
+           AND (status = 'COMPLETED' OR completion_reason IS NULL));
 
 ALTER TABLE processed_request DROP CONSTRAINT processed_request_failure_reason_chk;
 ALTER TABLE processed_request ADD CONSTRAINT processed_request_failure_reason_chk

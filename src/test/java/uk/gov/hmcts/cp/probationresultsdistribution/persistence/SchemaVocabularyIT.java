@@ -132,6 +132,17 @@ class SchemaVocabularyIT extends SchemaTestSupport {
         }
 
         @Test
+        @DisplayName("refuses a FAILED row with a non-NULL completion_reason")
+        void completion_reason_refuses_non_null_off_completed() {
+            final String req = UUID.randomUUID().toString();
+            insertReceivedRequest("RESULTS", req);
+            assertThatThrownBy(() -> execute("UPDATE processed_request SET status = 'FAILED', "
+                    + "failure_reason = 'leg-exhausted', exhausted_message_id = 'RESULTS:x', "
+                    + "completion_reason = 'recovered' WHERE request_id = '" + req + "'"))
+                    .isInstanceOf(DataAccessException.class);
+        }
+
+        @Test
         @DisplayName("accepts every FailureReason on a FAILED row and refuses an unknown")
         void failure_reason_set_matches() {
             final String exhausted = UUID.randomUUID().toString();
