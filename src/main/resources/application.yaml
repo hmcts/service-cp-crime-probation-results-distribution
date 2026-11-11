@@ -28,6 +28,15 @@ spring:
     # unmigrated schema. Until that controller exists, Flyway runs at refresh.
     enabled: true
 
+  lifecycle:
+    # ConsumerLifecycleController#stop() can legitimately block for up to its own 30s shutdown
+    # grace plus distribution.claim.processing-deadline (default 4m) while it drains an in-flight
+    # delivery (review of PR #8/#23). Spring's own shutdown-phase wait defaults to 30s, which is
+    # shorter than that worst case: left at the default, the context would give up waiting on this
+    # bean and start closing the DataSource and HTTP clients out from under a send still draining.
+    # Keep this at or above (30s grace + distribution.claim.processing-deadline).
+    timeout-per-shutdown-phase: 5m
+
 server:
   port: ${SERVER_PORT:8082}
   error:
