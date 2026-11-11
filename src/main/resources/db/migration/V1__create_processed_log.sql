@@ -2,9 +2,7 @@
 -- The database clock is the only time authority. The informant register's processed_request block
 -- is reproduced, then this service's changes are applied as ALTERs. outbound_message carries the
 -- full §4.6 CHECK matrix, including cells only slice 004 writes. outbound_body is month-partitioned
--- with a DEFAULT partition; H39 withdrew H20/H35's own digest-checking trigger, so the match
--- between a stored body and its outbound_message.body_digest is guaranteed by the single write
--- path behind OutboundLog alone, never by the database (see persistence/package-info.java).
+-- with a DEFAULT partition and a digest-checking trigger (H20, H35).
 
 -- ---------------------------------------------------------------------------
 -- processed_request — the informant register block
