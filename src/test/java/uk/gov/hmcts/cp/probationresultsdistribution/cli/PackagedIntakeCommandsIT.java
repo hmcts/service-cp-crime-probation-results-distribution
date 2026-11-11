@@ -135,6 +135,32 @@ class PackagedIntakeCommandsIT extends EndToEndTestSupport {
     }
 
     @Test
+    void resend_leg_refuses_the_instant_a_pause_is_requested_unlike_rollback_and_purge()
+            throws Exception {
+        // Resend-leg reads intake_control.paused_by_operator directly, never
+        // commandPauseGate's confirmed, drain-waiting read (review of PR #23 round 4; design H43,
+        // issue #27): it has no in-flight send of its own to race, so it must refuse at once, unlike
+        // rollback-close-in-flight and purge-queue, which wait out the store-probe-interval-plus-
+        // processing-deadline window run()'s base environment shortens for them. The packaged
+        // defaults are restored for this one call instead of that shortened window, so a pass here
+        // proves no window is waited out at all, rather than the window merely being outrun by this
+        // process's own JVM startup time. Before this fix, the same immediate call raced the window,
+        // proceeded instead of refusing, individually refused the made-up id unknown-request, and
+        // exited DONE (0).
+        assertRun(0, "pause-intake");
+
+        final RunResult result = run(
+                Map.of("DISTRIBUTION_STORE_PROBE_INTERVAL", "10s",
+                        "DISTRIBUTION_CLAIM_PROCESSING_DEADLINE", "4m"),
+                "resend-leg", "--leg", "HMPPS", "--request-ids", UUID.randomUUID().toString(),
+                "--operator", "ci", "--reason", "pin the immediate resend-leg pause refusal");
+
+        assertThat(result.exitCode()).withFailMessage("resend-leg must refuse whole, at once: %s",
+                result.output()).isEqualTo(1);
+        assertThat(result.output()).contains("resend-leg refused reason=intake-paused");
+    }
+
+    @Test
     void rejects_unexpected_arguments_before_startup_without_echoing_them() throws Exception {
         final RunResult result = run("pause-intake", "private-operator-text");
         assertThat(result.exitCode()).isEqualTo(1);

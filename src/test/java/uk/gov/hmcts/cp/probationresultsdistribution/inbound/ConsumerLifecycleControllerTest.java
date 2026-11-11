@@ -215,16 +215,21 @@ class ConsumerLifecycleControllerTest {
 
             // Several probe ticks (PROBE_INTERVAL = 20ms) go by: the request drives processor.stop(),
             // but must never confirm pausedByOperator() - or its gauge - while the delivery this pod
-            // started is still running, since resend-leg, purge-queue and rollback-close-in-flight
-            // all gate on exactly that flag.
+            // started is still running, since purge-queue and rollback-close-in-flight gate on
+            // exactly that flag.
             Thread.sleep(200L);
             assertThat(controller.pausedByOperator()).isFalse();
             assertThat(gauge("probation_intake_suspended", "operator")).isEqualTo(0.0d);
+            // Resend-leg gates on pauseRequested() instead (review of PR #23 round 4; design H43,
+            // issue #27): it must already be true here, before the drain confirms, since resend-leg
+            // has no in-flight send of its own to race and must refuse at once.
+            assertThat(controller.pauseRequested()).isTrue();
 
             inFlight.decrementAndGet();
 
             awaitUntil(controller::pausedByOperator);
             assertThat(gauge("probation_intake_suspended", "operator")).isEqualTo(1.0d);
+            assertThat(controller.pauseRequested()).isTrue();
         }
 
         @Test
@@ -266,6 +271,7 @@ class ConsumerLifecycleControllerTest {
 
             awaitUntil(controller::pausedByOperator);
             assertThat(gauge("probation_intake_suspended", "operator")).isEqualTo(1.0d);
+            assertThat(controller.pauseRequested()).isTrue();
             verify(processor, never()).stop();
         }
     }

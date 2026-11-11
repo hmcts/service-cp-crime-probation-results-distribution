@@ -252,6 +252,22 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     }
 
     /**
+     * {@code true} the instant a pause is requested, confirmed or not (review of PR #23 round 4;
+     * design H43, issue #27): resend-leg reads this instead of {@link #pausedByOperator()}, since,
+     * unlike rollback-close-in-flight and purge-queue, it has no in-flight send to race and must
+     * refuse at once rather than let a pause drain for up to {@link #drainTimeout} first. The
+     * {@code ||} is belt and braces: {@link #setOperatorPaused} never sets {@link #operatorPaused}
+     * true without {@link #requestedPause} already being true, but the two are set together, not
+     * atomically, so this does not depend on that ordering holding.
+     *
+     * @return {@code true} once a pause has been requested, confirmed or not
+     */
+    @Override
+    public boolean pauseRequested() {
+        return requestedPause || operatorPaused;
+    }
+
+    /**
      * Reads {@code intake_control.paused_by_operator} into {@link #requestedPause}, the signal
      * {@link #probe()} dispatches on. {@link #operatorPaused} (and its gauge) is confirmed here,
      * immediately, only when nothing could possibly be mid-delivery: unpausing (always safe to

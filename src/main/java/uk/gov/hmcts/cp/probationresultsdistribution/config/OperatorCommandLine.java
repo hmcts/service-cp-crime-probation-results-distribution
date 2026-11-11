@@ -204,14 +204,16 @@ public final class OperatorCommandLine {
         }
 
         /**
-         * A standalone command has no running pod's in-memory, drain-confirmed pause flag to
-         * reconcile against, so it reads {@code intake_control} directly and applies the same
-         * confirmation window a live pod would have needed to reach {@code SUSPENDED}: one more
-         * probe tick to notice the request, then the full processing deadline for an in-flight
-         * delivery to drain (review of PR #8/#23, M3 follow-up). Read directly from the
-         * environment rather than the validated {@link DistributionProperties} bean, so pause,
-         * resume, rollback-close-in-flight and purge-queue keep needing no more configuration than
-         * the store connection they already require.
+         * rollback-close-in-flight and purge-queue's gate only (review of PR #23 round 4; design
+         * H43, issue #27 — resend-leg reads the raw row instead, in {@link
+         * #commandResendLegRunner}). A standalone command has no running pod's in-memory,
+         * drain-confirmed pause flag to reconcile against, so it reads {@code intake_control}
+         * directly and applies the same confirmation window a live pod would have needed to reach
+         * {@code SUSPENDED}: one more probe tick to notice the request, then the full processing
+         * deadline for an in-flight delivery to drain (review of PR #8/#23, M3 follow-up). Read
+         * directly from the environment rather than the validated {@link DistributionProperties}
+         * bean, so pause, resume, rollback-close-in-flight and purge-queue keep needing no more
+         * configuration than the store connection they already require.
          */
         /* default */ @Bean
         IntakePauseGate commandPauseGate(final IntakeControlRepository repository,
@@ -220,8 +222,7 @@ public final class OperatorCommandLine {
                     environment.getProperty("distribution.store.probe-interval", "10s"));
             final Duration drainTimeout = DurationStyle.detectAndParse(
                     environment.getProperty("distribution.claim.processing-deadline", "4m"));
-            return new ConfirmedIntakePauseGate(repository, probeInterval.plus(drainTimeout),
-                    Clock.systemUTC());
+            return new ConfirmedIntakePauseGate(repository, probeInterval.plus(drainTimeout));
         }
 
         /* default */ @Bean
@@ -301,6 +302,12 @@ public final class OperatorCommandLine {
          * same {@link PipelineClients} factory: built only when {@code resend-leg} is dispatched,
          * so no other command opens the cache or a client. Its metrics go to the context's own
          * registry, which the push registries flush when the context closes.
+         *
+         * <p>Reads {@code intake_control.paused_by_operator} directly, never {@link
+         * #commandPauseGate}'s confirmed, drain-waiting read (review of PR #23 round 4; design H43,
+         * issue #27): resend-leg has no in-flight send of its own to race, so it must refuse the
+         * instant a pause is requested, not wait out the same window rollback-close-in-flight and
+         * purge-queue need.
          */
         /* default */
         @Bean
@@ -309,8 +316,10 @@ public final class OperatorCommandLine {
                 final PlatformTransactionManager transactions,
                 final DistributionProperties commandDistributionProperties,
                 final StatefulRedisConnection<String, String> commandRedisConnection,
-                final IntakePauseGate gate, final ObjectProvider<BuildProperties> buildProperties,
+                final IntakeControlRepository intakeControl,
+                final ObjectProvider<BuildProperties> buildProperties,
                 final ObjectProvider<MeterRegistry> meterRegistry) {
+            final IntakePauseGate gate = intakeControl::pausedByOperator;
             final DistributionProperties properties = commandDistributionProperties;
             final TransactionTemplate tx = new TransactionTemplate(transactions);
             final MetricRegistry metrics = new MetricRegistry(
