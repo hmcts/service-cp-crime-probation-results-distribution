@@ -218,6 +218,21 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
         return gatedStartCompleted;
     }
 
+    /**
+     * Whether the deferred migration has run, independently of whether intake itself has started
+     * consuming (review of PR #23): a pod that starts paused never reaches {@link #resume()} — and
+     * so never sets {@link #gatedStartCompleted} — even though {@link #migrateOnce()} already ran
+     * for it in {@link #probe()}. {@link uk.gov.hmcts.cp.probationresultsdistribution.config
+     * .IntakeMigrationHealthIndicator} reads this, not {@link #intakeStarted()}, so readiness
+     * reflects the one-way migration gate on its own, never the separate question — legitimately
+     * false while paused — of whether this pod is consuming.
+     *
+     * @return whether the migration has completed
+     */
+    public boolean migrationCompleted() {
+        return migrated;
+    }
+
     private void awaitTransitionsToFinish() {
         try {
             if (!transitions.awaitTermination(SHUTDOWN_GRACE.toSeconds(), TimeUnit.SECONDS)) {

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
+import org.springframework.boot.health.contributor.Status;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.jdbc.autoconfigure.JdbcClientAutoConfiguration;
@@ -129,7 +130,8 @@ class ServiceBusConsumerConfigIT {
     @Test
     @DisplayName("refreshes the whole bean graph even when the store is unreachable (review of PR "
             + "#8): the pod must be able to start, and tell readiness why, rather than block on "
-            + "Flyway's own eager migration")
+            + "Flyway's own eager migration - and readiness itself answers DOWN, not merely db "
+            + "(review of PR #23): the migration this pod needs has not run either")
     void refreshes_the_bean_graph_when_the_store_is_unreachable() {
         new ApplicationContextRunner()
                 .withConfiguration(AutoConfigurations.of(DataSourceAutoConfiguration.class,
@@ -162,6 +164,9 @@ class ServiceBusConsumerConfigIT {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(ConsumerLifecycleController.class);
                     assertThat(context).hasSingleBean(ProbationMessageListener.class);
+                    assertThat(context).hasSingleBean(IntakeMigrationHealthIndicator.class);
+                    assertThat(context.getBean(IntakeMigrationHealthIndicator.class).health()
+                            .getStatus()).isEqualTo(Status.DOWN);
                 });
     }
 }
