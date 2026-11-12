@@ -228,14 +228,19 @@ class ReplayComparatorTest {
     void bodyless_not_applicable_against_an_equally_empty_sit_share_is_a_match() {
         final ShareIdentity identity = identity();
         final SitLoggedShare sit = new SitLoggedShare(identity, Optional.empty(), Optional.empty());
+        // A real bodyless NOT_APPLICABLE attempt has no service_version either (the CHECK
+        // constraint ties it to body_digest, and neither was ever written for this attempt): null
+        // here, not an artificial version, is what would have caught Optional.of(null) throwing
+        // (P2, PR #23 review).
         final SteAttempt ste = new SteAttempt(identity, null, "NOT_APPLICABLE", "cache-day", "ACTIVE",
-                "1.2.0");
+                null);
 
         final ReplayReport report = compare(List.of(sit), List.of(ste), List.of());
 
         final HearingComparison only = report.comparisons().get(0);
         assertThat(only.comparisonClass()).isEqualTo(HearingComparisonClass.MATCH);
         assertThat(only.differingPaths()).isEmpty();
+        assertThat(only.steServiceVersion()).isEmpty();
         assertThat(report.verdict()).isEqualTo(ReplayReport.VERDICT_NO_UNEXPLAINED_DIFFERENCES);
     }
 

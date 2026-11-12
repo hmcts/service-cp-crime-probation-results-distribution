@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.HearingPairing.PairedShare;
@@ -72,8 +73,12 @@ public final class ReplayComparator {
                 ? ReplayReport.VERDICT_BLOCKS_CUTOVER
                 : ReplayReport.VERDICT_NO_UNEXPLAINED_DIFFERENCES;
 
+        // A bodyless attempt (NOT_APPLICABLE with no body) never recorded a service_version - it is
+        // only ever written alongside a serialised body (H19) - so it contributes nothing to say
+        // which build was running, rather than a null entry List.copyOf below would reject.
         final List<String> steBuilds = steAttempts.stream()
                 .map(SteAttempt::serviceVersion)
+                .filter(Objects::nonNull)
                 .distinct()
                 .toList();
 
@@ -128,7 +133,7 @@ public final class ReplayComparator {
                 return new HearingComparison(id.hearingId(), id.hearingDay(), id.sharedTime(),
                         HearingComparisonClass.MATCH, List.of(), Optional.empty(), Optional.empty(),
                         Optional.of(ste.status()), Optional.of(ste.payloadSource()),
-                        Optional.of(ste.youthSwitch()), Optional.of(ste.serviceVersion()),
+                        Optional.of(ste.youthSwitch()), Optional.ofNullable(ste.serviceVersion()),
                         Optional.empty());
             }
             return unpaired(id, HearingComparisonClass.UNPAIRED_SIT_ONLY, wholeExplanation,
