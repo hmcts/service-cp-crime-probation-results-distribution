@@ -138,7 +138,8 @@ class ServiceBusConsumerConfigIT {
                         DataSourceTransactionManagerAutoConfiguration.class,
                         JdbcTemplateAutoConfiguration.class, JdbcClientAutoConfiguration.class,
                         FlywayAutoConfiguration.class))
-                .withUserConfiguration(ServiceBusConsumerConfig.class, MetricRegistryConfiguration.class)
+                .withUserConfiguration(ServiceBusConsumerConfig.class, MetricRegistryConfiguration.class,
+                        IntakeMigrationReadinessConfiguration.class)
                 .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
                 .withBean(DistributionProperties.class, () -> TEST_PROPERTIES)
                 .withPropertyValues(

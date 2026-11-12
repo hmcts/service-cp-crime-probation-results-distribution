@@ -295,12 +295,6 @@ public class ServiceBusConsumerConfig {
                 inFlightRunCounter, properties.claim().processingDeadline());
     }
 
-    /* default */ @Bean
-    IntakeMigrationHealthIndicator intakeMigrationHealthIndicator(
-            final ConsumerLifecycleController consumer) {
-        return new IntakeMigrationHealthIndicator(consumer::migrationCompleted);
-    }
-
     private static String serviceVersion(final ObjectProvider<BuildProperties> buildProperties) {
         final BuildProperties build = buildProperties.getIfAvailable();
         return build == null ? "unknown" : build.getVersion();
