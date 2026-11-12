@@ -193,6 +193,42 @@ class ConsumerLifecycleControllerTest {
     }
 
     @Nested
+    @DisplayName("when the pause table does not exist until migration runs")
+    class PauseTableMissingBeforeMigration {
+
+        @Test
+        @DisplayName("migrates before reconciling the pause, so a fresh database still starts intake "
+                + "(review of PR #23)")
+        void migrates_before_querying_the_pause_table() {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            // Simulates intake_control not existing until Flyway has actually run: the controller's
+            // own flyway supplier is the one thing a brand-new database needs invoked before anything
+            // queries that table. Returning null here (as ServiceBusConsumerConfig's
+            // ObjectProvider<Flyway>::getIfAvailable would in a unit test with no Flyway bean) still
+            // flips the flag, since migrateOnce() treats "no Flyway configured" as migration done.
+            final AtomicBoolean migratedBySupplier = new AtomicBoolean(false);
+            when(intakeControl.pausedByOperator()).thenAnswer(invocation -> {
+                if (!migratedBySupplier.get()) {
+                    throw new IllegalStateException("relation \"intake_control\" does not exist");
+                }
+                return false;
+            });
+            controller = new ConsumerLifecycleController(processor, storeProbe, intakeControl, () -> {
+                migratedBySupplier.set(true);
+                return null;
+            }, metrics, PROBE_INTERVAL, new AtomicInteger(), Duration.ofSeconds(5L));
+
+            controller.start();
+
+            // Left in the old order (the pause reconciled before migration ran), every probe would
+            // fail the pause read and never reach the branch that migrates, so intake would never
+            // start against a fresh database.
+            awaitUntil(controller::intakeStarted);
+        }
+    }
+
+    @Nested
     @DisplayName("when a delivery is in flight during a store-outage suspension")
     class StoreOutageSuspensionWithRunInFlight {
 

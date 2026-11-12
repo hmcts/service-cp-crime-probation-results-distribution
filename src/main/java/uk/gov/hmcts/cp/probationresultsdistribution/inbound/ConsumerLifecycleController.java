@@ -311,7 +311,19 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     // asking whether its store is back never comes back. The next probe is the retry.
     private void probe() {
         try {
-            // Reconciled first, before the store-outage decision: a pod that starts (or restarts)
+            // Migrated first, before anything queries the schema: reconcileOperatorPause() reads
+            // intake_control, which does not exist on a brand-new database until Flyway has run
+            // (deferred from context refresh; review of PR #23). Left in its old order, every tick
+            // would fail the pause read before ever reaching resume() (where migration used to run),
+            // and a fresh database would never start intake. Gated on storeProbe.available(), since
+            // migrating needs a connection; reconcileOperatorPause() below is not gated on it, so a
+            // store that only looks unavailable to this cheap probe does not stop the pause itself
+            // from being read and, if it genuinely is down, that read fails there and is retried like
+            // any other probe failure, exactly as before this fix.
+            if (!migrated && storeProbe.available()) {
+                migrateOnce();
+            }
+            // Reconciled next, before the store-outage decision: a pod that starts (or restarts)
             // with the row already paused must never reach resume() on its first tick, whatever the
             // store answers (research.md Decision 3; provisional FR-004-052).
             reconcileOperatorPause();
