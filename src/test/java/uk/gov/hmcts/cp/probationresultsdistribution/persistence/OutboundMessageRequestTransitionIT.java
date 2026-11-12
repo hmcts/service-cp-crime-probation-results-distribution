@@ -1,8 +1,12 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -10,6 +14,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -152,6 +161,75 @@ class OutboundMessageRequestTransitionIT extends SchemaTestSupport {
         assertThat(legAttemptNumber(requestId)).as("no attempt 3 survives the rollback")
                 .isEqualTo(2);
         assertThat(legStatus(requestId)).as("attempt 2 is untouched").isEqualTo("FAILED");
+    }
+
+    /**
+     * A genuine cross-connection race, not merely sequenced via a callback (mirrors
+     * {@code RequestTransitionIT#reclaim_blocks_on_and_then_refuses_a_concurrent_resend_claim}):
+     * a separate connection takes and holds the request row's lock {@code claimResend} itself takes
+     * first, while {@code writeOutcome} blocks on it from another connection/thread. A third,
+     * uncontended connection proves {@code writeOutcome} has not touched the leg row at all while it
+     * waits — the pre-fix order (leg row first, request row second) would instead have already
+     * updated and locked the leg row by this point, and a late queue write racing a resend admission
+     * for the same request would deadlock instead of one waiting on the other (P2, PR #23 review).
+     */
+    @Test
+    @DisplayName("locks the request row before the leg row, so a concurrent resend admission waits "
+            + "instead of deadlocking")
+    void locks_the_request_row_before_the_leg_row() throws Exception {
+        final UUID requestId = UUID.randomUUID();
+        final RunClaim claim = RunClaim.fresh();
+        seedPendingAttempt(requestId, claim, "RECEIVED");
+        final CountDownLatch writeSubmitted = new CountDownLatch(1);
+
+        try (ExecutorService pool = Executors.newSingleThreadExecutor();
+                Connection competitor = datasource().getConnection()) {
+            competitor.setAutoCommit(false);
+            try (PreparedStatement lock = competitor.prepareStatement(
+                    "SELECT status FROM processed_request WHERE source = ? AND request_id = ? "
+                            + "FOR UPDATE")) {
+                lock.setString(1, SOURCE);
+                lock.setObject(2, requestId);
+                lock.executeQuery();
+            }
+
+            final Future<Integer> write = pool.submit(() -> {
+                writeSubmitted.countDown();
+                return repository.writeOutcome(sentOutcome(requestId, "the body"), claim,
+                        "unit-test");
+            });
+            assertThat(writeSubmitted.await(5, TimeUnit.SECONDS)).isTrue();
+            // Give writeOutcome's own lock-wait time to actually start blocking on the request row
+            // this connection holds, before probing whether it has touched the leg row yet.
+            Thread.sleep(300);
+
+            try (Connection prober = datasource().getConnection()) {
+                prober.setAutoCommit(false);
+                try (Statement timeout = prober.createStatement()) {
+                    // Bounds the probe itself: were the fix broken, writeOutcome would already hold
+                    // the leg row's lock and this would otherwise hang until the competitor below
+                    // commits, which this test's own main thread has not done yet - a self-deadlock
+                    // in the test, not just a failed assertion.
+                    timeout.execute("SET LOCAL lock_timeout = '500ms'");
+                }
+                try (PreparedStatement legLock = prober.prepareStatement(
+                        "SELECT id FROM outbound_message WHERE source = ? AND request_id = ? "
+                                + "FOR UPDATE")) {
+                    legLock.setString(1, SOURCE);
+                    legLock.setObject(2, requestId);
+                    assertThatCode(legLock::executeQuery)
+                            .as("writeOutcome must not have touched the leg row yet while it is "
+                                    + "blocked on the request row")
+                            .doesNotThrowAnyException();
+                } finally {
+                    prober.rollback();
+                }
+            }
+
+            competitor.commit();
+
+            assertThat(write.get(5, TimeUnit.SECONDS)).isEqualTo(1);
+        }
     }
 
     private void seedPendingAttempt(final UUID requestId, final RunClaim claim,

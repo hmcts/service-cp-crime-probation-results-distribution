@@ -102,6 +102,13 @@ public final class OutboundMessageRepository {
 
     private int applyOutcome(final LegOutcome outcome, final RunClaim claim,
                              final String deliveryMessageId, final TransactionStatus status) {
+        // The request row is locked before the leg row, matching the order claimResend takes it in
+        // (FR-004-022-FR-004-025) and applyResendOutcome already locks it in below: left the other
+        // way round, a late queue/replay write and a concurrent resend admission for the same request
+        // can each hold the row the other needs, and PostgreSQL's deadlock detector rolls one back -
+        // for a write that already followed a real send, losing the persisted result and leaving the
+        // POST open to a duplicate on redelivery (P2, PR #23 review).
+        lockRequestRow(outcome.command().source(), outcome.command().requestId());
         final String bodyDigest = outcome.bodyDigest().orElse(null);
         // service_version is written only with a body_digest (H19): precomputed here, as NULL, so the
         // bound parameters always carry a determinable type — a bare NULL inside a CASE leaves the
@@ -273,6 +280,10 @@ public final class OutboundMessageRepository {
         // attempt >= 2 (FR-004-008). A resend-origin row that is PARKED/PENDING at attempt >= 2 is
         // guarded by its own leg claim, not the request claim, so the replay path MUST NOT rewrite it
         // in place: it fences to 0 rows (FR-004-009; design_rules.md).
+        //
+        // The request row is locked before the leg row here too, for the same reason applyOutcome
+        // does (P2, PR #23 review): matching claimResend's and applyResendOutcome's order.
+        lockRequestRow(outcome.command().source(), outcome.command().requestId());
         return latestLegRow(outcome.command().source(), outcome.command().requestId())
                 .map(row -> routeReplayWrite(outcome, claim, rerunByMessageId, deliveryMessageId, row,
                         status))
@@ -358,6 +369,21 @@ public final class OutboundMessageRepository {
             rows = 1;
         }
         return rows;
+    }
+
+    /**
+     * Locks the request row before anything on its leg is touched, matching the order
+     * {@link ProcessedRequestRepository#claimResend} takes it in (FR-004-022-FR-004-025): every write
+     * path here and that admission path take the same two rows in the same order, so neither can ever
+     * hold the one the other needs (P2, PR #23 review).
+     */
+    private void lockRequestRow(final String source, final UUID requestId) {
+        jdbc.sql("SELECT status FROM processed_request WHERE source = :source "
+                        + "AND request_id = :requestId FOR UPDATE")
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .query(String.class)
+                .optional();
     }
 
     private Optional<LatestLegRow> latestLegRow(final String source, final UUID requestId) {
@@ -463,12 +489,7 @@ public final class OutboundMessageRepository {
         final String source = outcome.command().source();
         final UUID requestId = outcome.command().requestId();
         // The request row is locked before the leg row (FR-004-028), the same order the claim took.
-        jdbc.sql("SELECT status FROM processed_request WHERE source = :source "
-                        + "AND request_id = :requestId FOR UPDATE")
-                .param(SOURCE, source)
-                .param(REQUEST_ID, requestId)
-                .query(String.class)
-                .optional();
+        lockRequestRow(source, requestId);
         final String bodyDigest = outcome.bodyDigest().orElse(null);
         final String versionToWrite = bodyDigest == null ? null : serviceVersion;
         // A forced attempt keeps its override=force-resend form, joined with
