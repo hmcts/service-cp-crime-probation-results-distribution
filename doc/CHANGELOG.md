@@ -39,7 +39,9 @@ assertion in the parity harness.
   delivery count 1 (DV-26). `LegResender` claims and resends an explicit `requestId` list
   (H16), one transaction per id, refused whole while intake is paused. `pause-intake`/
   `resume-intake` CLI runners are the service-side stop, backed by a new single-row
-  `intake_control` table (V3; FR-004-052); `rollback-close-in-flight` closes every in-flight
+  `intake_control` table (V3; FR-004-052, since confirmed by the design owner — V3's own
+  "provisional" comment is left as applied and checksummed); `rollback-close-in-flight` closes
+  every in-flight
   `PENDING`/`PARKED` row `FAILED(rolled-back)` under the rollback protocol. `ReplayEnqueuer`
   and `SubmitHearingAction` enqueue onto `probation.requests` with the consumer's own credential
   rule.
