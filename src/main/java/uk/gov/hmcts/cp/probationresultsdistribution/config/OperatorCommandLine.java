@@ -92,6 +92,17 @@ public final class OperatorCommandLine {
     private static final String SUBMIT_HEARING = "submit-hearing";
     private static final String REPLAY = "replay";
     private static final String QUEUE_NAME = "distribution.servicebus.queue-name";
+    /**
+     * Overrides {@code application.yaml}'s deployed readiness group, which names {@code
+     * intakeMigration} ({@link IntakeMigrationHealthIndicator}, review of PR #23) - a bean only
+     * {@link ServiceBusConsumerConfig} registers, never this standalone composition root. Left
+     * unoverridden, every operator command would fail Spring's own group-membership validation at
+     * startup ("Health contributor 'intakeMigration' ... does not exist") before ever reaching a
+     * runner. Passed as a command-line-style argument, not through {@code operatorArguments}, so it
+     * outranks {@code application.yaml} the way an operator's own free text deliberately never does.
+     */
+    private static final String CLI_READINESS_OVERRIDE =
+            "--management.endpoint.health.group.readiness.include=db";
 
     private OperatorCommandLine() {
     }
@@ -145,7 +156,7 @@ public final class OperatorCommandLine {
         // operator's free text is never turned into configuration.
         application.addInitializers(context -> context.getBeanFactory().registerSingleton(
                 "operatorArguments", new OperatorArguments(List.of(args))));
-        try (ConfigurableApplicationContext context = application.run()) {
+        try (ConfigurableApplicationContext context = application.run(CLI_READINESS_OVERRIDE)) {
             exitCode = context.getBean(RunnerDispatcher.class).dispatch(args).orElseThrow().exitCode();
         } catch (final RuntimeException failure) {
             final Optional<InvalidConfigurationException> invalid = invalidConfiguration(failure);

@@ -34,11 +34,16 @@ class CommandConfigurationExcludesBodyRetentionIT extends EndToEndTestSupport {
                                 "operatorArguments", new OperatorCommandLine.OperatorArguments(
                                         List.of("list-requests"))));
         // Command-line arguments outrank application.yaml's committed local-development datasource
-        // defaults, unlike setDefaultProperties(...), which application.yaml would win over.
+        // defaults, unlike setDefaultProperties(...), which application.yaml would win over. The
+        // readiness-group override mirrors the one runInContext() itself passes (review of PR #23):
+        // without it this context refresh fails before reaching the try block at all, with Spring's
+        // own "Health contributor 'intakeMigration' ... does not exist" - intakeMigration is a bean
+        // only ServiceBusConsumerConfig registers, never this standalone composition root.
         try (ConfigurableApplicationContext context = builder.run(
                 "--spring.datasource.url=" + source.getUrl(),
                 "--spring.datasource.username=" + source.getUsername(),
-                "--spring.datasource.password=" + source.getPassword())) {
+                "--spring.datasource.password=" + source.getPassword(),
+                "--management.endpoint.health.group.readiness.include=db")) {
             assertThat(context.getBeanNamesForType(BodyRetentionJob.class)).isEmpty();
             // Sanity: the exclusion must not have dropped JDBC auto-configuration along with it.
             assertThat(context.getBeanNamesForType(JdbcClient.class)).isNotEmpty();
