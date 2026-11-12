@@ -235,8 +235,8 @@ deployed environments.
   or `NOT_APPLICABLE` on a new `resend` attempt row with `override=force-resend`; the request stays
   `COMPLETED`; a genuine duplicate at HMPPS.
 - **Rollback constraints** (rows A2-40, A2-52, A3-117): resend-leg is refused while intake is
-  paused, and the queue is purged only while it is paused — by DevOps in the Azure portal's Service
-  Bus Explorer, with the `purge-queue` runner as the backup (H42). After a rollback intake stays paused
+  paused, and the queue is purged only while it is paused — by the AMS team and 3rd line support in the Azure
+  portal's Service Bus Explorer, with the `purge-queue` runner as the backup (H42). After a rollback intake stays paused
   until a full new cutover — purge, reconcile, cutover, then resume.
 
 ## Outbound Send (design §3.1, §4.4, §4.7)
