@@ -70,3 +70,5 @@ With the local stack running (`docker compose up -d`) and a seeded store (the sa
   typed records, not a new exemption.
 - Rollback step 4 names its real execution path, 004's `rollback-close-in-flight` CLI action
   (FR-006-040, corrected 2026-11-02), never a hand-run statement.
+
+<!-- token-budget: compacted (level=medium) on 2026-11-13T14:02:15Z; original at quickstart.full.md -->
