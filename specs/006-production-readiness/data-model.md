@@ -138,3 +138,5 @@ None. Every entity this slice originates is a read, or a report over reads; noth
 lifecycle of its own beyond "exists in this run's report" or "exists in the catalogue." The
 `ReplayReport`'s `verdict` is derived fresh each run from its `comparisons`, never stored or
 transitioned.
+
+<!-- token-budget: compacted (level=medium) on 2026-11-13T14:02:15Z; original at data-model.full.md -->

@@ -97,12 +97,15 @@ class AlertCatalogueCoverageIT {
     }
 
     @Test
-    @DisplayName("more than three 401s in an hour pages, as a proposal threshold")
-    void repeated_401s_alert_is_a_proposal() {
-        final AlertDefinition repeated401s =
+    @DisplayName("more than three 401s, 403s, 404s or other 4xx refusals in an hour pages, fixed "
+            + "not a proposal (H41)")
+    void gateway_refusing_alert_pages_on_401_403_404_and_other_4xx() {
+        final AlertDefinition gatewayRefusing =
                 AlertCatalogue.alerts().stream().filter(a -> a.id() == 6).findFirst().orElseThrow();
-        assertThat(repeated401s.thresholdStatus()).isEqualTo("proposal");
-        assertThat(repeated401s.labels()).containsEntry("http", "401");
+        assertThat(gatewayRefusing.name()).isEqualTo("Gateway refusing");
+        assertThat(gatewayRefusing.thresholdStatus()).isEqualTo("fixed");
+        assertThat(gatewayRefusing.labels()).containsEntry("reason", "receiver-rejected")
+                .containsEntry("http", "401|4xx-other");
     }
 
     @Test

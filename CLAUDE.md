@@ -248,6 +248,23 @@ constitution (version 2.0.1, last amended 2026-10-21) predates H36–H39 and sti
 `outbound_body` digest trigger H39 removed and omits `scheduled_job_status` (H38) — due its own
 amendment separately from any feature, and not closed by this slice.
 
+A second staleness surfaced 2026-11-13: H41 (decided 2026-11-09, after this slice's own planning
+and User Story 4 work) amends `spec.md`'s acceptance scenario 4 — alert 6 pages on a 403 or 404
+from the gateway, not only a 401, and is renamed "Gateway refusing" with its threshold status fixed
+rather than proposed — but `config/AlertCatalogue.java`'s alert 6 entry and its coverage test
+(`AlertCatalogueCoverageIT.repeated_401s_alert_is_a_proposal`) were never updated. `/speckit-plan`
+(2026-11-13) flagged the gap in `plan.md`, `research.md` (Decision 3's amendment) and
+`contracts/evidence-and-catalogue-shapes.md` §3; `/speckit-tasks` (2026-11-13) added the fix as
+T027a (rewrite the stale test to assert H41's name/labels/status) and T027b (update the entry) in
+Phase 6, letter-suffixed off T027 so no existing task renumbers. `/speckit-implement` (2026-11-13)
+built both test-first (RED: `AssertionFailedError: expected: "Gateway refusing" but was: "Repeated
+401s"`, never a compile error; GREEN after the entry was corrected): alert 6 is now name
+`"Gateway refusing"`, labels `reason="receiver-rejected"`/`http="401|4xx-other"`, status `FIXED`.
+`doc/operations/alert-catalogue.md` (T027's own human-readable mirror) already carried the correct
+H41 text — only the Java code was stale. A scoped review (correctness against spec.md, test
+quality, no regression on the other ten alerts, PMD/Checkstyle, scope discipline) found nothing
+requiring action. `./gradlew build` green. **45 tasks, all 45 checked.**
+
 **Environment note**: this branch's local Docker Desktop VM disk was found at 95% capacity
 (unused build cache and dangling images from unrelated projects sharing the daemon), which makes a
 real or Testcontainers-managed Artemis broker silently block producers rather than error — the

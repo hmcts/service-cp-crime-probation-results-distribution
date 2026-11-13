@@ -46,6 +46,13 @@ populates:
 - every alert's condition evaluated at and around its threshold gives the expected page/no-page
   result (User Story 4's acceptance scenarios 1–10).
 
+**Alert 6, amended by H41 (2026-11-09)**: name `"Gateway refusing"` (not `"Repeated 401s"`), labels
+`reason="receiver-rejected"`, `http=~"401|4xx-other"` (a 403 or 404 pages too — each as silent a
+credential, key/policy or route failure as a 401), threshold status `fixed` (no longer `proposal`).
+As of this plan's last amendment, `config/AlertCatalogue.java` on `main` still carries the
+pre-H41 definition — a build gap, not a contract ambiguity; `AlertCatalogueCoverageIT`'s coverage
+assertion above applies to alert 6 exactly as it does to the other ten once the code catches up.
+
 ## 4. The runbook inputs (`doc/operations/cutover-rollback-runbook-inputs.md`, User Story 3)
 
 One `RunbookInputStep` per numbered step of each of the four procedures (SC-006-007: 2 + 9 + 6 + 4
@@ -66,3 +73,5 @@ replayable; and the expected gap (`PARKED` + `PENDING` counts) beside the oldest
 (FR-006-025). It does **not** call out to results' own viewstore (research.md Decision 5) — the
 results-side count for the same UTC day is supplied by the owning team from their own query and
 compared alongside this service's figures as a process step, not a field this query returns.
+
+<!-- token-budget: compacted (level=medium) on 2026-11-13T14:02:15Z; original at evidence-and-catalogue-shapes.full.md -->

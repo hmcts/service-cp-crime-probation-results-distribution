@@ -337,6 +337,39 @@ names; evaluate each rule's condition against sample series at its threshold and
       `doc/operations/alert-catalogue.md`; added one cross-reference line to
       `body-partition-maintenance.md` pointing at alert 9, no restated condition.
 
+### Alert 6 correction (H41, added 2026-11-13)
+
+**Why here**: H41 (decided 2026-11-09, after T023/T026 above) amends `spec.md`'s own acceptance
+scenario 4 for this story: "more than three 401s, **403s, 404s or other 4xx refusals** (not 400,
+408 or 429) in an hour" pages "the gateway-refusing alert" — a 403 (credentials/policy) or a 404
+(route) is as silent a failure as a 401. `AlertCatalogueCoverageIT.repeated_401s_alert_is_a_proposal`
+(line ~100) and `AlertCatalogue.alerts()`'s alert 6 entry (line ~68) were both written before H41
+and still assert/define the pre-H41 shape: name `"Repeated 401s"`, `http="401"` only, threshold
+status `"proposal"`. Fixed test-first, in place — this is a data correction to an existing alert,
+not a new one; the catalogue stays at 11 entries.
+
+- [X] T027a [US4] Rewrite `AlertCatalogueCoverageIT.repeated_401s_alert_is_a_proposal` (rename to
+      `gateway_refusing_alert_pages_on_401_403_404_and_other_4xx`) to assert alert 6's H41 shape:
+      `name()` equals `"Gateway refusing"`; `labels()` contains `"http" → "401|4xx-other"`;
+      `thresholdStatus()` equals `"fixed"` (no longer `"proposal"`) — satisfies spec.md's User
+      Story 4 acceptance scenario 4 (H41) — confirm it fails against the current
+      `config/AlertCatalogue.java` (the old name/label/status) before T027b —
+      `src/test/java/.../config/AlertCatalogueCoverageIT.java`
+      RED: `./gradlew test --tests '*AlertCatalogueCoverageIT*'` → 11 tests, 1 failed:
+      `AssertionFailedError: expected: "Gateway refusing" but was: "Repeated 401s"` — never a
+      compile error. GREEN after T027b: 11/11 passed.
+- [X] T027b [US4] Update `config/AlertCatalogue.java`'s alert 6 entry to H41's shape: name
+      `"Gateway refusing"`, labels `Map.of("reason", "receiver-rejected", "http", "401|4xx-other")`,
+      threshold status `FIXED` (not `PROPOSAL`), runbook entry restating the credentials
+      (401)/key-or-policy (403)/route (404) distinction `spec.md`'s own table row states — makes
+      T027a pass; re-run the whole `AlertCatalogueCoverageIT` class to confirm nothing else
+      regresses (alert 8's case-hearing 400 spike and the counted-but-not-paged classes are
+      unaffected by this change) — `config/AlertCatalogue.java`
+      GREEN: `AlertCatalogueCoverageIT` 11/11 passed. `doc/operations/alert-catalogue.md` (T027's
+      own human-readable mirror) already carried the correct H41 text for alert 6 — only
+      `AlertCatalogue.java` itself was stale; no doc change needed. `./gradlew build` green
+      (compile, full suite, Checkstyle, PMD, JaCoCo coverage gate).
+
 **Checkpoint**: all four P1/P2-lead stories (1, 2, 3, 4) are independently functional.
 
 ---
@@ -547,7 +580,8 @@ and check each item of §9.6 row 1 against its source.
   US7 extend
 - **US3 (Phase 5)**: depends on US2 (T016/T017's evidence queries, cited by its read-backs) and on
   004's already-shipped actions (no new ones)
-- **US4 (Phase 6)**: depends on Setup only
+- **US4 (Phase 6)**: depends on Setup only. Its alert-6 correction (T027a–T027b, H41) depends on
+  this phase's own T023/T026, which it amends in place
 - **US5 (Phase 7)**: depends on US2 (T013's `EvidenceTestStore`)
 - **US6 (Phase 8)**: depends on US4 (T026's alert-11 stub) and US5 (T029's reconciliation query)
 - **US7 (Phase 9)**: depends on US2 (T016/T017) and US5 (T029)
@@ -582,3 +616,5 @@ Each checkpoint above is independently demoable; none breaks an earlier story, b
 after Setup modifies another story's files except where explicitly noted (US6 extends US4's
 `AlertCatalogue` and US5's `DailyReconciliationQuery`; US7 composes US2's and US5's query results
 without changing them).
+
+<!-- token-budget: compacted (level=light) on 2026-11-13T14:10:26Z; original at tasks.full.md -->
