@@ -277,6 +277,52 @@ class ResendLegExecutionIT {
                 release.countDown();
             }
         }
+
+        @Test
+        @DisplayName("stop() quiesces without waiting for the run in flight to finish, unlike "
+                + "close() (P1, PR #29 review): stacked ahead of ConsumerLifecycleController's "
+                + "own wait on the shared counter, a waiting stop() made the two additive, "
+                + "worst case approaching 8 minutes, with the queue consumer still admitting "
+                + "new deliveries for the whole of it")
+        // release must count down, and the run finish, before close() — not the call under test
+        // here — is reached; try-with-resources would close as soon as the try block exits instead.
+        @SuppressWarnings("PMD.UseTryWithResources")
+        void stop_quiesces_without_waiting_for_the_run_in_flight() throws InterruptedException {
+            final LegResender resender = mock(LegResender.class);
+            final CountDownLatch inFlight = new CountDownLatch(1);
+            final CountDownLatch release = new CountDownLatch(1);
+            when(resender.run(any(), any())).thenAnswer(invocation -> {
+                inFlight.countDown();
+                assertThat(release.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+                return null;
+            });
+            // release is counted down, and the run allowed to actually finish, before close() (not
+            // the call under test here) is reached below — otherwise close()'s own wait would
+            // block for the run exactly as this test exists to show stop() does not.
+            final ResendLegExecutor executor = new ResendLegExecutor(resender,
+                    Duration.ofSeconds(WAIT_SECONDS));
+            try {
+                executor.submit(accepted(ID_1));
+                assertThat(inFlight.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+
+                final CountDownLatch stopReturned = new CountDownLatch(1);
+                final Thread stopper = Thread.ofPlatform().start(() -> {
+                    executor.stop();
+                    stopReturned.countDown();
+                });
+
+                // A waiting stop() would still be blocked here: the run is deliberately held on
+                // release for up to WAIT_SECONDS. A quiescing one returns at once regardless.
+                assertThat(stopReturned.await(500L, TimeUnit.MILLISECONDS)).isTrue();
+                stopper.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+                assertThat(executor.isRunning()).isFalse();
+                assertThatThrownBy(() -> executor.submit(accepted(ID_2)))
+                        .isInstanceOf(IllegalStateException.class);
+            } finally {
+                release.countDown();
+                executor.close();
+            }
+        }
     }
 
     @Nested

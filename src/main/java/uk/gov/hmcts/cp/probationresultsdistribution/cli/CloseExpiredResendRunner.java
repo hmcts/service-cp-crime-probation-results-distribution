@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.cli;
 
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +28,7 @@ public final class CloseExpiredResendRunner {
     private static final String REQUEST_ID_FLAG = "--request-id";
     private static final String OPERATOR_FLAG = "--operator";
     private static final String REASON_FLAG = "--reason";
+    private static final Set<String> FLAGS = Set.of(REQUEST_ID_FLAG, OPERATOR_FLAG, REASON_FLAG);
     private static final int MAX_TEXT_LENGTH = 200;
 
     private final CloseExpiredResendAction action;
@@ -116,10 +118,12 @@ public final class CloseExpiredResendRunner {
         return value == null || value.isBlank();
     }
 
+    // A flag with no value before the next recognised flag (or the end of the arguments) is
+    // missing, not given the next flag's own name as its value (P2, PR #29 review).
     private static String valueOf(final String[] args, final String flag) {
         String value = null;
         for (int i = 0; i < args.length - 1; i++) {
-            if (flag.equals(args[i])) {
+            if (flag.equals(args[i]) && !FLAGS.contains(args[i + 1])) {
                 value = args[i + 1];
                 break;
             }

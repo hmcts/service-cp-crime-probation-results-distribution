@@ -224,6 +224,24 @@ phase values instead of an assumed one). `@Bean(destroyMethod = "close")` is rem
 `SmartLifecycle#stop()` is now the only Spring-triggered shutdown path. Pinned by two new
 `ConsumerLifecycleControllerTest` cases. `./gradlew build` green after.
 
+A second round of PR #29 review (2026-11-13) found the phase fix alone still left two bugs.
+**P1**: `stop()` still delegated to `close()`, which also waits (up to 4 minutes) for the run in
+flight to terminate — stacked ahead of `ConsumerLifecycleController#stop()`'s own wait on the same
+counter, the two were additive (worst case ~8 minutes, past a typical pod grace period), and the
+queue consumer kept admitting new deliveries for the whole of the first wait, since the controller
+that actually stops it hadn't started yet. Fixed by splitting the two contracts: `stop()` now
+quiesces only (raises the cooperative stop, shuts the executor to new submissions, returns at
+once); `close()` keeps the full quiesce-and-wait, for the one case nothing else drains the counter
+(no `ConsumerLifecycleController` in the same context). `ConsumerLifecycleController#stop()` —
+which already quiesces the queue before its own wait — becomes the single remaining wait for both
+kinds of in-flight work. Pinned by a new `ResendLegExecutionIT$Shutdown` case. **P2**:
+`CloseExpiredResendRunner`'s argument parser took the token after a recognised flag as its value
+unconditionally, so `--operator --reason maintenance` parsed as `operator="--reason"`,
+`reason="maintenance"` — both non-blank, so a genuinely missing operator silently passed
+`checkArguments` (FR-004-020 violated). Fixed by refusing to accept a recognised flag's own name as
+another flag's value. `cli/ResendLegRunner.java` has the identical pre-existing pattern — out of
+scope here, flagged for the owning team. `./gradlew build` green after both.
+
 `005-operations-api` (`specs/005-operations-api/plan.md`, with `research.md`, `data-model.md`,
 `quickstart.md` and `contracts/` alongside it) is **implemented in full — all 52 tasks checked** —
 over 004's real `ReplayAction` and `LegResender`; both `[NEEDS CLARIFICATION]` markers are resolved

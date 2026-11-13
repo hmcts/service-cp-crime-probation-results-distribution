@@ -65,6 +65,18 @@ class CloseExpiredResendRunnerTest {
         }
 
         @Test
+        @DisplayName("a flag given no value before the next flag is missing-argument, not given "
+                + "the next flag's own name as its value (P2, PR #29 review)")
+        void a_flag_with_no_value_does_not_swallow_the_next_flags_name() {
+            assertThat(CloseExpiredResendRunner.checkArguments("close-expired-resend",
+                    "--request-id", REQUEST_ID.toString(), "--operator", "--reason", "maintenance"))
+                    .contains(WholeRunRefusal.MISSING_ARGUMENT);
+            assertThat(CloseExpiredResendRunner.checkArguments("close-expired-resend",
+                    "--operator", "op", "--reason", "--request-id", REQUEST_ID.toString()))
+                    .contains(WholeRunRefusal.MISSING_ARGUMENT);
+        }
+
+        @Test
         @DisplayName("a --request-id that is not a UUID is unreadable-argument")
         void unreadable_argument() {
             assertThat(CloseExpiredResendRunner.checkArguments(args("not-a-uuid", "op", "why")))

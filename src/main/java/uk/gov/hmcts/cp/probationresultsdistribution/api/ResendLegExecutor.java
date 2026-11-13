@@ -24,48 +24,49 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendAcceptance
  * <p>A run that throws is logged at ERROR with its {@code resendRunId} and a bounded cause (the
  * exception's class name, never its message) and the next queued run still executes; the ids the
  * run had already taken keep their outcomes on their rows. Only identifiers and bounded codes are
- * logged here: never the operator, the reason or a body.
+ * logged here: never the operator, the reason or a body. A run that throws is logged only; no
+ * metric counts it, as none is specified for it (design §10.1): the ERROR line is the alert source.
  *
- * <p>On {@link #close()} (the serving context shutting down) the running run finishes the id in
- * flight, then claims nothing further and reports the rest {@code not-run}, exactly as
- * {@link LegResender} does for a pause that begins mid-run; every queued run is dropped without
- * starting, each logged at WARN with its {@code resendRunId}; and nothing more is accepted. A submit
- * and the stop-and-drain step of {@code close()} exclude each other, and a run the thread takes once
- * the stop is raised is dropped the same way, so no run starts after the stop. The wait for the id
- * in flight is bounded by the processing deadline (4 minutes), past which it is logged at ERROR and
- * left to the claim lease (PT4M30S). That wait can be longer than the pod's termination grace
- * period, a deployment setting outside this repository: if the pod is killed first, the id in
- * flight is likewise left to the claim lease, which is the backstop either way.
+ * <h2>Shutdown (H40; FR-004-060)</h2>
  *
- * <p>A run that throws is logged only; no metric counts it, as none is specified for it (design
- * §10.1): the ERROR line is the alert source.
- *
- * <p>Each run increments {@code inFlightRuns} before it starts and decrements it once it finishes
- * (H40; FR-004-060), the same shared counter
- * {@code inbound.ConsumerLifecycleController#stop()} already waits on for an in-flight queue
- * delivery: no new drain mechanism, the existing one now also covers a resend-leg run reached
- * through this executor, so a rolling deploy waits for it too, up to the processing deadline,
- * rather than leaving its row for {@code close-expired-resend} every time. The standalone
- * {@code cli.ResendLegRunner} process is unaffected — it has no Spring shutdown lifecycle to drain.
+ * <p>Each run increments {@code inFlightRuns} before it starts and decrements it once it finishes,
+ * the same shared counter {@code inbound.ConsumerLifecycleController#stop()} already waits on for
+ * an in-flight queue delivery: no new drain mechanism, the existing one now also covers a
+ * resend-leg run reached through this executor. The standalone {@code cli.ResendLegRunner} process
+ * is unaffected — it has no Spring shutdown lifecycle to drain.
  *
  * <p>Implements {@link SmartLifecycle}, at {@link SmartLifecycle#DEFAULT_PHASE} — one phase above
- * {@code ConsumerLifecycleController}'s own, deliberately lowered phase — so Spring stops this
- * bean <strong>first</strong> on context close (a {@code SmartLifecycle} group stops highest phase
- * first). That ordering is what makes the shared counter actually drain: {@link #stop()} raises
- * {@link #stopping} and tells the in-flight run to finish the id it is on and claim nothing
- * further, so {@code inFlightRuns} falls promptly, before {@code
- * ConsumerLifecycleController#stop()} — stopped after this one — ever starts its own wait on that
- * counter. Relying on bean destruction instead (this class is {@link AutoCloseable} too, for
- * direct/test use with no Spring context) would raise the stop too late: a {@code
- * @Bean(destroyMethod = "close")} only runs after every {@code SmartLifecycle} has already been
- * stopped, by which point {@code ConsumerLifecycleController#stop()} has already finished its own
- * wait — for the whole batch, if nothing told it to stop sooner — and returned. Both an earlier
- * destroy-method-only version of this class, and a first fix that raised this bean's own phase
- * without first checking that {@code ConsumerLifecycleController} does not override {@link
- * SmartLifecycle#getPhase()} — it does not, so it already sat at {@code
- * SmartLifecycle.DEFAULT_PHASE} itself, same as any unmodified phase here would — got this
- * ordering backwards; a unit test driving the real phase values (not an assumed one) now pins it
- * (PR #29 review).
+ * {@code ConsumerLifecycleController}'s own, deliberately lowered phase — so Spring stops this bean
+ * <strong>first</strong> on context close (a {@code SmartLifecycle} group stops highest phase
+ * first). {@link #stop()} <strong>quiesces only</strong>: it raises {@link #stopping} (so the
+ * running run finishes the id it is on, then claims nothing further and reports the rest
+ * {@code not-run}, exactly as {@link LegResender} does for a pause that begins mid-run) and shuts
+ * the executor down to new submissions, every queued-but-not-started run dropped and logged at
+ * WARN with its {@code resendRunId} — but it does not itself wait for the id in flight to finish.
+ * That wait is left entirely to {@code ConsumerLifecycleController#stop()}, which runs next (lower
+ * phase, stopped after this one) and already waits on the very same counter for its own in-flight
+ * queue deliveries, bounded by its one {@code drainTimeout}. By the time that wait starts, this
+ * bean has already raised the stop, so the counter is already falling — one shared deadline, not
+ * two stacked ones, and the broker processor that controller's own {@code stop()} turns off is
+ * quiesced before its wait begins too, not only after this bean's.
+ *
+ * <p>An earlier version of this method waited here as well (calling {@link #close()}, which
+ * additionally awaits termination up to {@link #shutdownWait}, 4 minutes). Stacked ahead of {@code
+ * ConsumerLifecycleController#stop()}'s own wait on the same counter, that made the two waits
+ * additive (worst case approaching 8 minutes — past a typical pod termination grace period) and
+ * left the queue consumer still admitting new deliveries for the whole of this bean's wait, since
+ * the controller that actually stops the processor had not even started yet. A review before that
+ * version shipped (PR #29) had already corrected an earlier mistake in the phase values themselves
+ * — {@code ConsumerLifecycleController} does not override {@link SmartLifecycle#getPhase()}, so it
+ * already sat at {@code SmartLifecycle.DEFAULT_PHASE} itself, the same as an unmodified phase here
+ * would, a tie a first fix assumed away without checking; a unit test driving the real phase values
+ * caught that one immediately. {@link #close()} keeps the full quiesce-and-wait behaviour, for the
+ * one case nothing else drains the counter: a standalone or test instance with no {@code
+ * ConsumerLifecycleController} in the same context (see {@code OperationsConfiguration}'s own
+ * Javadoc on that case). Its own wait is bounded by the processing deadline (4 minutes), past which
+ * it is logged at ERROR and left to the claim lease (PT4M30S) — the same backstop a pod killed
+ * first leaves the id in flight to either way, since that wait can be longer than the pod's
+ * termination grace period, a deployment setting outside this repository.
  */
 public final class ResendLegExecutor implements SmartLifecycle, AutoCloseable {
 
@@ -172,12 +173,32 @@ public final class ResendLegExecutor implements SmartLifecycle, AutoCloseable {
 
     /**
      * Stops this bean before {@code ConsumerLifecycleController} (see class Javadoc on
-     * {@link #PHASE}), raising {@link #stopping} early enough that the shared drain counter
-     * actually falls during that controller's own wait, not after it.
+     * {@link #PHASE}) — <strong>quiesces only</strong>: raises {@link #stopping} and shuts the
+     * executor down to new submissions, but does not itself wait for a run already in flight to
+     * finish, unlike {@link #close()}.
+     *
+     * <p>An earlier version of this method called {@link #close()}, which also waits (up to {@link
+     * #shutdownWait}, 4 minutes). Stacked after this bean's own phase-ordered stop and before
+     * {@code ConsumerLifecycleController#stop()}'s own wait on the very same {@link #inFlightRuns}
+     * counter, that made the two waits additive — worst case approaching 8 minutes, well past a
+     * pod's termination grace period, with the queue consumer still admitting new deliveries for
+     * the whole first wait, since {@code ConsumerLifecycleController#stop()} (which is what
+     * actually stops the broker processor) had not even started yet (PR #29 review). Quiescing
+     * here, without waiting, lets {@code ConsumerLifecycleController#stop()} begin at once — which
+     * stops the processor from admitting further deliveries near the start of its own {@code
+     * stop()}, before its one remaining wait, {@code awaitInFlightRunsToDrain()} — so both intake
+     * paths are quiesced before either wait begins, and the shared counter (now already falling,
+     * since the in-flight run noticed {@link #stopping} as soon as this method raised it) drains
+     * against that one controller-owned deadline, not two stacked ones.
+     *
+     * <p>{@link #close()} keeps its own wait for the one case nothing else drains the counter: a
+     * standalone or test {@link ResendLegExecutor} with no {@code ConsumerLifecycleController} in
+     * the same context to do it (see {@code OperationsConfiguration}'s own Javadoc on that case).
      */
     @Override
     public void stop() {
-        close();
+        stopAndDrain();
+        running.set(false);
     }
 
     @Override
