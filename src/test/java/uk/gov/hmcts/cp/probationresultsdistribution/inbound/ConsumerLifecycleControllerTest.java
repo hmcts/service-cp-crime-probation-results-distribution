@@ -255,6 +255,66 @@ class ConsumerLifecycleControllerTest {
             }
         }
 
+        @Test
+        @DisplayName("the executor's SmartLifecycle phase is above the controller's default, so "
+                + "a context stops the executor first (PR #29 review)")
+        void executor_phase_is_above_the_controllers_default() {
+            try (ResendLegExecutor executor =
+                    new ResendLegExecutor(mock(LegResender.class), new AtomicInteger())) {
+                assertThat(executor.getPhase()).isGreaterThan(newController().getPhase());
+            }
+        }
+
+        @Test
+        @DisplayName("stopping the executor first (its higher SmartLifecycle phase) lets an "
+                + "in-flight run notice the request and finish, so the controller's own stop() "
+                + "drains at once instead of waiting out its own drainTimeout (PR #29 review: "
+                + "a destroy-time-only close() raised the stop too late for this to happen)")
+        void stopping_the_executor_first_drains_the_run_before_the_controller_waits()
+                throws InterruptedException {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicInteger inFlight = new AtomicInteger();
+            controller = newController(inFlight, Duration.ofSeconds(5L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            final LegResender resender = mock(LegResender.class);
+            final CountDownLatch runStarted = new CountDownLatch(1);
+            when(resender.run(any(), any())).thenAnswer(invocation -> {
+                final BooleanSupplier stopRequested = invocation.getArgument(1);
+                runStarted.countDown();
+                // A real multi-id batch checks stopRequested between ids (LegResender#stopClaiming)
+                // rather than blocking on an external release; simulate that here so a cooperative
+                // stop can actually end the run, instead of only an unconditional completion.
+                while (!stopRequested.getAsBoolean()) {
+                    Thread.sleep(10L);
+                }
+                return null;
+            });
+            try (ResendLegExecutor executor = new ResendLegExecutor(resender, inFlight)) {
+                executor.submit(acceptedRun());
+                assertThat(runStarted.await(AWAIT_LIMIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
+
+                // The order a SmartLifecycle group-stop enforces: the higher-phase bean (the
+                // executor) stops first, raising the cooperative stop before the controller's own
+                // stop() ever starts its wait on the shared counter.
+                executor.stop();
+
+                final CountDownLatch stopReturned = new CountDownLatch(1);
+                final Thread stopper = new Thread(() -> {
+                    controller.stop();
+                    stopReturned.countDown();
+                });
+                stopper.start();
+
+                // The run already noticed the stop and finished before executor.stop() returned;
+                // the controller's wait should not need anywhere near its 5-second drainTimeout.
+                assertThat(stopReturned.await(1L, TimeUnit.SECONDS)).isTrue();
+            }
+        }
+
         private ResendAcceptance.Accepted acceptedRun() {
             return new ResendAcceptance.Accepted(UUID.randomUUID(), List.of(UUID.randomUUID()),
                     "an-operator", false, Optional.empty());

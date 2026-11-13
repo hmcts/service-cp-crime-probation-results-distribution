@@ -209,6 +209,21 @@ the merge — `./gradlew build` green after each. T050g (the manual quickstart r
 Service Bus emulator) stays open; no live local stack was available this pass. **86 tasks: 79 of 86
 checked (74 original + T050a–T050f); T050g and the 5 pre-existing opens (T037, T053) remain.**
 
+A P1 found in PR #29's review (2026-11-13): T050f's counter-sharing alone did not fix FR-004-060.
+`ResendLegExecutor` only raised its cooperative stop from `close()`, wired as
+`@Bean(destroyMethod = "close")` — called during bean *destruction*, strictly after Spring's
+`SmartLifecycle` stop phase has already run, `ConsumerLifecycleController#stop()` included. So
+`ConsumerLifecycleController#stop()` started waiting on the shared `inFlightRuns` counter *before*
+anything told an in-progress resend-leg batch to stop early — it could only time out or wait out
+the whole batch. Fixed by making `ResendLegExecutor` itself a `SmartLifecycle` at `DEFAULT_PHASE`
+(`Integer.MAX_VALUE`; a group stops highest phase first) with `ConsumerLifecycleController` now
+explicitly one phase below (it had never overridden `getPhase()`, so it sat at the same
+`DEFAULT_PHASE` as an unmodified `ResendLegExecutor` would — a first attempt at this fix got the
+relative ordering backwards for exactly that reason, caught only once a test asserted the real
+phase values instead of an assumed one). `@Bean(destroyMethod = "close")` is removed;
+`SmartLifecycle#stop()` is now the only Spring-triggered shutdown path. Pinned by two new
+`ConsumerLifecycleControllerTest` cases. `./gradlew build` green after.
+
 `005-operations-api` (`specs/005-operations-api/plan.md`, with `research.md`, `data-model.md`,
 `quickstart.md` and `contracts/` alongside it) is **implemented in full — all 52 tasks checked** —
 over 004's real `ReplayAction` and `LegResender`; both `[NEEDS CLARIFICATION]` markers are resolved

@@ -199,7 +199,7 @@ public class OperationsConfiguration {
     }
 
     /**
-     * The one thread accepted resend-leg runs execute on, one at a time (FR-005-015); closed with
+     * The one thread accepted resend-leg runs execute on, one at a time (FR-005-015); stopped with
      * the context, when the running run claims nothing further and queued runs never start.
      *
      * <p>Shares {@code inFlightRunCounter} with {@code ServiceBusConsumerConfig}'s consumer wiring
@@ -212,12 +212,19 @@ public class OperationsConfiguration {
      * rather than required, and such a test's resend-leg run is simply never drained by a
      * {@code ConsumerLifecycleController} that does not exist there either.
      *
+     * <p><strong>No {@code destroyMethod}</strong>: {@link ResendLegExecutor} is a
+     * {@code SmartLifecycle} at a phase above {@code ConsumerLifecycleController}'s default, so
+     * Spring stops it during the lifecycle-stop phase of context close, before that controller's
+     * own {@code stop()} blocks on the shared counter — not during the later bean-destruction
+     * phase a {@code destroyMethod} would run in, which is too late for the stop to actually drain
+     * anything (PR #29 review: the ordering bug a {@code destroyMethod}-only shutdown had).
+     *
      * @param legResender        slice 004's resend-leg capability
      * @param inFlightRunCounter the consumer's shared in-flight-run counter, when one exists
      * @return the executor
      */
     /* default */
-    @Bean(destroyMethod = "close")
+    @Bean
     @ConditionalOnBean(LegResender.class)
     ResendLegExecutor resendLegExecutor(final LegResender legResender,
                                        final ObjectProvider<AtomicInteger> inFlightRunCounter) {
