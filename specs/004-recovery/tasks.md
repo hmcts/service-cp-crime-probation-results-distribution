@@ -1013,6 +1013,23 @@ letter suffixes off T050 so no existing task in this file is renumbered.
       a new `ResendLegExecutionIT$Shutdown` case proving `stop()` returns promptly while a run is
       deliberately held open, unlike `close()` (the existing cases in the same class already pin
       that `close()` waits and logs ERROR on timeout). `./gradlew build` green after.
+
+      **P2, round 3 (PR #29 review, 2026-11-13)**: round 2's fix removed the explicit
+      `destroyMethod = "close"` attribute from `OperationsConfiguration#resendLegExecutor`'s
+      `@Bean`, but a bare `@Bean` does not mean *no* destroy method — Spring's default is to
+      *infer* one, by looking for a public `close()` or `shutdown()` on the bean's own class, and
+      `ResendLegExecutor` has exactly that (`AutoCloseable#close()`). So Spring kept calling
+      `close()` during bean destruction regardless, reintroducing the very same additive-wait bug
+      round 2 believed it had closed: if a resend run outlived `ConsumerLifecycleController`'s own
+      drain wait (which logs WARN and returns), bean destruction then invoked `close()` and waited
+      a further `shutdownWait` (4 minutes) on top. Fixed with `@Bean(destroyMethod = "")` — the
+      explicit empty string Spring's own docs define as disabling destroy-method inference
+      outright, not merely omitting an attribute that reverts to the default. Pinned by a new
+      `ResendLegExecutionIT$ServingContext` case asserting the bean definition's own
+      `getDestroyMethodName()` is `""`, not `null`/inferred — a metadata-level pin, chosen over a
+      timing-based one because proving "Spring did not call `close()` a second time" by elapsed
+      time alone would be slow and fragile; this asserts the exact mechanism the review named
+      instead. `./gradlew build` green after.
 - [ ] T050g Run `quickstart.md` step 9 (close an expired resend lease) locally against the Service
       Bus emulator and a real Postgres, as T050 ran steps 3–4. **Not run in this pass**: no live
       local stack (Service Bus emulator, Postgres) was available in the environment this increment

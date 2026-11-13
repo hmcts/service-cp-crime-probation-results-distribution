@@ -212,19 +212,28 @@ public class OperationsConfiguration {
      * rather than required, and such a test's resend-leg run is simply never drained by a
      * {@code ConsumerLifecycleController} that does not exist there either.
      *
-     * <p><strong>No {@code destroyMethod}</strong>: {@link ResendLegExecutor} is a
-     * {@code SmartLifecycle} at a phase above {@code ConsumerLifecycleController}'s default, so
-     * Spring stops it during the lifecycle-stop phase of context close, before that controller's
-     * own {@code stop()} blocks on the shared counter — not during the later bean-destruction
-     * phase a {@code destroyMethod} would run in, which is too late for the stop to actually drain
-     * anything (PR #29 review: the ordering bug a {@code destroyMethod}-only shutdown had).
+     * <p><strong>{@code destroyMethod = ""}</strong>: {@link ResendLegExecutor} is a {@code
+     * SmartLifecycle} at a phase above {@code ConsumerLifecycleController}'s default, so Spring
+     * stops it during the lifecycle-stop phase of context close, before that controller's own
+     * {@code stop()} blocks on the shared counter — {@link ResendLegExecutor#stop()} quiesces
+     * without waiting, so that controller's own wait is the only one. A bare {@code @Bean} would
+     * not leave it at that: Spring <em>infers</em> a destroy method by default (looking for a
+     * public {@code close()} or {@code shutdown()} on the bean's own class) unless told not to —
+     * simply omitting an explicit {@code destroyMethod} attribute does not disable this inference,
+     * it reverts to it. Since {@link ResendLegExecutor} implements {@link AutoCloseable}, Spring
+     * would still find and call its {@code close()} during the later bean-destruction phase — and
+     * that method does wait, up to its own {@code shutdownWait}. Stacked after
+     * {@code ConsumerLifecycleController#stop()}'s own already-completed wait, that reintroduced
+     * the same additive-wait bug a first fix here believed it had closed (PR #29 review, round 2).
+     * {@code destroyMethod = ""} disables the inference outright; {@code SmartLifecycle#stop()},
+     * run during the earlier lifecycle-stop phase, is the only shutdown path left.
      *
      * @param legResender        slice 004's resend-leg capability
      * @param inFlightRunCounter the consumer's shared in-flight-run counter, when one exists
      * @return the executor
      */
     /* default */
-    @Bean
+    @Bean(destroyMethod = "")
     @ConditionalOnBean(LegResender.class)
     ResendLegExecutor resendLegExecutor(final LegResender legResender,
                                        final ObjectProvider<AtomicInteger> inFlightRunCounter) {

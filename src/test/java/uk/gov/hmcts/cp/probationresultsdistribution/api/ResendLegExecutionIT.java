@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -338,6 +339,27 @@ class ResendLegExecutionIT {
                 assertThat(context).hasSingleBean(LegResender.class);
                 assertThat(context).hasSingleBean(ResendLegExecutor.class);
                 assertThat(context).hasSingleBean(ResendLegController.class);
+            });
+        }
+
+        @Test
+        @DisplayName("the resendLegExecutor bean disables Spring's inferred destroy method "
+                + "(P2, PR #29 review): a bare @Bean still infers and calls AutoCloseable#close() "
+                + "during bean destruction by default — omitting an explicit destroyMethod "
+                + "attribute does not disable that, it reverts to it, reintroducing the same "
+                + "additive-wait bug a fix here had already closed once")
+        void resendLegExecutor_bean_disables_the_inferred_destroy_method() {
+            EndToEndTestSupport.startSharedContainers();
+            servingContext().run(context -> {
+                assertThat(context).hasNotFailed();
+                final ConfigurableApplicationContext source =
+                        context.getSourceApplicationContext(ConfigurableApplicationContext.class);
+                final String destroyMethodName = source.getBeanFactory()
+                        .getBeanDefinition("resendLegExecutor").getDestroyMethodName();
+                assertThat(destroyMethodName)
+                        .as("explicitly disabled (empty string), not merely absent — a bare "
+                                + "@Bean's default is to infer close()/shutdown(), not to skip it")
+                        .isEmpty();
             });
         }
 
