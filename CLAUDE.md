@@ -242,6 +242,16 @@ unconditionally, so `--operator --reason maintenance` parsed as `operator="--rea
 another flag's value. `cli/ResendLegRunner.java` has the identical pre-existing pattern — out of
 scope here, flagged for the owning team. `./gradlew build` green after both.
 
+A third round (2026-11-13) found P1's own fix incomplete: `OperationsConfiguration` had removed the
+explicit `destroyMethod = "close"`, but a bare `@Bean` does not mean no destroy method — Spring
+*infers* one by default, finding `ResendLegExecutor`'s own `AutoCloseable#close()` and calling it
+during bean destruction regardless, reintroducing the same additive wait once more. Fixed with
+`@Bean(destroyMethod = "")` — the explicit empty string Spring defines as disabling inference
+outright, not merely an attribute omitted and reverted to the default. Pinned by a metadata-level
+test asserting the bean definition's `getDestroyMethodName()` is `""`, chosen over a timing-based
+pin (proving "Spring didn't call `close()` again" by elapsed time alone would be slow and fragile).
+`./gradlew build` green after.
+
 `005-operations-api` (`specs/005-operations-api/plan.md`, with `research.md`, `data-model.md`,
 `quickstart.md` and `contracts/` alongside it) is **implemented in full — all 52 tasks checked** —
 over 004's real `ReplayAction` and `LegResender`; both `[NEEDS CLARIFICATION]` markers are resolved
