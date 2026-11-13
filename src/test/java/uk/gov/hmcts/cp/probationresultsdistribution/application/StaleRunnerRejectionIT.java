@@ -46,7 +46,7 @@ class StaleRunnerRejectionIT extends EndToEndTestSupport {
         final UUID requestId = UUID.randomUUID();
         final SimpleMeterRegistry meter = new SimpleMeterRegistry();
         final DistributionRunner runner = mock(DistributionRunner.class);
-        when(runner.run(any(), any(), any(), anyBoolean())).thenThrow(new IllegalStateException("boom"));
+        when(runner.run(any(), any(), any(), anyBoolean(), any())).thenThrow(new IllegalStateException("boom"));
         startProcessorWith(listenerWith(meter, runner, mock(ProcessedRequestRepository.class)), 1);
 
         sendCommand(requestId, "{\"ignored\":\"by the stubbed parser\"}");
@@ -64,7 +64,7 @@ class StaleRunnerRejectionIT extends EndToEndTestSupport {
         final DistributionRunner runner = mock(DistributionRunner.class);
         final RunResult stale =
                 new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), false);
-        when(runner.run(any(), any(), any(), anyBoolean())).thenReturn(stale);
+        when(runner.run(any(), any(), any(), anyBoolean(), any())).thenReturn(stale);
         startProcessorWith(listenerWith(meter, runner, repo), 1);
 
         sendCommand(requestId, "{\"ignored\":\"by the stubbed parser\"}");

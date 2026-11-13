@@ -229,6 +229,21 @@ class DistributionCommandSchemaTest {
         }
 
         @Test
+        @DisplayName("with a short non-canonical requestId is rejected as the wrong type, never "
+                + "silently normalised to a different id (S13)")
+        void rejects_a_short_non_canonical_request_id() {
+            // UUID.fromString accepts "1-1-1-1-1" (it has five dash-separated groups) and
+            // normalises it to 00000001-0001-0001-0001-000000000001, a different id than what was
+            // actually on the wire — exactly the aliasing the canonical-form check closes.
+            final String body = valid(false).replace("\"" + REQUEST_ID + "\"", "\"1-1-1-1-1\"");
+
+            assertThatThrownBy(() -> parser.parse(body))
+                    .isInstanceOf(CommandValidationException.class)
+                    .extracting(e -> ((CommandValidationException) e).kind())
+                    .isEqualTo(CommandValidationException.Kind.WRONG_TYPE);
+        }
+
+        @Test
         @DisplayName("never carries the offending field name in the exception")
         void never_quotes_the_field_name() {
             final String body = valid(true).replace("}", ",\n  \"secretFieldName\": \"x\"\n}");

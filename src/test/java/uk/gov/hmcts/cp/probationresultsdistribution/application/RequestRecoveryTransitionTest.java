@@ -58,7 +58,8 @@ class RequestRecoveryTransitionTest extends SchemaTestSupport {
             jdbc(), new TransactionTemplate(new DataSourceTransactionManager(datasource())),
             Duration.ofMinutes(4L).plusSeconds(30L));
     private final OutboundMessageRepository outbound = new OutboundMessageRepository(jdbc(),
-            new TransactionTemplate(new DataSourceTransactionManager(datasource())), "test-version");
+            new TransactionTemplate(new DataSourceTransactionManager(datasource())), "test-version",
+            repository);
 
     @Test
     @DisplayName("completes recovered when the admitting replayed run settles terminally")

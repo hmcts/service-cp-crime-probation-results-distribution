@@ -44,7 +44,11 @@ class ServiceBusHealthTest {
         final java.util.List<PropertySource<?>> sources = new YamlPropertySourceLoader().load("application",
                 new ClassPathResource("application.yaml"));
         assertThat(sources).hasSize(1);
-        assertThat(sources.getFirst().getProperty(
-                "management.endpoint.health.group.readiness.include")).isEqualTo("db");
+        final String readinessInclude = (String) sources.getFirst().getProperty(
+                "management.endpoint.health.group.readiness.include");
+        assertThat(readinessInclude)
+                .as("db and the migration gate only - never the broker (review of PR #23)")
+                .contains("db", "intakeMigration")
+                .doesNotContain("probationServiceBus");
     }
 }

@@ -2,8 +2,10 @@ package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
 import com.azure.identity.DefaultAzureCredentialBuilder;
 import com.azure.messaging.servicebus.ServiceBusClientBuilder;
+import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.SocketOptions;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.gateway.HmppsPublisher;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.payload.ResultsQueryExternalHearingClient;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
@@ -62,7 +64,17 @@ final class PipelineClients {
         if (!password.isBlank()) {
             uri.withPassword(password.toCharArray());
         }
-        return RedisClient.create(uri.build());
+        final RedisClient client = RedisClient.create(uri.build());
+        // distribution.redis.connect-timeout is validated at startup but, without this, never
+        // actually applied: RedisURI only carries the command timeout, so Lettuce fell back to its
+        // own 10s connect default regardless of the property, throwing off the payload-stage budget
+        // calculation (S6 review of PR #8/#23).
+        client.setOptions(ClientOptions.builder()
+                .socketOptions(SocketOptions.builder()
+                        .connectTimeout(properties.redis().connectTimeout())
+                        .build())
+                .build());
+        return client;
     }
 
     /**

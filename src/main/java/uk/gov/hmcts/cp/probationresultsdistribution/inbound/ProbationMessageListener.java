@@ -8,9 +8,11 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.dao.DataAccessException;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.GuardDecision;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IdempotencyGuard;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.OutcomeWriteAfterSendFailedException;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RunResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MdcFields;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
@@ -116,6 +118,18 @@ public final class ProbationMessageListener {
                     ? decide(message.getBody().toString(), deliveryCount, message.getSequenceNumber(),
                             message.getMessageId(), routeOf(message), supportOf(message))
                     : storeUnavailable(deliveryCount);
+        } catch (final DataAccessException dataAccessFailure) {
+            // Not swallowed: an unexpected failure is logged by type, counted and the delivery handed
+            // back for redelivery — or dead-lettered exhausted on its final permitted delivery, so the
+            // service's own reason is counted rather than the broker's (FR-002-007).
+            metrics.processingFailure();
+            LOG.error("unexpected failure processing a delivery; handing it back; type={}",
+                    dataAccessFailure.getClass().getName());
+            // storeAvailable's SELECT 1 probe above can succeed while a write fails (a read-only
+            // replica, a standby endpoint, revoked grants): without this, intake never suspends and
+            // the whole backlog drains to the DLQ against FR-002-009 (review of PR #8).
+            storeAvailable = false;
+            settlement = handBack(deliveryCount);
         } catch (final RuntimeException unexpected) {
             // Not swallowed: an unexpected failure is logged by type, counted and the delivery handed
             // back for redelivery — or dead-lettered exhausted on its final permitted delivery, so the
@@ -191,6 +205,10 @@ public final class ProbationMessageListener {
                 Optional.empty());
     }
 
+    // An admitted run's unexpected failure must still be settled rather than left to propagate
+    // past this method unsettled; catching the generic type here is deliberate, mirroring
+    // processMessage's own convention, and never swallows — it hands the delivery back.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private Settlement decide(final String body, final long deliveryCount,
                               final long sequenceNumber, final String messageId,
                               final ReplayRoute route, final Optional<SupportSubmission> support) {
@@ -233,16 +251,73 @@ public final class ProbationMessageListener {
                                 command.requestId(), route.wireValue(), replayId);
                     });
                 }
-                if (admitted.terminalSuccess()) {
-                    yield completeTerminal(command, admitted.claim(), deliveryCount);
+                try {
+                    if (admitted.terminalSuccess()) {
+                        yield completeTerminal(command, admitted.claim(), deliveryCount);
+                    }
+                    if (admitted.alreadyExhausted()) {
+                        yield failLegExhausted(command, admitted.claim(), deliveryCount, messageId);
+                    }
+                    yield runAndSettle(command, admitted.claim(), deliveryCount,
+                            admitted.gatewayParked(), admitted.replayMessageId(), messageId);
+                } catch (final RuntimeException unexpected) {
+                    yield handUnexpectedFailureBack(command, admitted.claim(), deliveryCount,
+                            unexpected);
                 }
-                if (admitted.alreadyExhausted()) {
-                    yield failLegExhausted(command, admitted.claim(), deliveryCount, messageId);
-                }
-                yield runAndSettle(command, admitted.claim(), deliveryCount, admitted.gatewayParked(),
-                        admitted.replayMessageId(), messageId);
             }
         };
+    }
+
+    /**
+     * Handles an unexpected failure after admission (review of PR #8). Left live, the claim rejects
+     * every redelivery as {@code claimLive()} until its lease naturally expires, burning the whole
+     * delivery budget in about a second and dead-lettering {@code exhausted} without a genuine retry
+     * ever running — so it is released here, token-guarded, before the hand-back, letting the very
+     * next redelivery try again for real.
+     *
+     * <p>Releasing it is only safe when nothing could have reached HMPPS yet: the broker redelivers
+     * an abandoned message almost immediately, with no backoff of its own, and the HMPPS POST is not
+     * idempotent (design H15; "every duplicate is genuine at HMPPS"). A failure wrapped as
+     * {@link OutcomeWriteAfterSendFailedException} — the leg's own outcome write throwing after a
+     * real send attempt — is the one case where a POST may already have gone out, so the claim is
+     * left live there instead, falling back to its lease's natural expiry exactly as it already did,
+     * rather than risk an immediate duplicate send. Whichever path, a {@link DataAccessException}
+     * (direct or wrapped) suspends intake, the same as the store precondition's own probe failing
+     * would have (FR-002-009).
+     *
+     * @param command       the admitted command
+     * @param claim         the claim to release when it is safe to
+     * @param deliveryCount the broker delivery count, for the hand-back
+     * @param unexpected    the failure
+     * @return the settlement to apply
+     */
+    private Settlement handUnexpectedFailureBack(final DistributionCommand command, final RunClaim claim,
+                                                 final long deliveryCount,
+                                                 final RuntimeException unexpected) {
+        metrics.processingFailure();
+        final boolean afterSend = unexpected instanceof OutcomeWriteAfterSendFailedException;
+        LOG.error("unexpected failure processing an admitted delivery; handing it back; "
+                + "claimReleased={} type={}", !afterSend, unexpected.getClass().getName());
+        if (!afterSend) {
+            releaseClaimQuietly(command, claim);
+        }
+        if (unexpected instanceof DataAccessException || unexpected.getCause() instanceof DataAccessException) {
+            storeGate.suspendIntake();
+        }
+        return handBack(deliveryCount);
+    }
+
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    // Deliberately total and swallowed: this is best-effort cleanup after an unexpected failure already
+    // being handled by the caller. A second failure here (the same outage, most likely) must not replace
+    // or mask the original exception the caller is about to classify and handle.
+    private void releaseClaimQuietly(final DistributionCommand command, final RunClaim claim) {
+        try {
+            processedRequests.releaseClaim(command.source(), command.requestId(), claim);
+        } catch (final RuntimeException releaseFailure) {
+            LOG.error("failed to release the claim after an unexpected failure; its lease will still "
+                    + "expire naturally; type={}", releaseFailure.getClass().getName());
+        }
     }
 
     /**
@@ -279,13 +354,20 @@ public final class ProbationMessageListener {
         return deliveryCount >= (long) maxDeliveryCount - 1;
     }
 
+    // The leg write and the request transition it implies are now one atomic write (review of PR #8;
+    // OutboundMessageRepository#applyRequestTransition), so result.recorded() already
+    // speaks for both, and this method settles the broker message against result.status() alone,
+    // writing nothing itself. completeTerminal() and failLegExhausted() below still write: they are
+    // also the reclaim paths (decide()'s terminalSuccess/alreadyExhausted), which find the leg
+    // already settled by an earlier, crash-interrupted delivery and owe only the request transition.
     private Settlement runAndSettle(final DistributionCommand command, final RunClaim claim,
                                     final long deliveryCount, final boolean gatewayParked,
                                     final Optional<String> replayMessageId, final String messageId) {
         final boolean finalDelivery = isFinalPermittedDelivery(deliveryCount);
         final RunResult result = replayMessageId.isPresent()
-                ? runner.run(command, AttemptOrigin.REPLAY, claim, finalDelivery, replayMessageId.get())
-                : runner.run(command, AttemptOrigin.QUEUE, claim, finalDelivery);
+                ? runner.run(command, AttemptOrigin.REPLAY, claim, finalDelivery,
+                        replayMessageId.get(), messageId)
+                : runner.run(command, AttemptOrigin.QUEUE, claim, finalDelivery, messageId);
         if (!result.recorded()) {
             return staleRunnerRejection(deliveryCount);
         }
@@ -293,20 +375,21 @@ public final class ProbationMessageListener {
             metrics.gatewayRecovered(GatewayRecovery.FIVE_XX_REDELIVERY);
         }
         return switch (result.status()) {
-            case SENT, NOT_APPLICABLE -> completeTerminal(command, claim, deliveryCount);
-            case FAILED -> settleFailed(command, claim, deliveryCount, result.reason(), messageId);
-            case PARKED -> {
-                final boolean recorded =
-                        processedRequests.markRetrying(command.source(), command.requestId(), claim);
-                yield recorded ? new Abandon() : staleRunnerRejection(deliveryCount);
-            }
+            case SENT, NOT_APPLICABLE -> settleCompletedMessage();
+            case FAILED -> isExhaustionReason(result.reason())
+                    ? settleLegExhaustedMessage()
+                    : settleCompletedMessage();
+            case PARKED -> new Abandon();
             case PENDING -> throw new IllegalStateException("a run never ends PENDING");
         };
     }
 
     /**
-     * Settles a terminal leg ({@code SENT}, {@code NOT_APPLICABLE}, or a {@code FAILED} whose reason
-     * is terminal) by completing the request {@code both-legs-terminal} and completing the message.
+     * Completes the request {@code both-legs-terminal} and the message, for the reclaim path: a
+     * redelivery that finds the leg already terminal from an earlier delivery a crash interrupted
+     * before this transition committed. The post-run path settles on {@link #settleCompletedMessage}
+     * instead, since there the transition already landed atomically with the leg write (review of PR
+     * #8).
      *
      * @param command       the admitted command
      * @param claim         the request claim fencing the transition
@@ -320,40 +403,21 @@ public final class ProbationMessageListener {
         if (!recorded) {
             return staleRunnerRejection(deliveryCount);
         }
+        return settleCompletedMessage();
+    }
+
+    private Settlement settleCompletedMessage() {
         metrics.processed("COMPLETED");
         return new Complete();
     }
 
     /**
-     * Settles a {@code FAILED} leg. A terminal reason ({@code receiver-rejected},
-     * {@code rules-exception}) completes the request {@code both-legs-terminal}. An exhaustion reason
-     * ({@code payload-unavailable}, {@code gateway-transient}) is only ever produced on the final
-     * permitted delivery, so the request is failed {@code leg-exhausted} and the message is
-     * dead-lettered {@code leg-exhausted} (FR-002-047).
-     *
-     * @param command       the admitted command
-     * @param claim         the request claim fencing the transition
-     * @param deliveryCount the broker delivery count, for a stale-runner hand-back
-     * @param reason        the leg's failure reason
-     * @param messageId     the identity of the delivery that exhausted the leg
-     * @return the settlement to apply
-     */
-    private Settlement settleFailed(final DistributionCommand command, final RunClaim claim,
-                                    final long deliveryCount, final Optional<LegReason> reason,
-                                    final String messageId) {
-        if (!isExhaustionReason(reason)) {
-            return completeTerminal(command, claim, deliveryCount);
-        }
-        return failLegExhausted(command, claim, deliveryCount, messageId);
-    }
-
-    /**
      * Fails the request {@code leg-exhausted} and dead-letters the message under the same reason
-     * (FR-002-047). Shared by a leg that just reached exhaustion on this delivery
-     * ({@link #settleFailed}) and by a reclaim that found the leg's exhaustion outcome already
-     * recorded by a delivery a crash interrupted before this transition committed (FR-002-012,
-     * FR-002-047) — the latter never re-runs the leg; only this transition and the dead-letter were
-     * still owed.
+     * (FR-002-047), for the reclaim path: a redelivery that finds the leg's exhaustion outcome
+     * already recorded by a delivery a crash interrupted before this transition committed
+     * (FR-002-012). It never re-runs the leg; only this transition and the dead-letter were still
+     * owed. The post-run path settles on {@link #settleLegExhaustedMessage} instead, since there the
+     * transition already landed atomically with the leg write (review of PR #8).
      *
      * @param command       the admitted command
      * @param claim         the request claim fencing the transition
@@ -368,6 +432,10 @@ public final class ProbationMessageListener {
         if (!recorded) {
             return staleRunnerRejection(deliveryCount);
         }
+        return settleLegExhaustedMessage();
+    }
+
+    private Settlement settleLegExhaustedMessage() {
         metrics.deadLettered(DeadLetterReason.LEG_EXHAUSTED);
         metrics.processed("FAILED");
         return new DeadLetter(DeadLetterReason.LEG_EXHAUSTED);

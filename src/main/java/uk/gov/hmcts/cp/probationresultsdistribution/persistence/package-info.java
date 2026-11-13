@@ -12,10 +12,11 @@
  *
  * <p>{@code outbound_body} is partitioned by calendar month in UTC, with a DEFAULT partition. A
  * body row is inserted after the attempt's outcome UPDATE, in the same transaction; an in-place
- * re-run replaces it; and a trigger refuses a body whose SHA-256 differs from the attempt's
- * {@code body_digest}. Whole months are dropped by the daily body-retention job once past the
- * retention (design H20), so a body is kept 6-7 months while the digest stays on the attempt row.
- * Stored bodies are never logged.
+ * re-run replaces it. There is no database trigger (H39): the single write path behind
+ * {@code OutboundLog} stores the same bytes it digested, so a body's SHA-256 equals the attempt's
+ * {@code body_digest} by construction, not by a database check. Whole months are dropped by the
+ * daily body-retention job once past the retention (design H20), so a body is kept 6-7 months while
+ * the digest stays on the attempt row. Stored bodies are never logged.
  *
  * <p><strong>Dependency direction.</strong> Declares the request store the idempotency guard claims
  * through ({@code ProcessedRequestRepository}, an infra-free interface carrying only {@code domain}
