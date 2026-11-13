@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.SmartLifecycle;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendAcceptance;
 
@@ -46,11 +47,39 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendAcceptance
  * through this executor, so a rolling deploy waits for it too, up to the processing deadline,
  * rather than leaving its row for {@code close-expired-resend} every time. The standalone
  * {@code cli.ResendLegRunner} process is unaffected — it has no Spring shutdown lifecycle to drain.
+ *
+ * <p>Implements {@link SmartLifecycle}, at {@link SmartLifecycle#DEFAULT_PHASE} — one phase above
+ * {@code ConsumerLifecycleController}'s own, deliberately lowered phase — so Spring stops this
+ * bean <strong>first</strong> on context close (a {@code SmartLifecycle} group stops highest phase
+ * first). That ordering is what makes the shared counter actually drain: {@link #stop()} raises
+ * {@link #stopping} and tells the in-flight run to finish the id it is on and claim nothing
+ * further, so {@code inFlightRuns} falls promptly, before {@code
+ * ConsumerLifecycleController#stop()} — stopped after this one — ever starts its own wait on that
+ * counter. Relying on bean destruction instead (this class is {@link AutoCloseable} too, for
+ * direct/test use with no Spring context) would raise the stop too late: a {@code
+ * @Bean(destroyMethod = "close")} only runs after every {@code SmartLifecycle} has already been
+ * stopped, by which point {@code ConsumerLifecycleController#stop()} has already finished its own
+ * wait — for the whole batch, if nothing told it to stop sooner — and returned. Both an earlier
+ * destroy-method-only version of this class, and a first fix that raised this bean's own phase
+ * without first checking that {@code ConsumerLifecycleController} does not override {@link
+ * SmartLifecycle#getPhase()} — it does not, so it already sat at {@code
+ * SmartLifecycle.DEFAULT_PHASE} itself, same as any unmodified phase here would — got this
+ * ordering backwards; a unit test driving the real phase values (not an assumed one) now pins it
+ * (PR #29 review).
  */
-public final class ResendLegExecutor implements AutoCloseable {
+public final class ResendLegExecutor implements SmartLifecycle, AutoCloseable {
 
     /** The executor thread's name. */
     /* default */ static final String THREAD_NAME = "resend-leg-run";
+
+    /**
+     * {@link SmartLifecycle#DEFAULT_PHASE}, named explicitly here (rather than left as every
+     * {@code SmartLifecycle} bean's own unoverridden default) so the relationship to {@code
+     * ConsumerLifecycleController#getPhase()} — one phase lower, by that class's own deliberate
+     * override — reads at this use site without a reader needing to know {@code SmartLifecycle}'s
+     * own default-method value from memory.
+     */
+    private static final int PHASE = DEFAULT_PHASE;
 
     private static final Logger LOG = LoggerFactory.getLogger(ResendLegExecutor.class);
     private static final Duration SHUTDOWN_WAIT = Duration.ofMinutes(4);
@@ -59,6 +88,7 @@ public final class ResendLegExecutor implements AutoCloseable {
     private final AtomicInteger inFlightRuns;
     private final Duration shutdownWait;
     private final AtomicBoolean stopping = new AtomicBoolean();
+    private final AtomicBoolean running = new AtomicBoolean();
     private final BlockingQueue<Runnable> queue = new LinkedBlockingQueue<>();
     private final ThreadPoolExecutor executor;
 
@@ -110,6 +140,10 @@ public final class ResendLegExecutor implements AutoCloseable {
 
     /**
      * Stops the executor: the running run claims nothing further, queued runs never start.
+     *
+     * <p>Safe to call more than once (idempotent): {@link SmartLifecycle#stop()} calls this during
+     * context close, and a direct/test caller may also call it explicitly; the second call finds
+     * {@link #stopping} already set and the executor already shut down.
      */
     @Override
     public void close() {
@@ -122,7 +156,38 @@ public final class ResendLegExecutor implements AutoCloseable {
             Thread.currentThread().interrupt();
             LOG.error("resend-leg shutdown wait interrupted cause={}",
                     interrupted.getClass().getSimpleName());
+        } finally {
+            running.set(false);
         }
+    }
+
+    /**
+     * Starts participating in the context's lifecycle. The executor's thread is already live once
+     * constructed; nothing else needs starting.
+     */
+    @Override
+    public void start() {
+        running.set(true);
+    }
+
+    /**
+     * Stops this bean before {@code ConsumerLifecycleController} (see class Javadoc on
+     * {@link #PHASE}), raising {@link #stopping} early enough that the shared drain counter
+     * actually falls during that controller's own wait, not after it.
+     */
+    @Override
+    public void stop() {
+        close();
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    @Override
+    public int getPhase() {
+        return PHASE;
     }
 
     /** Raises the stop, drops every queued run and shuts the thread down, exclusive of submit. */

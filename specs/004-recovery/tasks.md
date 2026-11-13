@@ -956,6 +956,30 @@ letter suffixes off T050 so no existing task in this file is renumbered.
       `inbound/ConsumerLifecycleController` already waits on in `stop()`, around the run — no new
       drain mechanism, the existing one now also covers a resend-leg run (FR-004-060) — satisfies
       T050c
+
+      **P1 fix (PR #29 review, 2026-11-13)**: the counter-sharing alone was not enough.
+      `ResendLegExecutor` only raised its own cooperative stop (`stopping`, which tells an
+      in-flight run to finish its current id and claim nothing further) from its `close()`, wired
+      as the bean's `@Bean(destroyMethod = "close")` — which Spring calls during *bean
+      destruction*, strictly after `getLifecycleProcessor().onClose()` has already called every
+      `SmartLifecycle` bean's `stop()`, `ConsumerLifecycleController` included. So
+      `ConsumerLifecycleController#stop()` started its wait on `inFlightRuns` *before* anything
+      told a resend-leg batch in progress to stop early — it could only wait out the whole batch,
+      or its own `drainTimeout`, then return regardless, with the resend-leg run still going.
+      Fixed by making `ResendLegExecutor` itself a `SmartLifecycle`, at `DEFAULT_PHASE`
+      (`Integer.MAX_VALUE`) — a `SmartLifecycle` group stops highest phase first — with
+      `ConsumerLifecycleController#getPhase()` now explicitly one below that
+      (`DEFAULT_PHASE - 1`; it had never overridden `getPhase()` before, so it sat at
+      `DEFAULT_PHASE` itself, the same as `ResendLegExecutor` would without an explicit value —
+      an unreliable tie a first attempt at this fix missed, caught only once a test drove the real
+      phase values rather than an assumed one). The `@Bean(destroyMethod = "close")` is removed;
+      `SmartLifecycle#stop()` (delegating to the unchanged `close()` body) is now the only
+      shutdown path from Spring. Pinned by two new
+      `ConsumerLifecycleControllerTest$ResendLegRunInFlightAtShutdown` cases: the phase ordering
+      itself, and a resend run that checks a `BooleanSupplier` between ids (as
+      `LegResender#stopClaiming` really does) stopping within ~1 second of `executor.stop()`,
+      rather than running to completion before `controller.stop()` can return. `./gradlew build`
+      green after.
 - [ ] T050g Run `quickstart.md` step 9 (close an expired resend lease) locally against the Service
       Bus emulator and a real Postgres, as T050 ran steps 3–4. **Not run in this pass**: no live
       local stack (Service Bus emulator, Postgres) was available in the environment this increment
