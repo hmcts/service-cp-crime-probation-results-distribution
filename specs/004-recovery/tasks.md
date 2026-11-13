@@ -949,6 +949,19 @@ letter suffixes off T050 so no existing task in this file is renumbered.
       `CloseExpiredResendAction`, maps its outcome to the `DONE`/`REFUSED`/`FAILED` exit codes
       per `contracts/cli-runners.md` §9; register it in `cli/RunnerDispatcher.java`'s dispatch table
       (T002) — satisfies T050b
+
+      **P2 fix (PR #29 review, 2026-11-13)**: `valueOf`'s flag-value scan took the token right
+      after a recognised flag as its value unconditionally — `--operator --reason maintenance`
+      parsed as `operator="--reason"`, `reason="maintenance"`, both non-blank, so a genuinely
+      missing operator value silently passed `checkArguments` (FR-004-020 violated: an eligible
+      request could be closed with no real operator recorded). Fixed by refusing to accept a
+      recognised flag's own name as another flag's value — a flag immediately followed by another
+      flag (or nothing) is now `missing-argument`, as it already was for a flag followed by
+      nothing at all. Pinned by
+      `CloseExpiredResendRunnerTest$Arguments.a_flag_with_no_value_does_not_swallow_the_next_flags_name`.
+      `cli/ResendLegRunner.java`'s own `valueOf` has the identical, pre-existing pattern and the
+      same latent risk — out of this task's scope (it predates this slice), flagged for the
+      owning team separately.
 - [X] T050f [US3] Wire `api/ResendLegExecutor`'s in-process run (the path slice 005's operations API
       reaches `LegResender` through, inside the server's own JVM — the standalone
       `cli/ResendLegRunner.java` process has no shutdown lifecycle to wait on and is unaffected) to
@@ -980,6 +993,26 @@ letter suffixes off T050 so no existing task in this file is renumbered.
       `LegResender#stopClaiming` really does) stopping within ~1 second of `executor.stop()`,
       rather than running to completion before `controller.stop()` can return. `./gradlew build`
       green after.
+
+      **P1 round 2 (PR #29 review, 2026-11-13)**: the phase fix above was not sufficient by
+      itself. `SmartLifecycle#stop()` still *delegated to `close()`*, which also waits (up to
+      `shutdownWait`, 4 minutes) for the run in flight to actually terminate. Stacked ahead of
+      `ConsumerLifecycleController#stop()`'s own wait on the same counter (ordered correctly now,
+      but still a *second* independent wait), the two were additive — worst case approaching
+      8 minutes, well past a typical pod termination grace period — and the queue consumer was
+      still admitting new deliveries for the whole of the first wait, since
+      `ConsumerLifecycleController#stop()` (which is what actually calls `processor.stop()`) had
+      not even started. Fixed by splitting the two contracts apart: `stop()` now *quiesces only*
+      (raises `stopping`, drops queued-but-not-started runs, shuts the executor down to new
+      submissions) and returns at once, without waiting; `close()` keeps the full quiesce-and-wait
+      behaviour, for the one case nothing else drains the shared counter (a standalone or test
+      instance with no `ConsumerLifecycleController` in the same context). Because `stop()` no
+      longer waits, `ConsumerLifecycleController#stop()` — which already quiesces the queue
+      (`processor.stop()`) *before* its own `awaitInFlightRunsToDrain()` — becomes the single
+      remaining wait, against its one `drainTimeout`, for both kinds of in-flight work. Pinned by
+      a new `ResendLegExecutionIT$Shutdown` case proving `stop()` returns promptly while a run is
+      deliberately held open, unlike `close()` (the existing cases in the same class already pin
+      that `close()` waits and logs ERROR on timeout). `./gradlew build` green after.
 - [ ] T050g Run `quickstart.md` step 9 (close an expired resend lease) locally against the Service
       Bus emulator and a real Postgres, as T050 ran steps 3–4. **Not run in this pass**: no live
       local stack (Service Bus emulator, Postgres) was available in the environment this increment
