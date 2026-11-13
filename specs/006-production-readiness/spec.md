@@ -142,7 +142,7 @@ are not being created). Slice 003 answers its open question 2 with them (003's A
   "Gateway refusing": `http` 401 or `4xx-other`, more than 3 in an hour, no longer a proposal; the
   threshold is still tuned after go-live. A 403 or 404 is as silent a credential or route failure as
   a 401. 400s stay counted, and only the case-hearing 400 spike pages (alert 8) (H41).
-- Q: Who purges the queue at rollback and roll-forward, and how? → A: DevOps, by hand, in the Azure
+- Q: Who purges the queue at rollback and roll-forward, and how? → A: the AMS team and 3rd line support, by hand, in the Azure
   portal's Service Bus Explorer (Purge messages, active queue only, intake paused), recording the
   count, the time, who ran it and the cut-off on the ticket. The `purge-queue` runner is the backup
   (H42; 004's FR-004-061).
@@ -840,7 +840,7 @@ and check each item of §9.6 row 1 against its source.
   - 5: Reconcile the period the service was live, from cutover to the start of the rollback
     window. The legacy app must show no HMPPS send or orchestration in that period.
   - 6: Purge the queue, recording the count removed and the cut-off. This is done only after the
-    reconciliation, and only while intake is paused. DevOps purge by hand in the Azure portal's
+    reconciliation, and only while intake is paused. The AMS team and 3rd line support purge by hand in the Azure portal's
     Service Bus Explorer, the active queue only; the `purge-queue` runner is the backup (H42).
   - 6a: Once the Results switch is on again, replay goes only through the service's replay action:
     the operations API (005), with its runner as the fallback. The dead-letter queue holds no copy.
@@ -887,12 +887,12 @@ and check each item of §9.6 row 1 against its source.
   5. Reconcile the paused queue against T. Messages for shares before T reached neither path, and
      are repaired by a court re-share, not by the service. Messages for shares after T were handled
      by the function app, and are purged. Intake is not resumed. Then do planned steps 5–7.
-  6. Purge the queue, recording the count and the cut-off: by DevOps in the Azure portal's
+  6. Purge the queue, recording the count and the cut-off: by the AMS team and 3rd line support in the Azure portal's
      Service Bus Explorer, as planned step 6 (H42).
 
   *(H32; A3-113; A3-117 (iii); §9.4)*
 - **FR-006-043**: The roll-forward inputs MUST state the steps below, in this order, with intake
-  still paused: (1) purge the queue, by DevOps in the Azure portal's Service Bus Explorer as
+  still paused: (1) purge the queue, by the AMS team and 3rd line support in the Azure portal's Service Bus Explorer as
   planned step 6, with the `purge-queue` runner as the backup (H42); (2) reconcile every message received since the recorded cut-off;
   (3) run a full new cutover in a weekend window: the subscription off, then the Results flag on,
   then the 10-minute wait; (4) only then resume intake. *(A2-52; A3-117 (ii); §9.3)*

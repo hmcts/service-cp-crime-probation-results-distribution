@@ -64,7 +64,7 @@ provide the precise, testable contract for these operator behaviours.
 
 - Q: How is an expired `PENDING` resend row recovered without the full rollback close-in-flight? → A: It is still never reclaimed (FR-004-024 option B stands). A single-row command, `close-expired-resend` (name proposed), closes that one row `FAILED(rolled-back)` with no intake pause; the operator then confirms with HMPPS and resends it (H40, FR-004-059).
 - Q: Does shutdown wait for a resend-leg run in progress? → A: Yes, as it does for a queue delivery, bounded by the processing deadline, so a rolling deploy does not leave a resend row stuck `PENDING` (H40, FR-004-060).
-- Q: How is the queue purged at rollback and roll-forward, given the Service Bus SDK has no delete-before-time operation? → A: By DevOps in the Azure portal's Service Bus Explorer (Purge messages, active queue only, intake paused). The `purge-queue` runner stays as the backup and the scriptable route, and is usable once the SDK can delete (H42, FR-004-061).
+- Q: How is the queue purged at rollback and roll-forward, given the Service Bus SDK has no delete-before-time operation? → A: By the AMS team and 3rd line support in the Azure portal's Service Bus Explorer (Purge messages, active queue only, intake paused). The `purge-queue` runner stays as the backup and the scriptable route, and is usable once the SDK can delete (H42, FR-004-061).
 
 ### Session 2026-10-26
 
@@ -510,7 +510,7 @@ the seeded state.
 When a rollback starts, the operator pauses intake — the service's only stop — so that nothing more
 is taken from the queue while the legacy function app sends again. Once the live period has been
 reconciled, the paused queue is purged and the count and the cut-off are recorded. Intake is
-resumed only as the last step of a new cutover. The purge itself is done by DevOps in the Azure
+resumed only as the last step of a new cutover. The purge itself is done by the AMS team and 3rd line support in the Azure
 portal's Service Bus Explorer; the `purge-queue` runner is the backup, usable once the Service Bus
 SDK can delete (H42, FR-004-061).
 
@@ -1081,7 +1081,7 @@ Assumptions.
   untouched, and report, and write as one structured log line, the number removed and the cut-off
   instant. A message enqueued after the cut-off stays, for the reconciliation that follows.
   *(§4.8 action 6; R1-28b; §9.4 step 6; A2-52; Assumption 18)*
-- **FR-004-061**: The primary route for a rollback or roll-forward purge MUST be the manual one: DevOps
+- **FR-004-061**: The primary route for a rollback or roll-forward purge MUST be the manual one: the AMS team and 3rd line support
   purge the `probation.requests` active queue in the Azure portal's Service Bus Explorer (Purge
   messages), never the dead-letter queue, only while intake is paused, repeating until the active
   count reads 0, and record the count before, the time, who ran it and the cut-off on the ticket.
@@ -1171,7 +1171,7 @@ Assumptions.
   recipe's `requestId`, no `userId`, and the application properties `origin = SUPPORT`, operator,
   run id and reason.
 - **Purge record**: the number of messages a purge removed and its cut-off instant — for the manual
-  portal purge, DevOps' record on the ticket (FR-004-061); for the backup runner, reported and
+  portal purge, the AMS team and 3rd line support's record on the ticket (FR-004-061); for the backup runner, reported and
   logged; nothing about it is stored.
 - **Outcome and refusal codes**: per ID, `unknown-request`, `not-eligible`, `resend-in-progress`,
   `request-claimed` (the design's; close-expired-resend uses the first three, FR-004-059);
@@ -1304,7 +1304,7 @@ Assumptions.
     removed and the cut-off instant" and has the roll-forward reconcile "every message received
     since the recorded cut-off" (A2-52), so the cut-off is the boundary: messages enqueued before it
     are removed, later ones stay for that reconciliation. Nothing about a purge is stored; the
-    operator records the report on the rollback ticket — for the manual portal purge, DevOps record
+    operator records the report on the rollback ticket — for the manual portal purge, the AMS team and 3rd line support record
     the count, the time, who ran it and the cut-off (FR-004-061, H42).
 19. **Submit-hearing's refusal and run id.** The design refuses submit-hearing when the payload is
     absent from Redis. A cached payload that cannot be read, or that carries no `sharedTime`, cannot
