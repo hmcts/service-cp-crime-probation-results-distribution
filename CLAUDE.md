@@ -177,6 +177,38 @@ gap recorded 2026-10-27, not an application bug); T053 (walking the DLQ runbook 
 submit-hearing, matches `quickstart.md` exactly); T076 (re-checked 2026-11-02: no owning-team change
 has overturned any of the three confirmed decisions since 2026-10-26); and this paragraph (T077).
 
+A staleness surfaced 2026-11-13: H40 (`close-expired-resend`, FR-004-059/060, decided 2026-11-09)
+was fully specified in `spec.md` — its own Clarifications entries, the FR pair and its
+`doc/design/DIGEST.md` row — but was never carried into this slice's Phase 0/1 artifacts and had no
+task in `tasks.md` at all, so it was never implemented. `plan.md` (Summary, Technical Context
+Scale/Scope, Constitution Check, Project Structure), `research.md` (Decision 1's amendment) and
+`contracts/cli-runners.md` §9 and `quickstart.md` step 9 (appended, not inserted mid-list, so the
+section/step numbers this slice's own completed-task records already cite — T037's "step 6", T071's
+"step 7", `cli-runners.md` §1/§2/§3/§4/§5/§6/§7/§8 — stay correct) now carry it as a seventh runner,
+`CloseExpiredResendAction`/`CloseExpiredResendRunner`. No new port, table or migration is needed — it
+reuses slice 002's `note`/`claim_token`/`audit_note` columns and the request-row-then-leg-row lock
+order already established for rollback close-in-flight. `/speckit-tasks` (2026-11-13) added the
+missing work as T050a–T050g in Phase 6 (US3), letter-suffixed off T050 so no existing task
+renumbers; it also found FR-004-060 (shutdown waits for a resend-leg run in progress) is not yet
+wired to the shared `inFlightRuns` drain counter `inbound/ConsumerLifecycleController` already uses
+for queue deliveries — T050f closes that.
+
+`/speckit-implement` (2026-11-13) built T050a–T050f: `application/CloseExpiredResendAction.java`,
+`application/CloseExpiredResendOutcome.java`, `cli/CloseExpiredResendRunner.java`,
+`persistence/{CloseExpiredResendRepository,JdbcCloseExpiredResendRepository}.java` (new), and
+`api/ResendLegExecutor.java`/`config/OperationsConfiguration.java`/`config/OperatorCommandLine.java`
+(modified — the shared-counter wiring and the new runner's registration). The mandatory
+code-reviewer/qa/spec-validator gate found code-reviewer PASS (0 High/Medium; 2 Low advisories, not
+fixed — the request-row lock is scoped by `request_id` alone rather than `(source, request_id)`,
+safe today since every row carries `source = RESULTS`) and spec-validator COMPLIANT, but qa FAIL on
+two coverage gaps: no test at all for the runner's own argument validation, and the note merge's
+"replacing any earlier `prev=`" branch was never exercised (every seeded test row had a `null`
+note). Both fixed test-first in the same pass — `cli/CloseExpiredResendRunnerTest.java` (new, 9
+cases) and a new `CloseExpiredResendIT` case seeding a prior `prev=`/`override=` note and asserting
+the merge — `./gradlew build` green after each. T050g (the manual quickstart run against a live
+Service Bus emulator) stays open; no live local stack was available this pass. **86 tasks: 79 of 86
+checked (74 original + T050a–T050f); T050g and the 5 pre-existing opens (T037, T053) remain.**
+
 `005-operations-api` (`specs/005-operations-api/plan.md`, with `research.md`, `data-model.md`,
 `quickstart.md` and `contracts/` alongside it) is **implemented in full — all 52 tasks checked** —
 over 004's real `ReplayAction` and `LegResender`; both `[NEEDS CLARIFICATION]` markers are resolved
@@ -193,8 +225,8 @@ roots, and the same live runs confirmed replay, resend-leg and forced resend all
 HTTP against the real services, with the exact `202`/`200` shapes `quickstart.md` documents, the
 `401` with no `CJSCPPUID`, and the US7 HTTP/CLI parity check. **Nothing left open in 005.**
 `006-production-readiness` (`specs/006-production-readiness/plan.md`, with `research.md`,
-`data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it) is **implemented in
-full — all 43 tasks checked**. All 3 `[NEEDS CLARIFICATION]` markers were resolved 2026-11-02
+`data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it): 43 of its original 43
+tasks are checked. All 3 `[NEEDS CLARIFICATION]` markers were resolved 2026-11-02
 before planning (the replay publishes directly onto `probation.requests`, bypassing results, with
 `EXT_` payloads loaded from the SIT export into STE's Redis; the daily reconciliation's
 results-side count comes from a results viewstore query on the UTC calendar day; the row-9

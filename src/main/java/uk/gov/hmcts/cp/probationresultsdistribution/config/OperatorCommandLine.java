@@ -38,6 +38,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.Outbound
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusCommandEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusReplayEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.CloseExpiredResendAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ConfirmedIntakePauseGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DlqCompletedListingQuery;
@@ -50,6 +51,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.ReplayAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestListingQuery;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RollbackCloseInFlightAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.SubmitHearingAction;
+import uk.gov.hmcts.cp.probationresultsdistribution.cli.CloseExpiredResendRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.DlqCompletedListingRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.PauseIntakeRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.cli.PurgeQueueRunner;
@@ -65,6 +67,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.inbound.DeadLetterQueuePeeker;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.IntakeControlRepository;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcCloseExpiredResendRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcIntakeControlRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcRequestListingRepository;
@@ -91,6 +94,7 @@ public final class OperatorCommandLine {
     private static final String LIST_DLQ_COMPLETED = "list-dlq-completed";
     private static final String SUBMIT_HEARING = "submit-hearing";
     private static final String REPLAY = "replay";
+    private static final String CLOSE_EXPIRED_RESEND = "close-expired-resend";
     private static final String QUEUE_NAME = "distribution.servicebus.queue-name";
     /**
      * Overrides {@code application.yaml}'s deployed readiness group, which names {@code
@@ -127,6 +131,8 @@ public final class OperatorCommandLine {
             exitCode = checkedThenRun(SubmitHearingRunner.checkArguments(args), args);
         } else if (args.length > 0 && REPLAY.equals(args[0])) {
             exitCode = checkedThenRun(ReplayRunner.checkArguments(args), args);
+        } else if (args.length > 0 && CLOSE_EXPIRED_RESEND.equals(args[0])) {
+            exitCode = checkedThenRun(CloseExpiredResendRunner.checkArguments(args), args);
         } else {
             LOG.warn("operator command refused reason=unreadable-argument");
             exitCode = RunnerOutcome.REFUSED.exitCode();
@@ -443,6 +449,19 @@ public final class OperatorCommandLine {
                     new ServiceBusReplayEnqueuer(new ServiceBusCommandEnqueuer(commandSender))));
         }
 
+        /**
+         * The close-expired-resend runner (H40; FR-004-059): no intake pause gate and no pipeline
+         * client, only the store — built lazily, like every other argument-taking command.
+         */
+        /* default */
+        @Bean
+        @Lazy
+        CloseExpiredResendRunner commandCloseExpiredResendRunner(final JdbcClient jdbc,
+                final PlatformTransactionManager transactions) {
+            return new CloseExpiredResendRunner(new CloseExpiredResendAction(
+                    new JdbcCloseExpiredResendRepository(jdbc, new TransactionTemplate(transactions))));
+        }
+
         /* default */ @Bean
         RunnerDispatcher commandDispatcher(final IntakeControlRepository repository,
                                            final IntakePauseGate gate, final QueuePurger purger,
@@ -452,6 +471,8 @@ public final class OperatorCommandLine {
                                            final ObjectProvider<DlqCompletedListingRunner> dlq,
                                            final ObjectProvider<SubmitHearingRunner> submit,
                                            final ObjectProvider<ReplayRunner> replay,
+                                           final ObjectProvider<CloseExpiredResendRunner>
+                                                   closeExpiredResend,
                                            final OperatorArguments operatorArguments) {
             final IntakePauseAction intake = new IntakePauseAction(repository);
             final PauseIntakeRunner pause = new PauseIntakeRunner(intake);
@@ -469,7 +490,9 @@ public final class OperatorCommandLine {
                     LIST_REQUESTS, () -> listRequests.run(operatorArguments.asArray()),
                     LIST_DLQ_COMPLETED, () -> dlq.getObject().run(),
                     SUBMIT_HEARING, () -> submit.getObject().run(operatorArguments.asArray()),
-                    REPLAY, () -> replay.getObject().run(operatorArguments.asArray())));
+                    REPLAY, () -> replay.getObject().run(operatorArguments.asArray()),
+                    CLOSE_EXPIRED_RESEND,
+                    () -> closeExpiredResend.getObject().run(operatorArguments.asArray())));
         }
 
     }
