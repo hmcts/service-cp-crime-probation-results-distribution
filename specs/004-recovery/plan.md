@@ -3,31 +3,32 @@
 **Branch**: `004-recovery` | **Date**: 2026-10-24 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/004-recovery/spec.md`
 
-**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
-
 ## Summary
 
 This slice gives operations three bounded ways to get a hearing to HMPPS after a first attempt
-fails or a sent hearing must go again, without ever duplicating a leg already recorded `SENT` or
+fails or a sent hearing must go again, never duplicating a leg already recorded `SENT` or
 `NOT_APPLICABLE` by accident: a dead-letter resubmission admitted as a replay at broker delivery
-count 1 (DV-26); the service's own replay action, which re-enqueues the stored command byte for
-byte under a fresh `messageId`; and resend-leg, which re-runs the HMPPS leg for an explicit list of
+count 1 (DV-26); the service's own replay action, re-enqueuing the stored command byte for byte
+under a fresh `messageId`; and resend-leg, re-running the HMPPS leg for an explicit list of
 `requestId`s, with a forced-resend override for a deliberate duplicate. Around these sit the
-runners rollback and go-live rely on: pause/resume intake, purge-queue, submit-hearing, and two
-read-only listings. Everything here is reached either through the existing ASB listener (the
-dead-letter and service-replay routes reuse slice 002's guard and settlement) or through new
-command-line runners in the image — there is no HTTP surface in this slice (O-1; slice 005).
+runners rollback and go-live rely on: pause/resume intake, purge-queue, submit-hearing, two
+read-only listings, and `close-expired-resend` — the single-row recovery for a resend lease that
+expired without a rollback, closing it `FAILED(rolled-back)` with no intake pause so the operator
+can confirm with HMPPS and resend it (H40). Everything is reached either through the existing ASB
+listener (dead-letter and service-replay routes reuse slice 002's guard and settlement) or through
+new command-line runners in the image — no HTTP surface in this slice (O-1; slice 005).
 
 The technical approach is almost entirely in the **application layer**: new use cases
 (`ReplayAction`, `LegResender`, `SubmitHearingAction`, `RequestIdRecipe`, the intake-pause and
-purge-queue actions, the two listings, the rollback close-in-flight statement) composed from
-slice 002's ports (`HearingPayloadSource`, `YouthFilterSource`, `HmppsSender`, `OutboundLog`, the
-request store) with **no new port and no new adapter**. The only schema change this slice may need
-is a persisted intake-pause flag (FR-004-052; see Research, Decision 3) — everything else reuses
-002's three tables and one view unchanged. A new driving-adapter package, `cli`, hosts the six
-runners and the two listings as thin classes registered with `RunnerDispatcher` that parse arguments, call one
-application service, and print its bounded outcome — mirroring how `inbound` and `api` already sit
-beside `application` without it depending on either.
+purge-queue actions, the two listings, the rollback close-in-flight statement,
+`CloseExpiredResendAction` (H40, FR-004-059/060)) composed from slice 002's ports
+(`HearingPayloadSource`, `YouthFilterSource`, `HmppsSender`, `OutboundLog`, the request store) with
+**no new port and no new adapter**. The only schema change this slice may need is a persisted
+intake-pause flag (FR-004-052; Research Decision 3) — everything else reuses 002's three tables
+and one view unchanged. A new driving-adapter package, `cli`, hosts the seven runners and two
+listings as thin classes registered with `RunnerDispatcher`, each parsing arguments, calling one
+application service, and printing its bounded outcome — mirroring how `inbound` and `api` already
+sit beside `application` without depending on either.
 
 ## Technical Context
 
@@ -63,8 +64,10 @@ leaves run-serially-or-concurrently to this plan (Research, Decision 2)
 change to what is sent to HMPPS (D10); zero PII, stored body, payload value, operator name or reason
 text in any log line, metric label, report, listing or refusal (FR-004-041); every runner result is
 one of done/refused/failed, testable without reading free text (FR-004-045)
-**Scale/Scope**: 8 user stories, 58 functional requirements, 6 runners + 2 listings, one new Flyway
-migration (the pause-state table); no new external integration
+**Scale/Scope**: 8 user stories, 61 functional requirements, 7 runners + 2 listings, one new Flyway
+migration (the pause-state table); no new external integration. *(Amended 2026-11-13, H40: adds
+the `close-expired-resend` runner, FR-004-059/060, closing one expired `PENDING` resend row
+without an intake pause — no new port, no new table, no new migration of its own.)*
 
 ## Constitution Check
 
@@ -76,7 +79,7 @@ migration (the pause-state table); no new external integration
 | II. Test-Driven Development | Every FR names its pinning test in Dependencies → "Pinning tests the design names"; `tasks.md` orders each test task before the implementation task it guards, per this repository's TDD red-run convention. | PASS |
 | III. Message-Contract First | No change to the inbound closed schema: the replay message and the submit-hearing command are the **same** schema, carrying only new broker *application properties* (`origin`, `operator`, `runId`, `reason`), which the schema already excludes from its `additionalProperties: false` surface because they are not body fields (constitution Principle III, design A3-34). No change to the outbound body or to H13's no-validation stance. No HTTP contract is added — `/operations/**` stays slice 005's. | PASS |
 | IV. Canonical JSON In, Typed Models Out | The replay action re-sends `processed_request.command` as opaque bytes — never re-parsed into a `JsonNode` and re-serialised, so byte-for-byte equality (SC-004-001) is structural, not incidental. Submit-hearing reads the cached payload as `JsonNode` exactly as slice 002's `HearingPayloadSource` already does, and takes `sharedTime` as the raw JSON string without round-tripping it through a parsed form (FR-004-055). | PASS |
-| V. SOLID with Ports and Adapters | No new port: `ReplayAction`, `LegResender` and `SubmitHearingAction` compose existing ports (`HearingPayloadSource`, `YouthFilterSource`, `HmppsSender`, `OutboundLog`) plus the request store the guard already uses. The six runners and two listings are a new **driving** adapter package (`cli`), symmetric with `inbound` and `api`: it calls into `application` and depends on nothing else in the service. | PASS |
+| V. SOLID with Ports and Adapters | No new port: `ReplayAction`, `LegResender`, `SubmitHearingAction` and `CloseExpiredResendAction` compose existing ports (`HearingPayloadSource`, `YouthFilterSource`, `HmppsSender`, `OutboundLog`) plus the request store the guard already uses. The seven runners and two listings are a new **driving** adapter package (`cli`), symmetric with `inbound` and `api`: it calls into `application` and depends on nothing else in the service. | PASS |
 | VI. Explicit Failure | Every action ends in one of `enqueued`/`no-op`/a bounded refusal code, or a declared failure (`store-unavailable`, `broker-unavailable`); no action may return "success" from a catch block. A resend never parks (FR-004-027) — it is `FAILED` at once, which is itself an explicit-failure discipline applied to a run kind with no delivery to park against. | PASS |
 | VII. Privacy in Telemetry | FR-004-041 is the slice's own restatement of this principle: no stored/sent body, command, payload value, `userId`, operator name or reason text in any log line, metric label, report, listing or refusal, with the four places an operator's text *is* allowed enumerated exhaustively. The privacy sweeps (`TelemetryPrivacyTest`, `LogStatementSweepTest`) extend to this slice's new log lines and reports. | PASS |
 | VIII. Estate Conventions | Gradle, the existing package root, Conventional Commits, no AI attribution — unchanged. The new `cli` package gets its own `package-info.java` stating its responsibility and dependency direction, as every existing package already does. | PASS |
@@ -95,7 +98,7 @@ specs/004-recovery/
 ├── data-model.md        # Phase 1 output (/speckit.plan command)
 ├── quickstart.md        # Phase 1 output (/speckit.plan command)
 ├── contracts/           # Phase 1 output (/speckit.plan command)
-│   ├── cli-runners.md       # The six runners' and two listings' argument/outcome contract
+│   ├── cli-runners.md       # The seven runners' and two listings' argument/outcome contract
 │   └── broker-properties.md # The application properties this slice adds, against the unchanged schema
 ├── checklists/
 │   └── requirements.md  # Already PASS
@@ -121,7 +124,9 @@ src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/
 │   ├── PurgeQueueAction.java           # FR-004-053
 │   ├── RequestListingQuery.java        # FR-004-043 (action 1)
 │   ├── DlqCompletedListingQuery.java   # FR-004-043 (dlq-completed)
-│   └── RollbackCloseInFlightAction.java# FR-004-049/049a (confirmed owner; Research Decision 2)
+│   ├── RollbackCloseInFlightAction.java# FR-004-049/049a (confirmed owner; Research Decision 2)
+│   └── CloseExpiredResendAction.java   # FR-004-059/060 (H40): closes one expired PENDING resend
+│                                       # row, request-row-then-leg-row lock order, no intake pause
 ├── inbound/                            # unchanged package, DV-26 predicate replaces 002's interim rule
 │   └── (guard changes only — FR-004-001–013; no new class, ReplayAdmission logic inside the
 │        existing admission statement)
@@ -133,6 +138,7 @@ src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/
 │   ├── SubmitHearingRunner.java
 │   ├── RollbackCloseInFlightRunner.java (confirmed; Research Decision 2)
 │   ├── RequestListingRunner.java / DlqCompletedListingRunner.java
+│   ├── CloseExpiredResendRunner.java    # FR-004-059 (H40)
 │   └── package-info.java               # new; dependency direction = inbound/api's
 ├── persistence/                        # unchanged package, no schema change except Decision 3's table
 │   └── db/migration/V<n>__add_intake_control.sql   # confirmed; Research Decision 3
@@ -147,7 +153,11 @@ src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/
 │   ├── OutcomeMetricsTest.java
 │   ├── RequestRecoveryTransitionTest.java
 │   ├── RequestIdRecipeTest.java
-│   └── PropertiesValidatorTest.java (max-ids-per-run case)
+│   ├── PropertiesValidatorTest.java (max-ids-per-run case)
+│   └── CloseExpiredResendActionTest.java # FR-004-059: unknown-request/not-eligible/
+│                                          # resend-in-progress refusals; the FAILED(rolled-back)
+│                                          # transition; the stale-runner rejection on a late
+│                                          # completion of the now-closed row
 ├── inbound/
 │   └── DlqResubmissionReplayIT.java    # Testcontainers Service Bus emulator
 └── it/ (or alongside the above, per this repo's existing *IT placement)
@@ -155,16 +165,19 @@ src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/
     ├── ResendSharedTimeCheckIT.java
     ├── ResendConcurrencyIT.java
     ├── ForcedResendIT.java
-    └── RollbackFencingIT.java
+    ├── RollbackFencingIT.java
+    └── CloseExpiredResendIT.java       # FR-004-059/060 (H40): expired-lease close, then a
+                                         # resend of the closed row; shutdown drains an in-progress
+                                         # resend-leg run before the processing deadline
 ```
 
 **Structure Decision**: single-project ports-and-adapters, unchanged from slices 001/002. The one
 addition is the `cli` package as a third driving adapter alongside `inbound` (queue) and `api`
 (HTTP, slice 005): command-line arguments in, one application-service call, one bounded outcome
-printed, nothing else. This keeps the parity-critical and fencing-critical logic in `application`
-testable with plain mocks and no Spring context, exactly as slice 002 established, and keeps the
-runners from duplicating any rule already enforced there (FR-004-042's "exactly the same rules
-through the same application service" is enforced by construction, not by code review).
+printed, nothing else. This keeps parity-critical and fencing-critical logic in `application`
+testable with plain mocks and no Spring context, as slice 002 established, and stops runners
+duplicating any rule already enforced there — FR-004-042's "same rules through the same
+application service" enforced by construction, not code review.
 
 ## Complexity Tracking
 

@@ -210,6 +210,22 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     }
 
     /**
+     * One phase below {@link SmartLifecycle#DEFAULT_PHASE}: a {@code SmartLifecycle} group stops
+     * highest phase first, and {@code api.ResendLegExecutor} sits at that default phase
+     * deliberately, so its cooperative stop raises and drains a resend-leg run it has reached (H40;
+     * FR-004-060) before this bean's own {@link #stop()} starts its wait on the same {@link
+     * #inFlightRuns} counter below. Left at the unoverridden default, both beans would sit at the
+     * same phase with no guaranteed order between them, and the ordering this class's own
+     * {@code stop()} Javadoc relies on would not hold (PR #29 review).
+     *
+     * @return one below {@code SmartLifecycle.DEFAULT_PHASE}
+     */
+    @Override
+    public int getPhase() {
+        return DEFAULT_PHASE - 1;
+    }
+
+    /**
      * Whether the gated start has completed: the migration ran and the processor started.
      *
      * @return whether this pod has got as far as consuming

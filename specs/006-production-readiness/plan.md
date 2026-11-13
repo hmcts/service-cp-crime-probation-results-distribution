@@ -3,8 +3,6 @@
 **Branch**: `006-production-readiness` | **Date**: 2026-11-02 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/006-production-readiness/spec.md`
 
-**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
-
 ## Summary
 
 This slice adds **nothing to the message path**. It turns five chapters of the design into
@@ -91,6 +89,18 @@ digest trigger (H39 removed it; see 002/003's 2026-11-02 catch-up work) and does
 are unaffected by H36–H39; the Technology Stack section's prose is stale and due its own amendment,
 separately from this feature.
 
+**Staleness found and corrected in this plan, 2026-11-13 — H41, alert 6**: `spec.md` (Clarifications
+and FR-006-014's table row) already carries H41 (2026-11-09): alert 6 is renamed "Gateway refusing",
+its labels widen from `http="401"` to `http=~"401|4xx-other"` (403/404 page too, each as terminal a
+credential/key/route failure as a 401), and its threshold status moves from `proposal` to `fixed` —
+"no longer a proposal". `config/AlertCatalogue.java`, as it stands on `main` at the time this plan
+was last amended, was written before H41 (2026-11-09) and still has alert 6 as `"Repeated 401s"`,
+`http="401"` only, `PROPOSAL`. This is a code/spec gap, not a planning ambiguity: the Project
+Structure entry for `AlertCatalogue.java` below and `contracts/evidence-and-catalogue-shapes.md` §3
+now cross-reference H41 explicitly, so `/speckit.tasks` can add the task to bring the code in line.
+No new alert count, no new series, no new table — alert 6's own data changes, nothing else in this
+slice's scope.
+
 **Post-Design re-check** (after Phase 1 — `data-model.md`, `contracts/`): unchanged, still PASS
 across every principle. The design phase added no new table, port, endpoint, metric or log line
 beyond what the Constitution Check above already accounted for; `evidence`, the extended
@@ -154,7 +164,10 @@ src/main/java/uk/gov/hmcts/cp/probationresultsdistribution/
     │                                      status, rule type, routing, runbook entry, lapse
     └── AlertCatalogue.java              # NEW — the closed list of 11 paging alerts and 5 counted
                                            classes (FR-006-013 to FR-006-030); the registry
-                                           SC-006-005's "no dead alerts" test reads
+                                           SC-006-005's "no dead alerts" test reads. Alert 6's own
+                                           data (name, labels, threshold status) is H41's
+                                           (2026-11-09): "Gateway refusing",
+                                           http=~"401|4xx-other", fixed — not a proposal
 
 src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/
 ├── pipeline/support/
@@ -199,3 +212,5 @@ validator already are there.
 ## Complexity Tracking
 
 *No entries — the Constitution Check above has no unjustified violation.*
+
+<!-- token-budget: compacted (level=medium) on 2026-11-13T14:02:15Z; original at plan.full.md -->

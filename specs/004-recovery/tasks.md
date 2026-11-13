@@ -907,8 +907,165 @@ fixed test-first in its own commit:
   `SENT`; the `application` package-info says the forced-resend override is unbuilt (T058);
   `SharedTimes` documents its deliberate difference from `SharedTimeCheck`.
 
+### Close-expired-resend (H40, FR-004-059/060 — added 2026-11-13)
+
+**Why here**: H40 (decided 2026-11-09) amends Decision 1 (FR-004-024, this phase's own confirmed
+decision): the expired-`PENDING`-resend-row refusal above (T038/T042) is unchanged, but recovery no
+longer waits for the paused, whole-intake rollback close-in-flight procedure (US7) alone — a
+single-row command closes just that one row. Specified in full in `spec.md` (FR-004-059, FR-004-060)
+and in `contracts/cli-runners.md` §9, but never carried into this phase's tasks before now. IDs use
+letter suffixes off T050 so no existing task in this file is renumbered.
+
+- [X] T050a [P] [US3] `CloseExpiredResendActionTest` (plain mocks, no Spring context): over a seeded
+      `PENDING` resend row (attempt ≥ 2, `attempt_origin = resend`) with an expired lease,
+      `close-expired-resend` closes it `FAILED(rolled-back)` with `note` `prev=PENDING/-`
+      (replacing any earlier `prev=`), a fresh `claim_token`, every outcome/evidence column kept, and
+      appends the operator and sanitised reason to `audit_note`, without touching
+      `processed_request.status`; refuses `unknown-request` (no request row), `not-eligible` (latest
+      leg row is not a `PENDING` resend row) and `resend-in-progress` (lease still live), changing
+      nothing in each case; a late runner's completion of the now-closed row under its stale
+      `claim_token` updates no row and counts one `probation_stale_runner_rejections_total` —
+      `src/test/java/.../application/CloseExpiredResendActionTest.java` (the stale-claim-token
+      completion case is pinned against a real row in `CloseExpiredResendIT` instead, T050b: it needs
+      a genuine claim-guarded write to prove zero rows update, which a mocked repository cannot show;
+      the `ActionTest` itself covers the three refusals, the success translation and sanitisation)
+- [X] T050b [P] [US3] `CloseExpiredResendIT` (Testcontainers Postgres, extends `ResendTestSupport`):
+      end to end over a real store — seed an expired `PENDING` resend row, confirm `resend-leg`
+      still refuses it `resend-in-progress` (T038/T042 unchanged), run `close-expired-resend`, then
+      confirm a fresh `resend-leg` run on the same `requestId` now proceeds to a new attempt row —
+      `src/test/java/.../application/CloseExpiredResendIT.java`
+- [X] T050c [P] [US3] Extend `ConsumerLifecycleControllerTest` (or a new `ResendLegDrainIT` beside
+      `api/ResendLegExecutionIT`, Testcontainers): `stop()`'s existing `awaitInFlightRunsToDrain()`
+      wait (already used for in-flight queue deliveries) also blocks, up to `drainTimeout`, while a
+      resend-leg run started through `api/ResendLegExecutor` is in progress; a run still going at the
+      deadline logs WARN and shutdown proceeds, leaving the row for a later `close-expired-resend`
+      (FR-004-060) — `src/test/java/.../inbound/ConsumerLifecycleControllerTest.java`
+- [X] T050d [US3] Implement `application/CloseExpiredResendAction.java` per `contracts/cli-runners.md`
+      §9: the refusal order and the per-row transition T050a names, under the request-row-then-
+      leg-row lock order already established for rollback close-in-flight (T034) and resend
+      (T043/T046) — satisfies T050a
+- [X] T050e [US3] [P] Implement `cli/CloseExpiredResendRunner.java`: parses `--request-id`,
+      `--operator`, `--reason` (as `cli/ResendLegRunner.java`'s own argument rules), calls
+      `CloseExpiredResendAction`, maps its outcome to the `DONE`/`REFUSED`/`FAILED` exit codes
+      per `contracts/cli-runners.md` §9; register it in `cli/RunnerDispatcher.java`'s dispatch table
+      (T002) — satisfies T050b
+
+      **P2 fix (PR #29 review, 2026-11-13)**: `valueOf`'s flag-value scan took the token right
+      after a recognised flag as its value unconditionally — `--operator --reason maintenance`
+      parsed as `operator="--reason"`, `reason="maintenance"`, both non-blank, so a genuinely
+      missing operator value silently passed `checkArguments` (FR-004-020 violated: an eligible
+      request could be closed with no real operator recorded). Fixed by refusing to accept a
+      recognised flag's own name as another flag's value — a flag immediately followed by another
+      flag (or nothing) is now `missing-argument`, as it already was for a flag followed by
+      nothing at all. Pinned by
+      `CloseExpiredResendRunnerTest$Arguments.a_flag_with_no_value_does_not_swallow_the_next_flags_name`.
+      `cli/ResendLegRunner.java`'s own `valueOf` has the identical, pre-existing pattern and the
+      same latent risk — out of this task's scope (it predates this slice), flagged for the
+      owning team separately.
+- [X] T050f [US3] Wire `api/ResendLegExecutor`'s in-process run (the path slice 005's operations API
+      reaches `LegResender` through, inside the server's own JVM — the standalone
+      `cli/ResendLegRunner.java` process has no shutdown lifecycle to wait on and is unaffected) to
+      increment/decrement the same shared `AtomicInteger inFlightRuns` bean
+      `inbound/ConsumerLifecycleController` already waits on in `stop()`, around the run — no new
+      drain mechanism, the existing one now also covers a resend-leg run (FR-004-060) — satisfies
+      T050c
+
+      **P1 fix (PR #29 review, 2026-11-13)**: the counter-sharing alone was not enough.
+      `ResendLegExecutor` only raised its own cooperative stop (`stopping`, which tells an
+      in-flight run to finish its current id and claim nothing further) from its `close()`, wired
+      as the bean's `@Bean(destroyMethod = "close")` — which Spring calls during *bean
+      destruction*, strictly after `getLifecycleProcessor().onClose()` has already called every
+      `SmartLifecycle` bean's `stop()`, `ConsumerLifecycleController` included. So
+      `ConsumerLifecycleController#stop()` started its wait on `inFlightRuns` *before* anything
+      told a resend-leg batch in progress to stop early — it could only wait out the whole batch,
+      or its own `drainTimeout`, then return regardless, with the resend-leg run still going.
+      Fixed by making `ResendLegExecutor` itself a `SmartLifecycle`, at `DEFAULT_PHASE`
+      (`Integer.MAX_VALUE`) — a `SmartLifecycle` group stops highest phase first — with
+      `ConsumerLifecycleController#getPhase()` now explicitly one below that
+      (`DEFAULT_PHASE - 1`; it had never overridden `getPhase()` before, so it sat at
+      `DEFAULT_PHASE` itself, the same as `ResendLegExecutor` would without an explicit value —
+      an unreliable tie a first attempt at this fix missed, caught only once a test drove the real
+      phase values rather than an assumed one). The `@Bean(destroyMethod = "close")` is removed;
+      `SmartLifecycle#stop()` (delegating to the unchanged `close()` body) is now the only
+      shutdown path from Spring. Pinned by two new
+      `ConsumerLifecycleControllerTest$ResendLegRunInFlightAtShutdown` cases: the phase ordering
+      itself, and a resend run that checks a `BooleanSupplier` between ids (as
+      `LegResender#stopClaiming` really does) stopping within ~1 second of `executor.stop()`,
+      rather than running to completion before `controller.stop()` can return. `./gradlew build`
+      green after.
+
+      **P1 round 2 (PR #29 review, 2026-11-13)**: the phase fix above was not sufficient by
+      itself. `SmartLifecycle#stop()` still *delegated to `close()`*, which also waits (up to
+      `shutdownWait`, 4 minutes) for the run in flight to actually terminate. Stacked ahead of
+      `ConsumerLifecycleController#stop()`'s own wait on the same counter (ordered correctly now,
+      but still a *second* independent wait), the two were additive — worst case approaching
+      8 minutes, well past a typical pod termination grace period — and the queue consumer was
+      still admitting new deliveries for the whole of the first wait, since
+      `ConsumerLifecycleController#stop()` (which is what actually calls `processor.stop()`) had
+      not even started. Fixed by splitting the two contracts apart: `stop()` now *quiesces only*
+      (raises `stopping`, drops queued-but-not-started runs, shuts the executor down to new
+      submissions) and returns at once, without waiting; `close()` keeps the full quiesce-and-wait
+      behaviour, for the one case nothing else drains the shared counter (a standalone or test
+      instance with no `ConsumerLifecycleController` in the same context). Because `stop()` no
+      longer waits, `ConsumerLifecycleController#stop()` — which already quiesces the queue
+      (`processor.stop()`) *before* its own `awaitInFlightRunsToDrain()` — becomes the single
+      remaining wait, against its one `drainTimeout`, for both kinds of in-flight work. Pinned by
+      a new `ResendLegExecutionIT$Shutdown` case proving `stop()` returns promptly while a run is
+      deliberately held open, unlike `close()` (the existing cases in the same class already pin
+      that `close()` waits and logs ERROR on timeout). `./gradlew build` green after.
+
+      **P2, round 3 (PR #29 review, 2026-11-13)**: round 2's fix removed the explicit
+      `destroyMethod = "close"` attribute from `OperationsConfiguration#resendLegExecutor`'s
+      `@Bean`, but a bare `@Bean` does not mean *no* destroy method — Spring's default is to
+      *infer* one, by looking for a public `close()` or `shutdown()` on the bean's own class, and
+      `ResendLegExecutor` has exactly that (`AutoCloseable#close()`). So Spring kept calling
+      `close()` during bean destruction regardless, reintroducing the very same additive-wait bug
+      round 2 believed it had closed: if a resend run outlived `ConsumerLifecycleController`'s own
+      drain wait (which logs WARN and returns), bean destruction then invoked `close()` and waited
+      a further `shutdownWait` (4 minutes) on top. Fixed with `@Bean(destroyMethod = "")` — the
+      explicit empty string Spring's own docs define as disabling destroy-method inference
+      outright, not merely omitting an attribute that reverts to the default. Pinned by a new
+      `ResendLegExecutionIT$ServingContext` case asserting the bean definition's own
+      `getDestroyMethodName()` is `""`, not `null`/inferred — a metadata-level pin, chosen over a
+      timing-based one because proving "Spring did not call `close()` a second time" by elapsed
+      time alone would be slow and fragile; this asserts the exact mechanism the review named
+      instead. `./gradlew build` green after.
+- [ ] T050g Run `quickstart.md` step 9 (close an expired resend lease) locally against the Service
+      Bus emulator and a real Postgres, as T050 ran steps 3–4. **Not run in this pass**: no live
+      local stack (Service Bus emulator, Postgres) was available in the environment this increment
+      was implemented in. T050a–T050f are implemented, built (`./gradlew build` green: compile, the
+      full test suite including `CloseExpiredResendIT` and `ConsumerLifecycleControllerTest` against
+      real Postgres, Checkstyle, PMD and the JaCoCo gate) and exercised via Testcontainers Postgres,
+      but the manual `docker compose up -d` quickstart run against the emulator still needs a human
+      to perform it.
+
+**Close-expired-resend gate round 1 remediation (2026-11-13)** — the mandatory code-reviewer/qa/
+spec-validator review found code-reviewer PASS (0 High/Medium, 2 Low advisories on the request-row
+lock being scoped by `request_id` alone rather than `(source, request_id)` — safe today since every
+row carries `source = RESULTS`, not fixed) and spec-validator COMPLIANT, but qa FAIL on two coverage
+gaps against T050e and T050a, both fixed test-first in this same pass:
+
+- *No test at all for `cli/CloseExpiredResendRunner.java`'s own argument validation* (T050e never
+  named one, unlike `cli/ResendLegRunnerTest` for its sibling runner). Added
+  `cli/CloseExpiredResendRunnerTest.java` (9 cases, mirroring `ResendLegRunnerTest`'s structure):
+  `missing-argument`/`unreadable-argument`/`argument-too-long` for `--request-id`/`--operator`/
+  `--reason`, the packaged command's exit-1 refusal before any resource opens, and the outcome
+  mapping (`Done`→`DONE`, each of the three `Refused` reasons→`REFUSED`, no call to the action on a
+  refused argument).
+- *The "replacing any earlier `prev=`" half of T050a/the contract's own wording was never
+  exercised* — every seeded row in every test had a `null` note, so
+  `JdbcCloseExpiredResendRepository.withPrevReplaced`'s merge/replace branch was dead code as far as
+  tests were concerned. Added `CloseExpiredResendIT.replaces_an_earlier_prev_form_keeping_other_note_forms`:
+  seeds a row with `note = "prev=leg-exhausted/-;override=allow-changed-payload"`, closes it, and
+  asserts the result is `"prev=PENDING/-;override=allow-changed-payload"` — the earlier `prev=`
+  replaced, the unrelated `override=` form kept.
+
+`./gradlew build` re-run green after both additions (compile, full suite, Checkstyle, PMD, JaCoCo
+coverage gate).
+
 **Checkpoint**: Stories 1, 2, 3 and 7 all work independently — recovery via replay and resend is
-fully usable without forced resend, listings or submit-hearing.
+fully usable without forced resend, listings or submit-hearing. An expired resend lease is
+recoverable without the rollback procedure (H40).
 
 ---
 
@@ -1758,7 +1915,9 @@ fixed test-first in its own commit:
   US1's `ReplayAction`
 - **US7 (Phase 5)**: depends on Foundational (T004/T010); independent of US1/US2
 - **US3 (Phase 6)**: depends on Foundational and on US7's pause read (T036) for FR-004-021; otherwise
-  independent of US1/US2
+  independent of US1/US2. Its close-expired-resend addition (T050a–T050g, H40) depends on this
+  phase's own claim/resend machinery (T043, T046) and on US7's `rollback-close-in-flight` locking
+  (T034) and shared `inFlightRuns` drain counter (T010, T036)
 - **US4 (Phase 7)**: depends on US1, US2 and US3 being implemented (it documents and cross-checks
   their behaviour; it adds no new production code)
 - **US5 (Phase 8)**: depends on US3's resend/claim machinery (T043–T046)
@@ -1773,6 +1932,8 @@ fixed test-first in its own commit:
 - T002, T003 in parallel after T001
 - T005–T007 in parallel after T004
 - Within each story's test phase, every `[P]`-marked test task runs in parallel (different files)
+- T050a, T050b, T050c in parallel (different files) after T043/T046/T034/T036; T050e in parallel
+  with T050d/T050f (different files)
 - US6 and US8's implementations have no file overlap with US3/US5 and may be staffed in parallel
   once Foundational and US7 (for US3's pause check, if US3 is in flight concurrently) are done
 
@@ -1797,3 +1958,5 @@ Each checkpoint above is independently demoable; none breaks an earlier story, b
 after Foundational modifies another story's files except where explicitly noted (US3 extends US7's
 pause-check stub at T036; US5 extends US3's `LegResender` and `ResendLegRunner`; US8 extends US2's
 route-derivation class at T069).
+
+<!-- token-budget: compacted (level=light) on 2026-11-13T12:34:52Z; original at tasks.full.md -->

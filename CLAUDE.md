@@ -177,6 +177,81 @@ gap recorded 2026-10-27, not an application bug); T053 (walking the DLQ runbook 
 submit-hearing, matches `quickstart.md` exactly); T076 (re-checked 2026-11-02: no owning-team change
 has overturned any of the three confirmed decisions since 2026-10-26); and this paragraph (T077).
 
+A staleness surfaced 2026-11-13: H40 (`close-expired-resend`, FR-004-059/060, decided 2026-11-09)
+was fully specified in `spec.md` — its own Clarifications entries, the FR pair and its
+`doc/design/DIGEST.md` row — but was never carried into this slice's Phase 0/1 artifacts and had no
+task in `tasks.md` at all, so it was never implemented. `plan.md` (Summary, Technical Context
+Scale/Scope, Constitution Check, Project Structure), `research.md` (Decision 1's amendment) and
+`contracts/cli-runners.md` §9 and `quickstart.md` step 9 (appended, not inserted mid-list, so the
+section/step numbers this slice's own completed-task records already cite — T037's "step 6", T071's
+"step 7", `cli-runners.md` §1/§2/§3/§4/§5/§6/§7/§8 — stay correct) now carry it as a seventh runner,
+`CloseExpiredResendAction`/`CloseExpiredResendRunner`. No new port, table or migration is needed — it
+reuses slice 002's `note`/`claim_token`/`audit_note` columns and the request-row-then-leg-row lock
+order already established for rollback close-in-flight. `/speckit-tasks` (2026-11-13) added the
+missing work as T050a–T050g in Phase 6 (US3), letter-suffixed off T050 so no existing task
+renumbers; it also found FR-004-060 (shutdown waits for a resend-leg run in progress) is not yet
+wired to the shared `inFlightRuns` drain counter `inbound/ConsumerLifecycleController` already uses
+for queue deliveries — T050f closes that.
+
+`/speckit-implement` (2026-11-13) built T050a–T050f: `application/CloseExpiredResendAction.java`,
+`application/CloseExpiredResendOutcome.java`, `cli/CloseExpiredResendRunner.java`,
+`persistence/{CloseExpiredResendRepository,JdbcCloseExpiredResendRepository}.java` (new), and
+`api/ResendLegExecutor.java`/`config/OperationsConfiguration.java`/`config/OperatorCommandLine.java`
+(modified — the shared-counter wiring and the new runner's registration). The mandatory
+code-reviewer/qa/spec-validator gate found code-reviewer PASS (0 High/Medium; 2 Low advisories, not
+fixed — the request-row lock is scoped by `request_id` alone rather than `(source, request_id)`,
+safe today since every row carries `source = RESULTS`) and spec-validator COMPLIANT, but qa FAIL on
+two coverage gaps: no test at all for the runner's own argument validation, and the note merge's
+"replacing any earlier `prev=`" branch was never exercised (every seeded test row had a `null`
+note). Both fixed test-first in the same pass — `cli/CloseExpiredResendRunnerTest.java` (new, 9
+cases) and a new `CloseExpiredResendIT` case seeding a prior `prev=`/`override=` note and asserting
+the merge — `./gradlew build` green after each. T050g (the manual quickstart run against a live
+Service Bus emulator) stays open; no live local stack was available this pass. **86 tasks: 79 of 86
+checked (74 original + T050a–T050f); T050g and the 5 pre-existing opens (T037, T053) remain.**
+
+A P1 found in PR #29's review (2026-11-13): T050f's counter-sharing alone did not fix FR-004-060.
+`ResendLegExecutor` only raised its cooperative stop from `close()`, wired as
+`@Bean(destroyMethod = "close")` — called during bean *destruction*, strictly after Spring's
+`SmartLifecycle` stop phase has already run, `ConsumerLifecycleController#stop()` included. So
+`ConsumerLifecycleController#stop()` started waiting on the shared `inFlightRuns` counter *before*
+anything told an in-progress resend-leg batch to stop early — it could only time out or wait out
+the whole batch. Fixed by making `ResendLegExecutor` itself a `SmartLifecycle` at `DEFAULT_PHASE`
+(`Integer.MAX_VALUE`; a group stops highest phase first) with `ConsumerLifecycleController` now
+explicitly one phase below (it had never overridden `getPhase()`, so it sat at the same
+`DEFAULT_PHASE` as an unmodified `ResendLegExecutor` would — a first attempt at this fix got the
+relative ordering backwards for exactly that reason, caught only once a test asserted the real
+phase values instead of an assumed one). `@Bean(destroyMethod = "close")` is removed;
+`SmartLifecycle#stop()` is now the only Spring-triggered shutdown path. Pinned by two new
+`ConsumerLifecycleControllerTest` cases. `./gradlew build` green after.
+
+A second round of PR #29 review (2026-11-13) found the phase fix alone still left two bugs.
+**P1**: `stop()` still delegated to `close()`, which also waits (up to 4 minutes) for the run in
+flight to terminate — stacked ahead of `ConsumerLifecycleController#stop()`'s own wait on the same
+counter, the two were additive (worst case ~8 minutes, past a typical pod grace period), and the
+queue consumer kept admitting new deliveries for the whole of the first wait, since the controller
+that actually stops it hadn't started yet. Fixed by splitting the two contracts: `stop()` now
+quiesces only (raises the cooperative stop, shuts the executor to new submissions, returns at
+once); `close()` keeps the full quiesce-and-wait, for the one case nothing else drains the counter
+(no `ConsumerLifecycleController` in the same context). `ConsumerLifecycleController#stop()` —
+which already quiesces the queue before its own wait — becomes the single remaining wait for both
+kinds of in-flight work. Pinned by a new `ResendLegExecutionIT$Shutdown` case. **P2**:
+`CloseExpiredResendRunner`'s argument parser took the token after a recognised flag as its value
+unconditionally, so `--operator --reason maintenance` parsed as `operator="--reason"`,
+`reason="maintenance"` — both non-blank, so a genuinely missing operator silently passed
+`checkArguments` (FR-004-020 violated). Fixed by refusing to accept a recognised flag's own name as
+another flag's value. `cli/ResendLegRunner.java` has the identical pre-existing pattern — out of
+scope here, flagged for the owning team. `./gradlew build` green after both.
+
+A third round (2026-11-13) found P1's own fix incomplete: `OperationsConfiguration` had removed the
+explicit `destroyMethod = "close"`, but a bare `@Bean` does not mean no destroy method — Spring
+*infers* one by default, finding `ResendLegExecutor`'s own `AutoCloseable#close()` and calling it
+during bean destruction regardless, reintroducing the same additive wait once more. Fixed with
+`@Bean(destroyMethod = "")` — the explicit empty string Spring defines as disabling inference
+outright, not merely an attribute omitted and reverted to the default. Pinned by a metadata-level
+test asserting the bean definition's `getDestroyMethodName()` is `""`, chosen over a timing-based
+pin (proving "Spring didn't call `close()` again" by elapsed time alone would be slow and fragile).
+`./gradlew build` green after.
+
 `005-operations-api` (`specs/005-operations-api/plan.md`, with `research.md`, `data-model.md`,
 `quickstart.md` and `contracts/` alongside it) is **implemented in full — all 52 tasks checked** —
 over 004's real `ReplayAction` and `LegResender`; both `[NEEDS CLARIFICATION]` markers are resolved
@@ -193,8 +268,8 @@ roots, and the same live runs confirmed replay, resend-leg and forced resend all
 HTTP against the real services, with the exact `202`/`200` shapes `quickstart.md` documents, the
 `401` with no `CJSCPPUID`, and the US7 HTTP/CLI parity check. **Nothing left open in 005.**
 `006-production-readiness` (`specs/006-production-readiness/plan.md`, with `research.md`,
-`data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it) is **implemented in
-full — all 43 tasks checked**. All 3 `[NEEDS CLARIFICATION]` markers were resolved 2026-11-02
+`data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it): 43 of its original 43
+tasks are checked. All 3 `[NEEDS CLARIFICATION]` markers were resolved 2026-11-02
 before planning (the replay publishes directly onto `probation.requests`, bypassing results, with
 `EXT_` payloads loaded from the SIT export into STE's Redis; the daily reconciliation's
 results-side count comes from a results viewstore query on the UTC calendar day; the row-9
@@ -215,6 +290,23 @@ real runner. One governance item surfaced while planning, not this slice's to fi
 constitution (version 2.0.1, last amended 2026-10-21) predates H36–H39 and still describes the
 `outbound_body` digest trigger H39 removed and omits `scheduled_job_status` (H38) — due its own
 amendment separately from any feature, and not closed by this slice.
+
+A second staleness surfaced 2026-11-13: H41 (decided 2026-11-09, after this slice's own planning
+and User Story 4 work) amends `spec.md`'s acceptance scenario 4 — alert 6 pages on a 403 or 404
+from the gateway, not only a 401, and is renamed "Gateway refusing" with its threshold status fixed
+rather than proposed — but `config/AlertCatalogue.java`'s alert 6 entry and its coverage test
+(`AlertCatalogueCoverageIT.repeated_401s_alert_is_a_proposal`) were never updated. `/speckit-plan`
+(2026-11-13) flagged the gap in `plan.md`, `research.md` (Decision 3's amendment) and
+`contracts/evidence-and-catalogue-shapes.md` §3; `/speckit-tasks` (2026-11-13) added the fix as
+T027a (rewrite the stale test to assert H41's name/labels/status) and T027b (update the entry) in
+Phase 6, letter-suffixed off T027 so no existing task renumbers. `/speckit-implement` (2026-11-13)
+built both test-first (RED: `AssertionFailedError: expected: "Gateway refusing" but was: "Repeated
+401s"`, never a compile error; GREEN after the entry was corrected): alert 6 is now name
+`"Gateway refusing"`, labels `reason="receiver-rejected"`/`http="401|4xx-other"`, status `FIXED`.
+`doc/operations/alert-catalogue.md` (T027's own human-readable mirror) already carried the correct
+H41 text — only the Java code was stale. A scoped review (correctness against spec.md, test
+quality, no regression on the other ten alerts, PMD/Checkstyle, scope discipline) found nothing
+requiring action. `./gradlew build` green. **45 tasks, all 45 checked.**
 
 **Environment note**: this branch's local Docker Desktop VM disk was found at 95% capacity
 (unused build cache and dangling images from unrelated projects sharing the daemon), which makes a

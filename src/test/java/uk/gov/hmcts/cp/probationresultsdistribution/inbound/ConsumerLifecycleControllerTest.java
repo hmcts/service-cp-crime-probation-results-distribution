@@ -1,10 +1,12 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.inbound;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,6 +16,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,6 +32,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import uk.gov.hmcts.cp.probationresultsdistribution.api.ResendLegExecutor;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendAcceptance;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.IntakeControlRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedLogProbe;
@@ -189,6 +197,127 @@ class ConsumerLifecycleControllerTest {
             final Duration elapsed = Duration.ofNanos(System.nanoTime() - startedAt);
 
             assertThat(elapsed).isGreaterThanOrEqualTo(drainTimeout);
+        }
+    }
+
+    @Nested
+    @DisplayName("when a resend-leg run reached through ResendLegExecutor is in progress (H40)")
+    class ResendLegRunInFlightAtShutdown {
+
+        @Test
+        @DisplayName("stop() blocks until the resend-leg run finishes, then returns "
+                + "(FR-004-060): the existing drain also covers a resend-leg run, with no new "
+                + "mechanism")
+        // The executor is closed explicitly in a finally block, after controller.stop() is also
+        // exercised on a separate thread within the try block; try-with-resources would not fit
+        // the explicit, ordered close this test needs.
+        @SuppressWarnings("PMD.UseTryWithResources")
+        void waits_for_the_resend_leg_run() throws InterruptedException {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicInteger inFlight = new AtomicInteger();
+            controller = newController(inFlight, Duration.ofSeconds(5L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            final LegResender resender = mock(LegResender.class);
+            final CountDownLatch runStarted = new CountDownLatch(1);
+            final CountDownLatch release = new CountDownLatch(1);
+            when(resender.run(any(), any())).thenAnswer(invocation -> {
+                runStarted.countDown();
+                assertThat(release.await(AWAIT_LIMIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
+                return null;
+            });
+            final ResendLegExecutor executor = new ResendLegExecutor(resender, inFlight);
+            try {
+                executor.submit(acceptedRun());
+                assertThat(runStarted.await(AWAIT_LIMIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
+
+                final CountDownLatch stopReturned = new CountDownLatch(1);
+                final Thread stopper = new Thread(() -> {
+                    controller.stop();
+                    stopReturned.countDown();
+                });
+                stopper.start();
+
+                // The resend-leg run is still going: stop() must still be blocked a moment later,
+                // not have returned while it was in flight.
+                assertThat(stopReturned.await(200L, TimeUnit.MILLISECONDS)).isFalse();
+
+                release.countDown();
+
+                assertThat(stopReturned.await(AWAIT_LIMIT.toMillis(), TimeUnit.MILLISECONDS))
+                        .isTrue();
+            } finally {
+                release.countDown();
+                executor.close();
+            }
+        }
+
+        @Test
+        @DisplayName("the executor's SmartLifecycle phase is above the controller's default, so "
+                + "a context stops the executor first (PR #29 review)")
+        void executor_phase_is_above_the_controllers_default() {
+            try (ResendLegExecutor executor =
+                    new ResendLegExecutor(mock(LegResender.class), new AtomicInteger())) {
+                assertThat(executor.getPhase()).isGreaterThan(newController().getPhase());
+            }
+        }
+
+        @Test
+        @DisplayName("stopping the executor first (its higher SmartLifecycle phase) lets an "
+                + "in-flight run notice the request and finish, so the controller's own stop() "
+                + "drains at once instead of waiting out its own drainTimeout (PR #29 review: "
+                + "a destroy-time-only close() raised the stop too late for this to happen)")
+        void stopping_the_executor_first_drains_the_run_before_the_controller_waits()
+                throws InterruptedException {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicInteger inFlight = new AtomicInteger();
+            controller = newController(inFlight, Duration.ofSeconds(5L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            final LegResender resender = mock(LegResender.class);
+            final CountDownLatch runStarted = new CountDownLatch(1);
+            when(resender.run(any(), any())).thenAnswer(invocation -> {
+                final BooleanSupplier stopRequested = invocation.getArgument(1);
+                runStarted.countDown();
+                // A real multi-id batch checks stopRequested between ids (LegResender#stopClaiming)
+                // rather than blocking on an external release; simulate that here so a cooperative
+                // stop can actually end the run, instead of only an unconditional completion.
+                while (!stopRequested.getAsBoolean()) {
+                    Thread.sleep(10L);
+                }
+                return null;
+            });
+            try (ResendLegExecutor executor = new ResendLegExecutor(resender, inFlight)) {
+                executor.submit(acceptedRun());
+                assertThat(runStarted.await(AWAIT_LIMIT.toSeconds(), TimeUnit.SECONDS)).isTrue();
+
+                // The order a SmartLifecycle group-stop enforces: the higher-phase bean (the
+                // executor) stops first, raising the cooperative stop before the controller's own
+                // stop() ever starts its wait on the shared counter.
+                executor.stop();
+
+                final CountDownLatch stopReturned = new CountDownLatch(1);
+                final Thread stopper = new Thread(() -> {
+                    controller.stop();
+                    stopReturned.countDown();
+                });
+                stopper.start();
+
+                // The run already noticed the stop and finished before executor.stop() returned;
+                // the controller's wait should not need anywhere near its 5-second drainTimeout.
+                assertThat(stopReturned.await(1L, TimeUnit.SECONDS)).isTrue();
+            }
+        }
+
+        private ResendAcceptance.Accepted acceptedRun() {
+            return new ResendAcceptance.Accepted(UUID.randomUUID(), List.of(UUID.randomUUID()),
+                    "an-operator", false, Optional.empty());
         }
     }
 

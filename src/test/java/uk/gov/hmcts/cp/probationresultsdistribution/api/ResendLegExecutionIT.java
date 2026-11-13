@@ -35,6 +35,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -277,6 +278,52 @@ class ResendLegExecutionIT {
                 release.countDown();
             }
         }
+
+        @Test
+        @DisplayName("stop() quiesces without waiting for the run in flight to finish, unlike "
+                + "close() (P1, PR #29 review): stacked ahead of ConsumerLifecycleController's "
+                + "own wait on the shared counter, a waiting stop() made the two additive, "
+                + "worst case approaching 8 minutes, with the queue consumer still admitting "
+                + "new deliveries for the whole of it")
+        // release must count down, and the run finish, before close() — not the call under test
+        // here — is reached; try-with-resources would close as soon as the try block exits instead.
+        @SuppressWarnings("PMD.UseTryWithResources")
+        void stop_quiesces_without_waiting_for_the_run_in_flight() throws InterruptedException {
+            final LegResender resender = mock(LegResender.class);
+            final CountDownLatch inFlight = new CountDownLatch(1);
+            final CountDownLatch release = new CountDownLatch(1);
+            when(resender.run(any(), any())).thenAnswer(invocation -> {
+                inFlight.countDown();
+                assertThat(release.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+                return null;
+            });
+            // release is counted down, and the run allowed to actually finish, before close() (not
+            // the call under test here) is reached below — otherwise close()'s own wait would
+            // block for the run exactly as this test exists to show stop() does not.
+            final ResendLegExecutor executor = new ResendLegExecutor(resender,
+                    Duration.ofSeconds(WAIT_SECONDS));
+            try {
+                executor.submit(accepted(ID_1));
+                assertThat(inFlight.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+
+                final CountDownLatch stopReturned = new CountDownLatch(1);
+                final Thread stopper = Thread.ofPlatform().start(() -> {
+                    executor.stop();
+                    stopReturned.countDown();
+                });
+
+                // A waiting stop() would still be blocked here: the run is deliberately held on
+                // release for up to WAIT_SECONDS. A quiescing one returns at once regardless.
+                assertThat(stopReturned.await(500L, TimeUnit.MILLISECONDS)).isTrue();
+                stopper.join(TimeUnit.SECONDS.toMillis(WAIT_SECONDS));
+                assertThat(executor.isRunning()).isFalse();
+                assertThatThrownBy(() -> executor.submit(accepted(ID_2)))
+                        .isInstanceOf(IllegalStateException.class);
+            } finally {
+                release.countDown();
+                executor.close();
+            }
+        }
     }
 
     @Nested
@@ -292,6 +339,27 @@ class ResendLegExecutionIT {
                 assertThat(context).hasSingleBean(LegResender.class);
                 assertThat(context).hasSingleBean(ResendLegExecutor.class);
                 assertThat(context).hasSingleBean(ResendLegController.class);
+            });
+        }
+
+        @Test
+        @DisplayName("the resendLegExecutor bean disables Spring's inferred destroy method "
+                + "(P2, PR #29 review): a bare @Bean still infers and calls AutoCloseable#close() "
+                + "during bean destruction by default — omitting an explicit destroyMethod "
+                + "attribute does not disable that, it reverts to it, reintroducing the same "
+                + "additive-wait bug a fix here had already closed once")
+        void resendLegExecutor_bean_disables_the_inferred_destroy_method() {
+            EndToEndTestSupport.startSharedContainers();
+            servingContext().run(context -> {
+                assertThat(context).hasNotFailed();
+                final ConfigurableApplicationContext source =
+                        context.getSourceApplicationContext(ConfigurableApplicationContext.class);
+                final String destroyMethodName = source.getBeanFactory()
+                        .getBeanDefinition("resendLegExecutor").getDestroyMethodName();
+                assertThat(destroyMethodName)
+                        .as("explicitly disabled (empty string), not merely absent — a bare "
+                                + "@Bean's default is to infer close()/shutdown(), not to skip it")
+                        .isEmpty();
             });
         }
 
