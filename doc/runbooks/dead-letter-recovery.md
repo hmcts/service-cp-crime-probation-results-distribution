@@ -51,9 +51,13 @@ broker tools (Service Bus Explorer, or a client running under the pod's own work
 - **A message the service never admitted** (an `exhausted` entry with no `processed_request` row)
   is processed as a first delivery when resent.
 - **A dead-letter entry with no request row** is repaired by resending it (for `exhausted`), by
-  submit-hearing, or by a court re-share. It is never repaired by the replay action, which can only
-  re-send a stored command. Submit-hearing is not packaged in this build (slice 004 US8), so until
-  it is, the alternative to a resend is a court re-share.
+  `submit-hearing`, or by a court re-share. It is never repaired by the replay action, which can
+  only re-send a stored command:
+
+  ```bash
+  java -jar app.jar submit-hearing --hearing-id <hearing-id> --hearing-day <YYYY-MM-DD> \
+      --operator <your-name> --reason "<why>"
+  ```
 
 ## Removing entries after completion
 
@@ -73,9 +77,12 @@ WHERE source = 'RESULTS' AND request_id = '<request-id>';
 The `messageId` of every entry the producer sent is `RESULTS:<request-id>`. A replay message sent by
 the service has a fresh `messageId` and the application property `origin = REPLAY`.
 
-The recommended `list-dlq-completed` listing, which lists the entries whose request is `COMPLETED`
-and removes nothing, is not packaged in this build (slice 004 US6). Until it is, use the query
-above for each entry.
+The `list-dlq-completed` listing lists the entries whose request is `COMPLETED` and removes
+nothing:
+
+```bash
+java -jar app.jar list-dlq-completed
+```
 
 ## Replay or resend-leg?
 
@@ -83,7 +90,7 @@ above for each entry.
 |---|---|
 | `FAILED`, and its dead-letter entry is still there | Resend the entry (above) |
 | `FAILED(leg-exhausted)`, and its entry was removed | `resend-leg`. Its latest attempt is `FAILED`, so it is resend-eligible |
-| `FAILED(rolled-back)`, and its entry was purged after a rollback | The replay action, which re-sends the stored command under a fresh `messageId`. It is the only route after a rollback purge. **This build has no packaged route for it**: the replay runner is in no command line yet. `resend-leg` cannot stand in. The attempt-1 `FAILED(rolled-back)` row is refused `not-eligible`, and intake stays paused after a rollback, so the whole run is refused `intake-paused`. The request waits for the replay runner and for the full new cutover (purge, reconcile, cutover, then resume intake) |
+| `FAILED(rolled-back)`, and its entry was purged after a rollback | `replay --request-id <id>`, which re-sends the stored command under a fresh `messageId` even while intake is paused. It is the only route after a rollback purge. `resend-leg` cannot stand in: the attempt-1 `FAILED(rolled-back)` row is refused `not-eligible`. Intake stays paused after a rollback until the full new cutover completes (purge, reconcile, cutover, then resume intake), so a replayed message sits unconsumed on `probation.requests` until then |
 | `COMPLETED`, and HMPPS needs the hearing again | `resend-leg` with `--force-resend-sent` (below) |
 | `FAILED` or `COMPLETED`, and the leg's latest attempt is `FAILED` | `resend-leg` |
 
@@ -93,8 +100,18 @@ above for each entry.
 hearing or count. Choose the IDs from the latest attempt of each leg, which is the leg's truth. The
 request's status is not.
 
-The `list-requests` runner is not packaged in this build (slice 004 US6). Until it is, use one of
-these read-only queries.
+The `list-requests` runner covers both lookups directly:
+
+```bash
+# By hearing and day
+java -jar app.jar list-requests --hearing-id <hearing-id> --hearing-day <YYYY-MM-DD>
+
+# By the latest attempts' status, reason and updated_at range
+java -jar app.jar list-requests --status FAILED --reason <reason> \
+    --updated-after <instant> --updated-before <instant>
+```
+
+The equivalent read-only queries, for reference:
 
 By hearing and day:
 
@@ -118,7 +135,7 @@ ORDER BY updated_at
 LIMIT 500;
 ```
 
-To find what a release sent, filter on `service_version`:
+`list-requests` has no `service_version` filter. To find what a release sent, query directly:
 
 ```sql
 SELECT request_id, attempt, attempt_origin, status, reason, http_status, body_digest, updated_at
@@ -244,8 +261,7 @@ by the guarded rollback close-in-flight procedure:
    resume-intake`).
 5. The closed resend row (attempt ≥ 2, `FAILED(rolled-back)`) is now resend-eligible. If HMPPS did
    not receive the attempt, resend it. A request closed `FAILED(rolled-back)` at attempt 1 is
-   replayed instead. The replay runner is not packaged in this build, so that request waits for it
-   (see "Replay or resend-leg?").
+   replayed instead (see "Replay or resend-leg?").
 
 ## The forced resend
 

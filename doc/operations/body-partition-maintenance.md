@@ -38,8 +38,9 @@ continues to reflect the store.
 
 ## Recover a DEFAULT spill
 
-1. Pause intake on **every replica**. Until slice 004 provides pause/resume runners, set
-   `distribution.consumer.enabled=false` and roll out that configuration everywhere. Wait for all
+1. Pause intake with `java -jar "$operator_jar" pause-intake` (or the operations API's equivalent
+   call). This is the one service-side stop (row A3-92) and applies across every replica — it
+   writes `intake_control`, which every pod reads, not a per-pod configuration. Wait for all
    in-flight sends and their outcome writes to drain. A send while DEFAULT is detached can POST
    successfully then fail to store its outcome, allowing a duplicate at HMPPS on redelivery.
 2. As the service's database owner, identify a missing month and its UTC bounds using timestamps
@@ -77,17 +78,19 @@ COMMIT;
 ```
 <!-- recovery-sql:end -->
 
-The move goes through the parent table's digest trigger: bytes must still match the attempt's
-`body_digest`. The detach, create, move and re-attach are atomic together. Repeat for other affected
-months if necessary; rows outside the chosen range remain in DEFAULT.
+There is no database trigger checking this move (H39): the moved bytes are the same bytes the
+single write path behind `OutboundLog` already digested, so they still match the attempt's
+`body_digest` by construction, not by a database check. The detach, create, move and re-attach are
+atomic together. Repeat for other affected months if necessary; rows outside the chosen range
+remain in DEFAULT.
 
 4. Verify DEFAULT is attached and inspect counts. After the next scheduled completion, the DEFAULT
    gauge is zero when all spills have been recovered, and there are no new creation failures.
    DEFAULT rows **older than the cut-off** are deleted by the next run regardless of this procedure;
    recovery does not extend retention. Request/attempt rows, digest and service version are kept.
-5. Resume intake everywhere after the verification and any rollback/cutover preconditions are met.
-   Until slice 004's runners exist, restore the intake configuration and roll it out. No new
-   on-demand maintenance action is exposed by this slice.
+5. Resume intake with `java -jar "$operator_jar" resume-intake` (or the operations API's equivalent
+   call) after the verification and any rollback/cutover preconditions are met. No new on-demand
+   maintenance action is exposed by this slice.
 
 ## Read storage size after the first production month
 

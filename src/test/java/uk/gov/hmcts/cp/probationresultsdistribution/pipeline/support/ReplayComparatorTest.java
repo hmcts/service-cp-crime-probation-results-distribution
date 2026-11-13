@@ -223,6 +223,45 @@ class ReplayComparatorTest {
     }
 
     @Test
+    @DisplayName("a bodyless NOT_APPLICABLE attempt against a SIT share that also sent nothing is a "
+            + "genuine match, never reaching the body-diff path (M14)")
+    void bodyless_not_applicable_against_an_equally_empty_sit_share_is_a_match() {
+        final ShareIdentity identity = identity();
+        final SitLoggedShare sit = new SitLoggedShare(identity, Optional.empty(), Optional.empty());
+        // A real bodyless NOT_APPLICABLE attempt has no service_version either (the CHECK
+        // constraint ties it to body_digest, and neither was ever written for this attempt): null
+        // here, not an artificial version, is what would have caught Optional.of(null) throwing
+        // (P2, PR #23 review).
+        final SteAttempt ste = new SteAttempt(identity, null, "NOT_APPLICABLE", "cache-day", "ACTIVE",
+                null);
+
+        final ReplayReport report = compare(List.of(sit), List.of(ste), List.of());
+
+        final HearingComparison only = report.comparisons().get(0);
+        assertThat(only.comparisonClass()).isEqualTo(HearingComparisonClass.MATCH);
+        assertThat(only.differingPaths()).isEmpty();
+        assertThat(only.steServiceVersion()).isEmpty();
+        assertThat(report.verdict()).isEqualTo(ReplayReport.VERDICT_NO_UNEXPLAINED_DIFFERENCES);
+    }
+
+    @Test
+    @DisplayName("a bodyless NOT_APPLICABLE attempt against a SIT share that did send something is "
+            + "unpaired SIT-only, not a crash in JsonParity (M14)")
+    void bodyless_not_applicable_against_a_sent_sit_share_is_unpaired_sit_only() {
+        final ShareIdentity identity = identity();
+        final SitLoggedShare sit = sitShare(identity, "{\"a\":1}");
+        final SteAttempt ste = new SteAttempt(identity, null, "NOT_APPLICABLE", "cache-day", "ACTIVE",
+                "1.2.0");
+
+        final ReplayReport report = compare(List.of(sit), List.of(ste), List.of());
+
+        final HearingComparison only = report.comparisons().get(0);
+        assertThat(only.comparisonClass()).isEqualTo(HearingComparisonClass.UNPAIRED_SIT_ONLY);
+        assertThat(only.steStatus()).contains("NOT_APPLICABLE");
+        assertThat(report.verdict()).isEqualTo(ReplayReport.VERDICT_BLOCKS_CUTOVER);
+    }
+
+    @Test
     @DisplayName("an undelivered STE attempt is explained the same way as any unpaired share, by a "
             + "whole-covering entry")
     void undelivered_attempt_is_explained_like_any_unpaired_share() {

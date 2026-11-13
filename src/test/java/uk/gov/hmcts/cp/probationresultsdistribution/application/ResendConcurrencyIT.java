@@ -67,7 +67,7 @@ class ResendConcurrencyIT extends ResendTestSupport {
     @Test
     @DisplayName("refuses a whole run submitted while intake is paused, reading no id")
     void refuses_whole_run_while_paused() {
-        when(pauseGate.pausedByOperator()).thenReturn(true);
+        when(pauseGate.pauseRequested()).thenReturn(true);
 
         final ResendRunResult outcome = resender.resend(
                 new ResendRequest(List.of(ID_1, ID_2), "an-operator", "a reason", false));
@@ -79,7 +79,7 @@ class ResendConcurrencyIT extends ResendTestSupport {
     @Test
     @DisplayName("proceeds when intake is not paused at the start")
     void proceeds_when_not_paused() {
-        when(pauseGate.pausedByOperator()).thenReturn(false);
+        when(pauseGate.pauseRequested()).thenReturn(false);
         when(store.claimResend(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new ProcessedRequestRepository.ResendClaim.Refused(
                         ResendRefusal.UNKNOWN_REQUEST));
@@ -95,7 +95,7 @@ class ResendConcurrencyIT extends ResendTestSupport {
     void pause_mid_run_stops_claiming_further_ids() {
         // Not paused for the initial whole-run check and the first id's own check, then paused
         // from the second id's check onward.
-        when(pauseGate.pausedByOperator()).thenReturn(false, false, true);
+        when(pauseGate.pauseRequested()).thenReturn(false, false, true);
         when(store.claimResend(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new ProcessedRequestRepository.ResendClaim.Refused(
                         ResendRefusal.UNKNOWN_REQUEST));

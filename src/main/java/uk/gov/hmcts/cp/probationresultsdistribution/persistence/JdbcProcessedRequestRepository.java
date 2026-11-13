@@ -38,6 +38,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
     private static final String REASON = "reason";
     private static final String REQUEST_WHERE = "WHERE source = :source AND request_id = :requestId ";
     private static final String ACTIVE_REQUEST = "AND status IN ('RECEIVED', 'RETRYING') ";
+    private static final String CLAIM_MATCHES = "AND claim_owner = :owner AND claim_token = :token";
 
     private final JdbcClient jdbc;
     private final TransactionTemplate transactionTemplate;
@@ -466,7 +467,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "failure_reason = NULL, replayed_at = NULL, claim_owner = NULL, "
                         + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
                         + REQUEST_WHERE + ACTIVE_REQUEST
-                        + "AND claim_owner = :owner AND claim_token = :token")
+                        + CLAIM_MATCHES)
                 .param(REASON, reason.wireValue())
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
@@ -482,7 +483,7 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "failure_reason = NULL, claim_owner = NULL, claim_token = NULL, "
                         + "claim_expires_at = NULL, updated_at = now() "
                         + REQUEST_WHERE + ACTIVE_REQUEST
-                        + "AND claim_owner = :owner AND claim_token = :token")
+                        + CLAIM_MATCHES)
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
                 .param(SOURCE, source)
@@ -499,9 +500,23 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
                         + "completion_reason = NULL, replayed_at = NULL, claim_owner = NULL, "
                         + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
                         + REQUEST_WHERE + ACTIVE_REQUEST
-                        + "AND claim_owner = :owner AND claim_token = :token")
+                        + CLAIM_MATCHES)
                 .param(REASON, reason.wireValue())
                 .param("exhaustedMessageId", exhaustedMessageId)
+                .param(OWNER, claim.owner().toString())
+                .param(TOKEN, claim.token())
+                .param(SOURCE, source)
+                .param(REQUEST_ID, requestId)
+                .update();
+        return rows > 0;
+    }
+
+    @Override
+    public boolean releaseClaim(final String source, final UUID requestId, final RunClaim claim) {
+        final int rows = jdbc.sql("UPDATE processed_request SET claim_owner = NULL, "
+                        + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
+                        + REQUEST_WHERE + ACTIVE_REQUEST
+                        + CLAIM_MATCHES)
                 .param(OWNER, claim.owner().toString())
                 .param(TOKEN, claim.token())
                 .param(SOURCE, source)

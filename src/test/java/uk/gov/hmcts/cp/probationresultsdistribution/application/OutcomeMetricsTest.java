@@ -93,7 +93,7 @@ class OutcomeMetricsTest {
     void replay_outcome_labels_leg_outcomes_with_origin_replay() throws Exception {
         stubReplaySend(200);
 
-        runner.run(command, AttemptOrigin.REPLAY, RunClaim.fresh(), false, "RESULTS:replay-1");
+        runner.run(command, AttemptOrigin.REPLAY, RunClaim.fresh(), false, "RESULTS:replay-1", "unit-test");
 
         assertThat(meter.find("probation_leg_outcomes_total")
                 .tag("origin", "replay").tag("forced", "false").tag("status", "SENT")
@@ -105,7 +105,7 @@ class OutcomeMetricsTest {
     void replay_outcome_log_line_carries_run_origin_replay() throws Exception {
         stubReplaySend(200);
 
-        runner.run(command, AttemptOrigin.REPLAY, RunClaim.fresh(), false, "RESULTS:replay-1");
+        runner.run(command, AttemptOrigin.REPLAY, RunClaim.fresh(), false, "RESULTS:replay-1", "unit-test");
 
         final ILoggingEvent event = appender.list.stream()
                 .filter(e -> e.getFormattedMessage().contains("HMPPS leg outcome"))
@@ -227,6 +227,6 @@ class OutcomeMetricsTest {
         when(youthFilterSource.read(any())).thenReturn(new YouthSwitchDecision.Active());
         when(hmppsSender.send(any()))
                 .thenReturn(new SentBody(new PublishOutcome.Sent(httpStatus), SENT_BODY));
-        when(outboundLog.recordReplay(any(), any(), any())).thenReturn(true);
+        when(outboundLog.recordReplay(any(), any(), any(), any())).thenReturn(true);
     }
 }

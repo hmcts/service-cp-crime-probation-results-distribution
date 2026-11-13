@@ -93,13 +93,17 @@ public final class DistributionRunner {
      * @param claim                  the request claim the run's writes are fenced by
      * @param finalPermittedDelivery whether this is the final delivery the broker will permit, so a
      *                               transient miss fails the leg instead of parking it (FR-002-018)
+     * @param deliveryMessageId      the delivery's own {@code messageId}, recorded as
+     *                               {@code exhausted_message_id} when the leg exhausts on this
+     *                               delivery
      * @return the run result for the listener to settle on
      */
     public RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,
-                         final RunClaim claim, final boolean finalPermittedDelivery) {
+                         final RunClaim claim, final boolean finalPermittedDelivery,
+                         final String deliveryMessageId) {
         Objects.requireNonNull(claim, "claim");
         return runPipeline(command, runOrigin, finalPermittedDelivery,
-                outcome -> outboundLog.record(outcome, claim));
+                outcome -> outboundLog.record(outcome, claim, deliveryMessageId));
     }
 
     /**
@@ -112,15 +116,19 @@ public final class DistributionRunner {
      * @param claim                  the request claim the run's writes are fenced by
      * @param finalPermittedDelivery whether this is the final delivery the broker will permit
      * @param replayMessageId        the replay message's {@code messageId}, recorded in {@code note}
+     * @param deliveryMessageId      the replay delivery's own {@code messageId}, recorded as
+     *                               {@code exhausted_message_id} when the leg exhausts on this
+     *                               delivery
      * @return the run result for the listener to settle on
      */
     public RunResult run(final DistributionCommand command, final AttemptOrigin runOrigin,
                          final RunClaim claim, final boolean finalPermittedDelivery,
-                         final String replayMessageId) {
+                         final String replayMessageId, final String deliveryMessageId) {
         Objects.requireNonNull(claim, "claim");
         Objects.requireNonNull(replayMessageId, "replayMessageId");
         return runPipeline(command, runOrigin, finalPermittedDelivery,
-                outcome -> outboundLog.recordReplay(outcome, claim, replayMessageId));
+                outcome -> outboundLog.recordReplay(outcome, claim, replayMessageId,
+                        deliveryMessageId));
     }
 
     /**
@@ -257,7 +265,7 @@ public final class DistributionRunner {
                 Optional.of(sent.body()));
         final Optional<GatewayRecovery> recovery = sent.outcome() instanceof PublishOutcome.Sent succeeded
                 ? succeeded.recovery() : Optional.empty();
-        return record(command, runOrigin, outcome, switchCause, shape, recovery, writer);
+        return record(command, runOrigin, outcome, switchCause, shape, recovery, writer, true);
     }
 
     private RunResult notApplicable(final DistributionCommand command, final AttemptOrigin runOrigin,
@@ -287,14 +295,29 @@ public final class DistributionRunner {
                 Optional.empty(), writer);
     }
 
+    private RunResult record(final DistributionCommand command, final AttemptOrigin runOrigin,
+                             final LegOutcome outcome,
+                             final Optional<YouthSwitchUnreadableCause> switchCause,
+                             final BodyShape shape, final Optional<GatewayRecovery> recovery,
+                             final LegWriter writer) {
+        return record(command, runOrigin, outcome, switchCause, shape, recovery, writer, false);
+    }
+
+    /**
+     * {@link #record(DistributionCommand, AttemptOrigin, LegOutcome, Optional, BodyShape, Optional,
+     * LegWriter)}, over a write that may follow a real send attempt.
+     *
+     * @param afterSend whether this write follows a real send attempt to HMPPS, so a failure here
+     *                  must never look safe to retry immediately (review of PR #8)
+     */
     // A rejected fenced write exits before any outcome telemetry can claim that it was recorded.
     @SuppressWarnings("PMD.OnlyOneReturn")
     private RunResult record(final DistributionCommand command, final AttemptOrigin runOrigin,
                              final LegOutcome outcome,
                              final Optional<YouthSwitchUnreadableCause> switchCause,
                              final BodyShape shape, final Optional<GatewayRecovery> recovery,
-                             final LegWriter writer) {
-        final boolean recorded = writer.write(outcome);
+                             final LegWriter writer, final boolean afterSend) {
+        final boolean recorded = writeOutcome(writer, outcome, afterSend);
         if (!recorded) {
             return new RunResult(runOrigin, outcome.status(), outcome.reason(), false);
         }
@@ -342,6 +365,28 @@ public final class DistributionRunner {
                     youthSwitchCause, command.requestId());
         }
         return new RunResult(runOrigin, outcome.status(), outcome.reason(), recorded);
+    }
+
+    /**
+     * Writes the outcome, wrapping an unexpected failure as {@link OutcomeWriteAfterSendFailedException}
+     * when it follows a real send attempt and the writer is one a request-level claim could be
+     * released over (review of PR #8) — never for a resend, which carries no such claim and
+     * classifies its own write failures directly over the unwrapped exception.
+     */
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    // Deliberately total: any unexpected failure here must be classified before it leaves this
+    // method, not just a DataAccessException, since the point is the exception's type at the
+    // listener, not its cause.
+    private boolean writeOutcome(final LegWriter writer, final LegOutcome outcome,
+                                 final boolean afterSend) {
+        try {
+            return writer.write(outcome);
+        } catch (final RuntimeException writeFailed) {
+            if (afterSend && writer.wrapsWriteFailureAfterSend()) {
+                throw new OutcomeWriteAfterSendFailedException(writeFailed);
+            }
+            throw writeFailed;
+        }
     }
 
     private static boolean isDefaulted(final String youthSwitch) {
@@ -460,6 +505,20 @@ public final class DistributionRunner {
         default boolean forced() {
             return false;
         }
+
+        /**
+         * Whether a write failure after a real send attempt should be wrapped as
+         * {@link OutcomeWriteAfterSendFailedException} (review of PR #8), so the listener managing
+         * the request-level claim never releases it and risks an immediate, unbackoffed redelivery
+         * duplicate-sending to HMPPS. {@code false} for a resend: it carries no request-level claim
+         * for a listener to release — {@link LegResender} classifies its own write failures as
+         * {@code claimed-incomplete} directly, over the unwrapped exception.
+         *
+         * @return {@code true} for the queue and replay write paths; {@code false} for a resend
+         */
+        default boolean wrapsWriteFailureAfterSend() {
+            return true;
+        }
     }
 
     /**
@@ -481,6 +540,11 @@ public final class DistributionRunner {
         @Override
         public boolean forced() {
             return attempt.forced();
+        }
+
+        @Override
+        public boolean wrapsWriteFailureAfterSend() {
+            return false;
         }
     }
 }

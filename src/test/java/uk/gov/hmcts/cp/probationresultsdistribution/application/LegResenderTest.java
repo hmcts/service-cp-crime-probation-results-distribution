@@ -82,7 +82,7 @@ class LegResenderTest {
         @Test
         @DisplayName("a failed claim is not-run, the next id still runs, and the run is failed")
         void claim_failure_is_not_run_and_the_run_carries_on() {
-            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(pauseGate.pauseRequested()).thenReturn(false);
             when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenThrow(new DataAccessResourceFailureException("connection lost"));
             when(store.claimResend(eq("RESULTS"), eq(ID_2), any(), any(), any(), any()))
@@ -106,7 +106,7 @@ class LegResenderTest {
         @Test
         @DisplayName("a store failure after the claim is claimed-incomplete, and the run is failed")
         void failure_after_claim_is_claimed_incomplete() {
-            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(pauseGate.pauseRequested()).thenReturn(false);
             when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
             when(runner.runResend(any(), any(), anyBoolean()))
@@ -131,7 +131,7 @@ class LegResenderTest {
         @Test
         @DisplayName("is claimed-incomplete, counts a stale-runner rejection, and does not fail the run")
         void fenced_completion_is_claimed_incomplete() {
-            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(pauseGate.pauseRequested()).thenReturn(false);
             when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
             when(runner.runResend(any(), any(), anyBoolean())).thenReturn(sent(false));
@@ -152,7 +152,7 @@ class LegResenderTest {
         @Test
         @DisplayName("before the run refuses it whole store-unavailable, claiming nothing")
         void first_pause_read_failure_refuses_the_run_whole() {
-            when(pauseGate.pausedByOperator())
+            when(pauseGate.pauseRequested())
                     .thenThrow(new DataAccessResourceFailureException("store down"));
 
             final ResendRunResult result = resender().resend(request(ID_1, ID_2));
@@ -165,7 +165,7 @@ class LegResenderTest {
         @Test
         @DisplayName("mid-run claims no further id, reports the rest not-run and fails the run")
         void mid_run_pause_read_failure_stops_claiming() {
-            when(pauseGate.pausedByOperator()).thenReturn(false, false)
+            when(pauseGate.pauseRequested()).thenReturn(false, false)
                     .thenThrow(new DataAccessResourceFailureException("store down"));
             when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
@@ -189,7 +189,7 @@ class LegResenderTest {
         @Test
         @DisplayName("accept applies the whole-run checks, assigns a run id and claims nothing")
         void accept_runAccepted_should_assignRunIdAndClaimNothing() {
-            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(pauseGate.pauseRequested()).thenReturn(false);
 
             final ResendAcceptance acceptance = resender().accept(new ResendRequest(
                     List.of(ID_2, ID_1, ID_2), "an-operator\n", "a\treason", true, true));
@@ -210,7 +210,7 @@ class LegResenderTest {
         @Test
         @DisplayName("without the override, accept carries no forced-resend reason")
         void accept_withoutForcedResend_should_carryNoReason() {
-            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(pauseGate.pauseRequested()).thenReturn(false);
 
             final ResendAcceptance acceptance = resender().accept(request(ID_1));
 
@@ -221,7 +221,7 @@ class LegResenderTest {
         @Test
         @DisplayName("a whole-run refusal at accept claims nothing and assigns no run id")
         void accept_runRefused_should_claimNothing() {
-            when(pauseGate.pausedByOperator()).thenReturn(true);
+            when(pauseGate.pauseRequested()).thenReturn(true);
 
             final ResendAcceptance acceptance = resender().accept(request(ID_1, ID_2));
 
@@ -233,7 +233,7 @@ class LegResenderTest {
         @Test
         @DisplayName("the run step over an accepted run gives the report resend gives, under its run id")
         void run_acceptedRun_should_giveTheResendReport() {
-            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(pauseGate.pauseRequested()).thenReturn(false);
             when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
             when(runner.runResend(any(), any(), anyBoolean())).thenReturn(sent(true));
@@ -254,7 +254,7 @@ class LegResenderTest {
         @Test
         @DisplayName("a stop raised between ids claims nothing further and reports the rest not-run")
         void run_stopBetweenIds_should_reportTheRestNotRun() {
-            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(pauseGate.pauseRequested()).thenReturn(false);
             when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
             final LegResender resender = resender();
@@ -279,7 +279,7 @@ class LegResenderTest {
         @Test
         @DisplayName("a stop raised before the first id claims nothing at all")
         void run_stopBeforeFirstId_should_claimNothing() {
-            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(pauseGate.pauseRequested()).thenReturn(false);
             final LegResender resender = resender();
             final ResendAcceptance.Accepted accepted =
                     accepted(resender, request(ID_1, ID_2));

@@ -35,7 +35,6 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.IdempotencyGuard
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RunResult;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.AttemptOrigin;
-import uk.gov.hmcts.cp.probationresultsdistribution.domain.CompletionReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DeadLetterReason;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.DistributionCommand;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.FailureReason;
@@ -114,7 +113,8 @@ class ProbationMessageListenerTest {
         final Settlement settlement = listener.decide(BODY, 1L);
 
         assertThat(settlement).isInstanceOf(Complete.class);
-        verify(runner, never()).run(any(), any(), any(), anyBoolean());
+        verify(runner, never()).run(any(), any(), any(), anyBoolean(), any());
+        verify(runner, never()).run(any(), any(), any(), anyBoolean(), any(), any());
     }
 
     @Test
@@ -124,7 +124,8 @@ class ProbationMessageListenerTest {
         when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Abandon());
 
         assertThat(listener.decide(BODY, 1L)).isInstanceOf(Abandon.class);
-        verify(runner, never()).run(any(), any(), any(), anyBoolean());
+        verify(runner, never()).run(any(), any(), any(), anyBoolean(), any());
+        verify(runner, never()).run(any(), any(), any(), anyBoolean(), any(), any());
     }
 
     @Test
@@ -146,16 +147,16 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false, "unit-test"))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
-        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
-                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
 
         final Settlement settlement = listener.decide(BODY, 1L);
 
         assertThat(settlement).isInstanceOf(Complete.class);
-        verify(processedRequests).markCompleted(command.source(), command.requestId(), claim,
-                CompletionReason.BOTH_LEGS_TERMINAL);
+        // The request transition is now written atomically with the leg outcome
+        // (OutboundMessageRepository#applyRequestTransition, review of PR #8), so the mocked runner's
+        // recorded=true already speaks for it; the listener itself writes nothing here.
+        verify(processedRequests, never()).markCompleted(any(), any(), any(), any());
         assertThat(count("probation_processed_total", "status", "COMPLETED")).isEqualTo(1.0d);
     }
 
@@ -167,10 +168,8 @@ class ProbationMessageListenerTest {
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(
                 new GuardDecision.Admitted(claim, false, false, Optional.of(replayMessageId), false, true));
-        when(runner.run(command, AttemptOrigin.REPLAY, claim, false, replayMessageId)).thenReturn(
-                new RunResult(AttemptOrigin.REPLAY, LegStatus.SENT, Optional.empty(), true));
-        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
-                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
+        when(runner.run(command, AttemptOrigin.REPLAY, claim, false, replayMessageId, "unit-test"))
+                .thenReturn(new RunResult(AttemptOrigin.REPLAY, LegStatus.SENT, Optional.empty(), true));
 
         listener.decide(BODY, 1L);
 
@@ -186,14 +185,12 @@ class ProbationMessageListenerTest {
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(
                 new GuardDecision.Admitted(claim, false, false, Optional.of(replayMessageId), false, false));
-        when(runner.run(command, AttemptOrigin.REPLAY, claim, false, replayMessageId)).thenReturn(
-                new RunResult(AttemptOrigin.REPLAY, LegStatus.SENT, Optional.empty(), true));
-        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
-                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
+        when(runner.run(command, AttemptOrigin.REPLAY, claim, false, replayMessageId, "unit-test"))
+                .thenReturn(new RunResult(AttemptOrigin.REPLAY, LegStatus.SENT, Optional.empty(), true));
 
         listener.decide(BODY, 1L);
 
-        verify(runner).run(command, AttemptOrigin.REPLAY, claim, false, replayMessageId);
+        verify(runner).run(command, AttemptOrigin.REPLAY, claim, false, replayMessageId, "unit-test");
         assertThat(count("probation_replays_total", "route", "copy")).isEqualTo(0.0d);
     }
 
@@ -212,8 +209,8 @@ class ProbationMessageListenerTest {
 
         assertThat(settlement).isInstanceOf(DeadLetter.class);
         assertThat(((DeadLetter) settlement).reason()).isEqualTo(DeadLetterReason.LEG_EXHAUSTED);
-        verify(runner, never()).run(any(), any(), any(), anyBoolean());
         verify(runner, never()).run(any(), any(), any(), anyBoolean(), any());
+        verify(runner, never()).run(any(), any(), any(), anyBoolean(), any(), any());
         verify(processedRequests).markFailed(eq(command.source()), eq(command.requestId()), eq(claim),
                 eq(FailureReason.LEG_EXHAUSTED), any());
         assertThat(count("probation_deadlettered_total", "reason", "leg-exhausted")).isEqualTo(1.0d);
@@ -226,15 +223,16 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(new RunResult(
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false, "unit-test")).thenReturn(new RunResult(
                 AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
-        when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
-                .thenReturn(true);
 
         final Settlement settlement = listener.decide(BODY, 1L);
 
         assertThat(settlement).isInstanceOf(Abandon.class);
-        verify(processedRequests).markRetrying(command.source(), command.requestId(), claim);
+        // The RETRYING transition is now written atomically with the PARKED leg outcome
+        // (OutboundMessageRepository#applyRequestTransition, review of PR #8); the listener writes
+        // nothing itself here.
+        verify(processedRequests, never()).markRetrying(any(), any(), any());
         verify(processedRequests, never()).markCompleted(any(), any(), any(), any());
     }
 
@@ -244,7 +242,7 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false, "unit-test")).thenReturn(
                 new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), false));
 
         final Settlement settlement = listener.decide(BODY, 1L);
@@ -255,38 +253,101 @@ class ProbationMessageListenerTest {
     }
 
     @Test
-    @DisplayName("abandons and counts a stale-runner rejection when the request transition matches no row")
-    void abandons_when_the_request_transition_is_stale() {
+    @DisplayName("releases the claim before handing back an unexpected failure after admission "
+            + "(review of PR #8)")
+    void releases_the_claim_after_an_unexpected_failure_following_admission() {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
-                .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
-        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
-                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(false);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any()))
+                .thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false, "unit-test"))
+                .thenThrow(new IllegalStateException("the gateway call blew up"));
+        when(processedRequests.releaseClaim(command.source(), command.requestId(), claim))
+                .thenReturn(true);
 
         final Settlement settlement = listener.decide(BODY, 1L);
 
         assertThat(settlement).isInstanceOf(Abandon.class);
-        assertThat(count("probation_stale_runner_rejections_total", null, null)).isEqualTo(1.0d);
-        assertThat(count("probation_processed_total", "status", "COMPLETED")).isEqualTo(0.0d);
+        verify(processedRequests).releaseClaim(command.source(), command.requestId(), claim);
+        assertThat(count("probation_processing_failures_total", null, null)).isEqualTo(1.0d);
     }
 
     @Test
-    @DisplayName("abandons and counts a stale-runner rejection when the retry transition matches no row")
-    void abandons_when_the_retry_transition_is_stale() {
+    @DisplayName("still hands the delivery back when releasing the claim itself fails")
+    void still_hands_back_when_releasing_the_claim_fails() {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
-        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim, false)).thenReturn(new RunResult(
-                AttemptOrigin.QUEUE, LegStatus.PARKED, Optional.of(LegReason.GATEWAY_TRANSIENT), true));
-        when(processedRequests.markRetrying(command.source(), command.requestId(), claim))
-                .thenReturn(false);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any()))
+                .thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false, "unit-test"))
+                .thenThrow(new IllegalStateException("the gateway call blew up"));
+        when(processedRequests.releaseClaim(command.source(), command.requestId(), claim))
+                .thenThrow(new IllegalStateException("the store is also unreachable"));
 
         final Settlement settlement = listener.decide(BODY, 1L);
 
         assertThat(settlement).isInstanceOf(Abandon.class);
-        assertThat(count("probation_stale_runner_rejections_total", null, null)).isEqualTo(1.0d);
+    }
+
+    @Test
+    @DisplayName("suspends intake when the unexpected failure is a DataAccessException (review of PR #8)")
+    void suspends_intake_on_a_data_access_exception_after_admission() {
+        final RunClaim claim = RunClaim.fresh();
+        final StoreGate spiedStore = org.mockito.Mockito.spy(availableStore);
+        final ProbationMessageListener listenerWithSpiedStore = new ProbationMessageListener(
+                parser, guard, runner, processedRequests, new MetricRegistry(meter), spiedStore, 5);
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any()))
+                .thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false, null))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException(
+                        "the store write failed"));
+
+        listenerWithSpiedStore.processMessage(context);
+
+        verify(spiedStore).suspendIntake();
+        verify(context).abandon();
+    }
+
+    @Test
+    @DisplayName("does not suspend intake for an unexpected failure unrelated to the store")
+    void does_not_suspend_intake_on_an_unrelated_failure_after_admission() {
+        final RunClaim claim = RunClaim.fresh();
+        final StoreGate spiedStore = org.mockito.Mockito.spy(availableStore);
+        final ProbationMessageListener listenerWithSpiedStore = new ProbationMessageListener(
+                parser, guard, runner, processedRequests, new MetricRegistry(meter), spiedStore, 5);
+        final ServiceBusReceivedMessageContext context = contextFor(BODY);
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any()))
+                .thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false, null))
+                .thenThrow(new IllegalStateException("the gateway connection reset"));
+
+        listenerWithSpiedStore.processMessage(context);
+
+        verify(spiedStore, never()).suspendIntake();
+        verify(context).abandon();
+    }
+
+    @Test
+    @DisplayName("does not release the claim when the outcome write failed after a real send "
+            + "attempt (review of PR #8): a redelivery might duplicate-send a hearing HMPPS already "
+            + "received, so the claim is left to its lease's natural expiry instead")
+    void does_not_release_the_claim_when_the_write_failed_after_a_send() {
+        final RunClaim claim = RunClaim.fresh();
+        when(parser.parse(BODY)).thenReturn(command);
+        when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any()))
+                .thenReturn(new GuardDecision.Admitted(claim));
+        when(runner.run(command, AttemptOrigin.QUEUE, claim, false, "unit-test"))
+                .thenThrow(new uk.gov.hmcts.cp.probationresultsdistribution.application
+                        .OutcomeWriteAfterSendFailedException(
+                                new IllegalStateException("the outcome write failed")));
+
+        final Settlement settlement = listener.decide(BODY, 1L);
+
+        assertThat(settlement).isInstanceOf(Abandon.class);
+        verify(processedRequests, never()).releaseClaim(any(), any(), any());
     }
 
     @Test
@@ -323,10 +384,8 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
+        when(runner.run(eq(command), eq(AttemptOrigin.QUEUE), eq(claim), eq(false), any()))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
-        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
-                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
         final ServiceBusReceivedMessageContext context = contextFor(BODY);
 
         listener.processMessage(context);
@@ -356,10 +415,8 @@ class ProbationMessageListenerTest {
         final RunClaim claim = RunClaim.fresh();
         when(parser.parse(BODY)).thenReturn(command);
         when(guard.admit(eq(command), eq(BODY), any(), anyLong(), any())).thenReturn(new GuardDecision.Admitted(claim));
-        when(runner.run(command, AttemptOrigin.QUEUE, claim, false))
+        when(runner.run(eq(command), eq(AttemptOrigin.QUEUE), eq(claim), eq(false), any()))
                 .thenReturn(new RunResult(AttemptOrigin.QUEUE, LegStatus.SENT, Optional.empty(), true));
-        when(processedRequests.markCompleted(command.source(), command.requestId(), claim,
-                CompletionReason.BOTH_LEGS_TERMINAL)).thenReturn(true);
         final ServiceBusReceivedMessageContext context = contextFor(BODY);
         doThrow(new IllegalStateException("the lock was lost")).when(context).complete();
 

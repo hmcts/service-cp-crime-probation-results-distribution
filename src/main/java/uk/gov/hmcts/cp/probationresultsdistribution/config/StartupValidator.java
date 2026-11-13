@@ -21,6 +21,13 @@ public final class StartupValidator {
     private static final Set<String> VALID_DEFAULTS = Set.of("ACTIVE", "INACTIVE");
     private static final Duration RENEW_MARGIN = Duration.ofSeconds(30);
     private static final int EXPECTED_MAX_DELIVERY_COUNT = 5;
+    private static final int MAX_TCP_PORT = 65_535;
+    private static final String IS_REQUIRED = "is required";
+    private static final String IS_REQUIRED_OUTSIDE_LOCAL_AND_TEST =
+            "is required outside the local and test profiles";
+    private static final String MUST_BE_AT_LEAST_ONE = "must be at least 1";
+    private static final String WORKLOAD_IDENTITY_REQUIRED =
+            "is required for workload identity outside the local and test profiles";
 
     /**
      * Validates the typed configuration, throwing when a rule fails.
@@ -36,10 +43,99 @@ public final class StartupValidator {
         validateIdentity(props);
         validateYouthDefault(props);
         validateDeliveryLimit(props);
+        validateAttemptCounts(props);
         validateResend(props);
         if (requireSecrets) {
             validateSecrets(props);
         }
+    }
+
+    /**
+     * Refuses neither or both Service Bus credential sources (design §8.1, application.yaml's own
+     * comment on {@code distribution.servicebus.*}): exactly one of
+     * {@code distribution.servicebus.connection-string} (local and CI) or
+     * {@code distribution.servicebus.namespace} (deployed, workload identity) may be set.
+     * {@link uk.gov.hmcts.cp.probationresultsdistribution.config.PipelineClients#serviceBus} silently
+     * prefers the connection string when both are set, so this is the only refusal either mistake
+     * gets. Neither set is accepted only when secrets are not required (the {@code test} profile,
+     * where messaging is never used at all).
+     *
+     * @param connectionString {@code distribution.servicebus.connection-string}, blank for none
+     * @param namespace        {@code distribution.servicebus.namespace}, blank for none
+     * @param requireSecrets   whether required secrets must be present
+     */
+    public void validateServiceBusCredential(final String connectionString, final String namespace,
+                                             final boolean requireSecrets) {
+        final boolean hasConnectionString = isNotBlank(connectionString);
+        final boolean hasNamespace = isNotBlank(namespace);
+        if (!requireSecrets && !hasConnectionString && !hasNamespace) {
+            return;
+        }
+        require(hasConnectionString ^ hasNamespace, "distribution.servicebus.connection-string",
+                "exactly one of distribution.servicebus.connection-string or "
+                        + "distribution.servicebus.namespace must be set, never neither or both");
+    }
+
+    /**
+     * Refuses a deployed profile's namespace credential without the workload identity environment
+     * {@code azure-identity} itself reads (review of PR #8): without
+     * {@code AZURE_CLIENT_ID}/{@code AZURE_TENANT_ID}/{@code AZURE_FEDERATED_TOKEN_FILE}, a
+     * {@code DefaultAzureCredential} built on the namespace path fails only on first use — the first
+     * queue connection, well after the pod is already reporting ready — rather than at startup.
+     *
+     * @param namespace      {@code distribution.servicebus.namespace}, blank for none
+     * @param environment    the application environment
+     * @param requireSecrets whether required secrets must be present
+     */
+    public void validateWorkloadIdentity(final String namespace, final Environment environment,
+                                         final boolean requireSecrets) {
+        if (requireSecrets && isNotBlank(namespace)) {
+            require(isNotBlank(environment.getProperty("AZURE_CLIENT_ID")), "AZURE_CLIENT_ID",
+                    WORKLOAD_IDENTITY_REQUIRED);
+            require(isNotBlank(environment.getProperty("AZURE_TENANT_ID")), "AZURE_TENANT_ID",
+                    WORKLOAD_IDENTITY_REQUIRED);
+            require(isNotBlank(environment.getProperty("AZURE_FEDERATED_TOKEN_FILE")),
+                    "AZURE_FEDERATED_TOKEN_FILE", WORKLOAD_IDENTITY_REQUIRED);
+        }
+    }
+
+    /**
+     * Refuses a blank Redis host always, and a blank Redis key where secrets are required (outside
+     * the {@code local} and {@code test} profiles): the payload cache is a required dependency in
+     * every profile, and its credential — absent only because the local compose Redis runs with no
+     * password — arrives from Key Vault everywhere else.
+     *
+     * @param host           {@code distribution.redis.host}
+     * @param key            {@code distribution.redis.key}, blank for none
+     * @param requireSecrets whether required secrets must be present
+     */
+    public void validateRedisRequired(final String host, final String key,
+                                      final boolean requireSecrets) {
+        require(isNotBlank(host), "distribution.redis.host", IS_REQUIRED);
+        if (requireSecrets) {
+            require(isNotBlank(key), "distribution.redis.key", IS_REQUIRED_OUTSIDE_LOCAL_AND_TEST);
+        }
+    }
+
+    /**
+     * Refuses a Redis port outside the valid TCP range.
+     *
+     * @param port {@code distribution.redis.port}
+     */
+    public void validateRedisPort(final int port) {
+        require(port >= 1 && port <= MAX_TCP_PORT, "distribution.redis.port",
+                "must be a valid TCP port (1-" + MAX_TCP_PORT + ")");
+    }
+
+    /**
+     * Refuses a Service Bus concurrency below 1 — the processor's own
+     * {@code maxConcurrentCalls(0)} would never dispatch a delivery at all.
+     *
+     * @param maxConcurrentCalls {@code distribution.servicebus.max-concurrent-calls}
+     */
+    public void validateConcurrency(final int maxConcurrentCalls) {
+        require(maxConcurrentCalls >= 1, "distribution.servicebus.max-concurrent-calls",
+                MUST_BE_AT_LEAST_ONE);
     }
 
     /**
@@ -53,7 +149,7 @@ public final class StartupValidator {
     public void validateGatewayKey(final String subscriptionKey, final boolean requireSecrets) {
         if (requireSecrets) {
             require(isNotBlank(subscriptionKey), "distribution.gateway.subscription-key",
-                    "is required outside the local and test profiles");
+                    IS_REQUIRED_OUTSIDE_LOCAL_AND_TEST);
         }
     }
 
@@ -194,6 +290,19 @@ public final class StartupValidator {
     }
 
     /**
+     * Refuses a client attempt count below 1: zero attempts means the client never actually tries
+     * its call.
+     */
+    private void validateAttemptCounts(final DistributionProperties props) {
+        require(props.gateway().maxAttempts() >= 1, "distribution.gateway.max-attempts",
+                MUST_BE_AT_LEAST_ONE);
+        require(props.results().maxAttempts() >= 1, "distribution.results.max-attempts",
+                MUST_BE_AT_LEAST_ONE);
+        require(props.usersgroups().maxAttempts() >= 1, "distribution.usersgroups.max-attempts",
+                MUST_BE_AT_LEAST_ONE);
+    }
+
+    /**
      * Refuses a resend-leg cap below 1 (slice 004, FR-004-019): {@code distribution.resend
      * .max-ids-per-run} bounds the explicit {@code requestId} list resend-leg takes per run, and a
      * run of zero or fewer ids is meaningless.
@@ -202,16 +311,15 @@ public final class StartupValidator {
      */
     private void validateResend(final DistributionProperties props) {
         require(props.resend().maxIdsPerRun() >= 1,
-                "distribution.resend.max-ids-per-run", "must be at least 1");
+                "distribution.resend.max-ids-per-run", MUST_BE_AT_LEAST_ONE);
     }
 
     private void validateSecrets(final DistributionProperties props) {
-        require(isNotBlank(props.results().baseUrl()),
-                "distribution.results.base-url", "is required");
-        require(isNotBlank(props.usersgroups().baseUrl()),
-                "distribution.usersgroups.base-url", "is required");
-        require(isNotBlank(props.results().systemUserId()),
-                "distribution.results.system-user-id", "is required");
+        require(isNotBlank(props.results().baseUrl()), "distribution.results.base-url", IS_REQUIRED);
+        require(isNotBlank(props.usersgroups().baseUrl()), "distribution.usersgroups.base-url",
+                IS_REQUIRED);
+        require(isNotBlank(props.results().systemUserId()), "distribution.results.system-user-id",
+                IS_REQUIRED);
         require(props.hmpps().url() != null && props.hmpps().url().startsWith("https://"),
                 "distribution.hmpps.url", "is required and must be https");
     }

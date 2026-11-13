@@ -62,6 +62,17 @@ public final class JdbcRollbackFencingRepository implements RollbackFencingRepos
     }
 
     private boolean closeOneRow(final InFlightRow row) {
+        // The request row is locked before the leg row, matching the order claimResend and every
+        // outcome-write path in OutboundMessageRepository take it in: left the other way round (as
+        // this did), a late queue or replay write overrunning the drain window and this close racing
+        // the same request could each hold the row the other needs, and PostgreSQL's deadlock
+        // detector rolls one of them back (P2 follow-up, PR #23 review).
+        jdbc.sql("SELECT status FROM processed_request WHERE source = :source "
+                        + "AND request_id = :requestId FOR UPDATE")
+                .param("source", row.source())
+                .param("requestId", row.requestId())
+                .query(String.class)
+                .optional();
         final String note = withPrevReplaced(row.note(), newPrevForm(row));
         final boolean resendRow = "resend".equals(row.attemptOrigin());
         final String legUpdate = "UPDATE outbound_message SET status = 'FAILED', "

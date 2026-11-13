@@ -14,9 +14,10 @@ import org.junit.jupiter.api.Test;
 @DisplayName("RunbookInputStep traceability")
 class RunbookInputTraceabilityTest {
 
-    private static final List<String> PINNED_004_TESTS = List.of("RollbackFencingIT",
+    private static final List<String> PINNED_TESTS = List.of("RollbackFencingIT",
             "PurgeQueueActionTest", "ReplayActionTest", "SubmitHearingActionTest",
-            "LegResenderTest", "IntakePauseResumeTest", "DailyReconciliationQueryIT");
+            "LegResenderTest", "IntakePauseResumeTest", "DailyReconciliationQueryIT",
+            "LegacySilenceCheckSharedDefinitionTest");
     private static final String FORWARD_REFERENCE_MARKER = "not yet built — corrected once";
 
     @Test
@@ -35,7 +36,7 @@ class RunbookInputTraceabilityTest {
                         .as("step %s/%s", step.procedure(), step.stepNumber())
                         .satisfiesAnyOf(
                                 readBack -> assertThat(readBack).contains("GoNoGoEvidenceQuery"),
-                                readBack -> assertThat(PINNED_004_TESTS)
+                                readBack -> assertThat(PINNED_TESTS)
                                         .anyMatch(readBack::contains),
                                 readBack -> assertThat(readBack).contains(FORWARD_REFERENCE_MARKER)));
     }

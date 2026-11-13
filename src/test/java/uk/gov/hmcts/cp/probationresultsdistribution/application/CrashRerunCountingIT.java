@@ -70,14 +70,16 @@ class CrashRerunCountingIT extends EndToEndTestSupport {
         final CountDownLatch outcomeWriteAttempted = new CountDownLatch(1);
         final OutboundLog crashBeforeRecord = new OutboundLog() {
             @Override
-            public boolean record(final LegOutcome outcome, final RunClaim claim) {
+            public boolean record(final LegOutcome outcome, final RunClaim claim,
+                                  final String deliveryMessageId) {
                 outcomeWriteAttempted.countDown();
                 throw new IllegalStateException("simulated process crash after successful POST");
             }
 
             @Override
             public boolean recordReplay(final LegOutcome outcome, final RunClaim claim,
-                                        final String rerunByMessageId) {
+                                        final String rerunByMessageId,
+                                        final String deliveryMessageId) {
                 throw new UnsupportedOperationException("not exercised by this test");
             }
 

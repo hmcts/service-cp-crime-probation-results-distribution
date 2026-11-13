@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import uk.gov.hmcts.cp.probationresultsdistribution.pipeline.support.HearingPairing.PairedShare;
@@ -27,6 +28,7 @@ public final class ReplayComparator {
     private static final String DEFAULTED_INACTIVE = "UNREADABLE_DEFAULTED_INACTIVE";
     private static final String STATUS_FAILED = "FAILED";
     private static final String STATUS_PARKED = "PARKED";
+    private static final String STATUS_NOT_APPLICABLE = "NOT_APPLICABLE";
 
     private ReplayComparator() {
     }
@@ -71,8 +73,12 @@ public final class ReplayComparator {
                 ? ReplayReport.VERDICT_BLOCKS_CUTOVER
                 : ReplayReport.VERDICT_NO_UNEXPLAINED_DIFFERENCES;
 
+        // A bodyless attempt (NOT_APPLICABLE with no body) never recorded a service_version - it is
+        // only ever written alongside a serialised body (H19) - so it contributes nothing to say
+        // which build was running, rather than a null entry List.copyOf below would reject.
         final List<String> steBuilds = steAttempts.stream()
                 .map(SteAttempt::serviceVersion)
+                .filter(Objects::nonNull)
                 .distinct()
                 .toList();
 
@@ -111,6 +117,25 @@ public final class ReplayComparator {
         // parked or failed a hearing that SIT sent"), so it stays unpaired and blocking rather than
         // being waved through as a match.
         if (isUndelivered(ste.status())) {
+            return unpaired(id, HearingComparisonClass.UNPAIRED_SIT_ONLY, wholeExplanation,
+                    Optional.of(ste));
+        }
+
+        // A genuine NOT_APPLICABLE attempt (sjp-or-box-hearing, nothing-left-after-redaction) never
+        // serialises a body (H20; outbound_body has no row for it), so ste.body() is null here by
+        // construction — never an empty object a real diff could run against. It must never reach
+        // JsonParity.differencePaths, which assumes two real trees and NPEs on a null side (M14, PR
+        // #23 review). A share with no SIT body either is a genuine match: both sides legitimately
+        // sent nothing. One with a SIT body is the same "nothing reached HMPPS" divergence the
+        // FAILED/PARKED undelivered branch above already reports.
+        if (STATUS_NOT_APPLICABLE.equals(ste.status()) && ste.body() == null) {
+            if (sit.loggedBody().isEmpty() && sit.unusableReason().isEmpty()) {
+                return new HearingComparison(id.hearingId(), id.hearingDay(), id.sharedTime(),
+                        HearingComparisonClass.MATCH, List.of(), Optional.empty(), Optional.empty(),
+                        Optional.of(ste.status()), Optional.of(ste.payloadSource()),
+                        Optional.of(ste.youthSwitch()), Optional.ofNullable(ste.serviceVersion()),
+                        Optional.empty());
+            }
             return unpaired(id, HearingComparisonClass.UNPAIRED_SIT_ONLY, wholeExplanation,
                     Optional.of(ste));
         }

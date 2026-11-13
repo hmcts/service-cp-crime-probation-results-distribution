@@ -144,6 +144,24 @@ class HmppsRedactionRulesFailureTest {
         }
     }
 
+    @Nested
+    @DisplayName("S11: a non-object top-level payload fails in R1, never escaping as a "
+            + "ClassCastException")
+    class NonObjectTopLevelPayload {
+
+        @ParameterizedTest(name = "{0} fails in R1, not a raw ClassCastException")
+        @MethodSource("nonObjectPayloads")
+        @DisplayName("an array, string, number or boolean top-level payload is a rules failure")
+        void non_object_payload_should_fail_in_r1(final String json) {
+            assertRulesFailure(parse(json), EffectiveSwitchState.ACTIVE, "R1");
+        }
+
+        private static Stream<Arguments> nonObjectPayloads() {
+            return Stream.of(Arguments.of("[]"), Arguments.of("[1,2,3]"),
+                    Arguments.of("\"not-a-hearing\""), Arguments.of("42"), Arguments.of("true"));
+        }
+    }
+
     private void assertRulesFailure(
             final JsonNode payload, final EffectiveSwitchState state, final String ruleId) {
         final RedactionResult result = redaction.redact(payload, state);
