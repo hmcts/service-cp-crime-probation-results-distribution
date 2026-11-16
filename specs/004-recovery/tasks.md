@@ -1030,14 +1030,34 @@ letter suffixes off T050 so no existing task in this file is renumbered.
       timing-based one because proving "Spring did not call `close()` a second time" by elapsed
       time alone would be slow and fragile; this asserts the exact mechanism the review named
       instead. `./gradlew build` green after.
-- [ ] T050g Run `quickstart.md` step 9 (close an expired resend lease) locally against the Service
-      Bus emulator and a real Postgres, as T050 ran steps 3–4. **Not run in this pass**: no live
-      local stack (Service Bus emulator, Postgres) was available in the environment this increment
-      was implemented in. T050a–T050f are implemented, built (`./gradlew build` green: compile, the
-      full test suite including `CloseExpiredResendIT` and `ConsumerLifecycleControllerTest` against
-      real Postgres, Checkstyle, PMD and the JaCoCo gate) and exercised via Testcontainers Postgres,
-      but the manual `docker compose up -d` quickstart run against the emulator still needs a human
-      to perform it.
+- [X] T050g Run `quickstart.md` step 9 (close an expired resend lease) locally against the Service
+      Bus emulator and a real Postgres, as T050 ran steps 3–4.
+      Run live 2026-11-16 against `docker compose up -d postgres servicebus-emulator redis
+      wiremock` (postgres remapped 5433:5432 locally via an uncommitted override, same dodge as
+      T037's 2026-11-02 run; its named volume was dropped first so Flyway started from empty) and
+      the built jar (`./gradlew bootJar`) run under JDK 25 explicitly
+      (`/Library/Java/JavaVirtualMachines/jdk-25.jdk`, since the shell's default `java` was 17 and
+      failed with `UnsupportedClassVersionError`) — both the web process
+      (`SPRING_PROFILES_ACTIVE=local`, the README's documented env) and the CLI invocations below
+      against the same `SPRING_DATASOURCE_URL`. Step 9's scenario was seeded directly in Postgres
+      (a `processed_request` row, `status=RETRYING`; an `outbound_message` attempt 1
+      `queue`/`FAILED(gateway-transient)`; attempt 2 `resend`/`PENDING` with `claim_expires_at` an
+      hour in the past — the crashed-pod lease step 9 names) rather than driven through the queue,
+      since steps 1–8 already cover queue-driven admission and this step is pure CLI-on-Postgres.
+      `resend-leg --request-ids <id>` → `resend-leg refused ... reason=resend-in-progress` (the
+      expired lease is never reclaimed automatically, as documented). `close-expired-resend
+      --request-id <id> --operator "local-dev" --reason "lease expired, pod killed mid-run"` →
+      `close-expired-resend done`; the row confirmed by direct query: attempt 2 →
+      `status=FAILED reason=rolled-back note='prev=PENDING/-' claim_owner` unchanged (the old
+      crashed-pod value, evidence preserved), `processed_request.status` still `RETRYING`,
+      `audit_note` carrying the timestamped `CLOSE_EXPIRED_RESEND operator=local-dev reason=...`
+      line. `resend-leg` run again on the same id → no longer refused (`taken=1`), a fresh attempt
+      3 row created (`FAILED(payload-unavailable)`, expected — the seeded row has no real Redis
+      `EXT_` payload behind it). The two refusal paths named in this step were exercised too:
+      `close-expired-resend` on the now-FAILED (not `PENDING` resend) row →
+      `reason=not-eligible`; on a fresh random id with no row at all → `reason=unknown-request`.
+      Every outcome matches `quickstart.md` step 9 exactly. Stack torn down
+      (`docker compose down`) after.
 
 **Close-expired-resend gate round 1 remediation (2026-11-13)** — the mandatory code-reviewer/qa/
 spec-validator review found code-reviewer PASS (0 High/Medium, 2 Low advisories on the request-row

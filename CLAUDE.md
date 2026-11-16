@@ -209,6 +209,25 @@ the merge — `./gradlew build` green after each. T050g (the manual quickstart r
 Service Bus emulator) stays open; no live local stack was available this pass. **86 tasks: 79 of 86
 checked (74 original + T050a–T050f); T050g and the 5 pre-existing opens (T037, T053) remain.**
 
+T050g closed 2026-11-16: run live against `docker compose up -d postgres servicebus-emulator redis
+wiremock` (postgres remapped 5433:5432, same dodge as T037's run; its volume dropped first so
+Flyway started clean) and the built jar under JDK 25 explicitly. Step 9's scenario (a `RETRYING`
+request; an expired-lease `PENDING` resend row) was seeded directly in Postgres rather than driven
+through the queue — steps 1–8 already cover queue-driven admission, and step 9 is pure
+CLI-on-Postgres. Every outcome matched `quickstart.md` step 9 exactly: `resend-leg` refused
+`resend-in-progress` on the expired lease; `close-expired-resend` closed it
+(`FAILED(rolled-back)`, `note=prev=PENDING/-`, `audit_note` appended, `processed_request.status`
+untouched); a further `resend-leg` then ran a fresh attempt rather than refusing; and both named
+refusals (`not-eligible` on a now-terminal row, `unknown-request` on no row at all) were confirmed
+too. Full detail in `specs/004-recovery/tasks.md` under T050g. **84 of 86 checked; T037 and T053
+remain** — both confirmed still genuinely open, not merely unattempted: T037's bar (a successful
+`purge-queue`) needs a native cutoff-delete the Java Service Bus SDK (checked against 7.18.1, the
+version this build now resolves) still does not expose on `ServiceBusReceiverClient` — only
+`.NET`'s client has `DeleteMessagesAsync`/`PurgeMessagesAsync`, confirmed against Microsoft's own
+docs 2026-11-16; the already-rejected receive/abandon workaround is not revisited. T053 is a live
+session with the Resulting Assistant team, explicitly out of an agent's reach — its own task text
+says so.
+
 A P1 found in PR #29's review (2026-11-13): T050f's counter-sharing alone did not fix FR-004-060.
 `ResendLegExecutor` only raised its cooperative stop from `close()`, wired as
 `@Bean(destroyMethod = "close")` — called during bean *destruction*, strictly after Spring's
