@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +41,8 @@ public final class ResendLegRunner {
     private static final String REASON_FLAG = "--reason";
     private static final String ALLOW_CHANGED_PAYLOAD_FLAG = "--allow-changed-payload";
     private static final String FORCE_RESEND_FLAG = "--force-resend-sent";
+    private static final Set<String> FLAGS = Set.of(LEG_FLAG, REQUEST_IDS_FLAG, OPERATOR_FLAG,
+            REASON_FLAG, ALLOW_CHANGED_PAYLOAD_FLAG, FORCE_RESEND_FLAG);
     private static final String HMPPS = "HMPPS";
     private static final int MAX_TEXT_LENGTH = 200;
 
@@ -161,10 +164,12 @@ public final class ResendLegRunner {
         return value == null || value.isBlank();
     }
 
+    // A flag with no value before the next recognised flag (or the end of the arguments) is
+    // missing, not given the next flag's own name as its value (P2, PR #29 review).
     private static String valueOf(final String[] args, final String flag) {
         String value = null;
         for (int i = 0; i < args.length - 1; i++) {
-            if (flag.equals(args[i])) {
+            if (flag.equals(args[i]) && !FLAGS.contains(args[i + 1])) {
                 value = args[i + 1];
                 break;
             }

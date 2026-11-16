@@ -1,8 +1,11 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -116,5 +119,46 @@ class CloseExpiredResendActionTest {
         verify(repository).close(eq(REQUEST_ID), operatorCaptor.capture(), reasonCaptor.capture());
         assertThat(operatorCaptor.getValue()).isEqualTo("local-dev");
         assertThat(reasonCaptor.getValue()).isEqualTo("a reason with control chars");
+    }
+
+    @Test
+    @DisplayName("a reason containing the REPLAYED_AFTER_FAILURE marker is escaped before the "
+            + "statement runs, so it can never collide with markCompleted's own unanchored scan "
+            + "of audit_note for that literal marker (FR-004-012)")
+    void escapes_the_replay_marker_in_operator_and_reason() {
+        when(repository.close(eq(REQUEST_ID), anyString(), anyString()))
+                .thenReturn(new CloseExpiredResendResult.Closed());
+        final ArgumentCaptor<String> operatorCaptor = ArgumentCaptor.forClass(String.class);
+        final ArgumentCaptor<String> reasonCaptor = ArgumentCaptor.forClass(String.class);
+
+        action.close(REQUEST_ID, "replayed_after_failure", "see REPLAYED_AFTER_FAILURE ticket");
+
+        verify(repository).close(eq(REQUEST_ID), operatorCaptor.capture(), reasonCaptor.capture());
+        assertThat(operatorCaptor.getValue()).isEqualTo("REPLAYED-AFTER-FAILURE");
+        assertThat(reasonCaptor.getValue()).isEqualTo("see REPLAYED-AFTER-FAILURE ticket");
+    }
+
+    @Nested
+    @DisplayName("a null operator or reason is rejected before it ever reaches the sanitiser")
+    class NullArguments {
+
+        @Test
+        @DisplayName("a null operator throws NullPointerException, not one thrown deep inside "
+                + "Pattern.matcher(null) with no context")
+        void rejects_a_null_operator() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> action.close(REQUEST_ID, null, REASON))
+                    .withMessageContaining("operator");
+            verify(repository, never()).close(any(), any(), any());
+        }
+
+        @Test
+        @DisplayName("a null reason throws NullPointerException")
+        void rejects_a_null_reason() {
+            assertThatNullPointerException()
+                    .isThrownBy(() -> action.close(REQUEST_ID, OPERATOR, null))
+                    .withMessageContaining("reason");
+            verify(repository, never()).close(any(), any(), any());
+        }
     }
 }

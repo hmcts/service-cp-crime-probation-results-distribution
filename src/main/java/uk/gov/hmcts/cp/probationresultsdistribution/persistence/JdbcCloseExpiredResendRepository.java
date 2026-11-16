@@ -20,6 +20,12 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendRefusal;
  */
 public final class JdbcCloseExpiredResendRepository implements CloseExpiredResendRepository {
 
+    // HMPPS-only (H5): the one producer, cpp-context-results, is the only source this service
+    // ever admits (DistributionCommandParser's closed schema rejects any other value at the
+    // door), so every sibling that needs source from a request id alone (LegResender, ReplayAction,
+    // SubmitHearingAction) fixes it the same way rather than discovering it with an
+    // request_id-only query against processed_request's (source, request_id) primary key.
+    private static final String SOURCE = "RESULTS";
     private static final String PENDING = "PENDING";
     private static final String RESEND = "resend";
 
@@ -49,22 +55,26 @@ public final class JdbcCloseExpiredResendRepository implements CloseExpiredResen
     @SuppressWarnings("PMD.OnlyOneReturn")
     private CloseExpiredResendResult closeLocked(final UUID requestId, final String operator,
                                                   final String reason) {
-        // The request row is locked first: left the other way round, a late queue or replay write
-        // overrunning the drain window and this close racing the same request could each hold the
-        // row the other needs, and PostgreSQL's deadlock detector rolls one of them back.
-        final Optional<String> source = jdbc.sql(
-                        "SELECT source FROM processed_request WHERE request_id = :requestId FOR UPDATE")
+        // The request row is locked first, by its real primary key (source, request_id) — not
+        // request_id alone, which every sibling statement avoids for the same reason: left the
+        // other way round, a late queue or replay write overrunning the drain window and this
+        // close racing the same request could each hold the row the other needs, and PostgreSQL's
+        // deadlock detector rolls one of them back.
+        final boolean requestExists = jdbc.sql("SELECT 1 FROM processed_request "
+                        + "WHERE source = :source AND request_id = :requestId FOR UPDATE")
+                .param("source", SOURCE)
                 .param("requestId", requestId)
-                .query(String.class)
-                .optional();
-        if (source.isEmpty()) {
+                .query(Integer.class)
+                .optional()
+                .isPresent();
+        if (!requestExists) {
             return new CloseExpiredResendResult.Refused(ResendRefusal.UNKNOWN_REQUEST);
         }
         final Optional<LatestLeg> latest = jdbc.sql("SELECT id, status, attempt_origin, note, "
                         + "(claim_expires_at IS NOT NULL AND claim_expires_at > now()) AS claim_live "
                         + "FROM outbound_message WHERE source = :source AND request_id = :requestId "
                         + "AND leg = 'HMPPS' ORDER BY attempt DESC LIMIT 1 FOR UPDATE")
-                .param("source", source.get())
+                .param("source", SOURCE)
                 .param("requestId", requestId)
                 .query((rs, rowNum) -> new LatestLeg((UUID) rs.getObject("id"),
                         rs.getString("status"), rs.getString("attempt_origin"),
@@ -76,23 +86,29 @@ public final class JdbcCloseExpiredResendRepository implements CloseExpiredResen
         if (latest.get().claimLive()) {
             return new CloseExpiredResendResult.Refused(ResendRefusal.RESEND_IN_PROGRESS);
         }
-        closeRow(latest.get());
-        appendAuditNote(source.get(), requestId, operator, reason);
+        if (!closeRow(latest.get())) {
+            // The FOR UPDATE lock held since the eligibility read above makes this unreachable
+            // today; the defensive re-check mirrors JdbcRollbackFencingRepository's own guard so a
+            // future change that narrows the lock's scope fails safe instead of silently closing a
+            // row whose status has since moved on.
+            return new CloseExpiredResendResult.Refused(ResendRefusal.NOT_ELIGIBLE);
+        }
+        appendAuditNote(requestId, operator, reason);
         return new CloseExpiredResendResult.Closed();
     }
 
-    private void closeRow(final LatestLeg row) {
+    private boolean closeRow(final LatestLeg row) {
         final String note = withPrevReplaced(row.note(), NoteForm.PREV_PENDING.wireValue());
-        jdbc.sql("UPDATE outbound_message SET status = 'FAILED', reason = 'rolled-back', "
-                        + "note = :note, claim_token = gen_random_uuid(), updated_at = now() "
-                        + "WHERE id = :id")
+        final int rows = jdbc.sql("UPDATE outbound_message SET status = 'FAILED', "
+                        + "reason = 'rolled-back', note = :note, claim_token = gen_random_uuid(), "
+                        + "updated_at = now() WHERE id = :id AND status = 'PENDING'")
                 .param("note", note)
                 .param("id", row.id())
                 .update();
+        return rows > 0;
     }
 
-    private void appendAuditNote(final String source, final UUID requestId, final String operator,
-                                 final String reason) {
+    private void appendAuditNote(final UUID requestId, final String operator, final String reason) {
         // One timestamped line with the operator and the reason, each already sanitised to one
         // line of at most 200 characters (FR-004-059). processed_request.status is left untouched.
         jdbc.sql("UPDATE processed_request SET audit_note = coalesce(audit_note || E'\\n', '') "
@@ -101,7 +117,7 @@ public final class JdbcCloseExpiredResendRepository implements CloseExpiredResen
                         + "WHERE source = :source AND request_id = :requestId")
                 .param("operator", operator)
                 .param("reason", reason)
-                .param("source", source)
+                .param("source", SOURCE)
                 .param("requestId", requestId)
                 .update();
     }

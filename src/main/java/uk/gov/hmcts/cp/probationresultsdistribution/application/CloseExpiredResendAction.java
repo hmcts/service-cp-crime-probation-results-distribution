@@ -26,6 +26,11 @@ public final class CloseExpiredResendAction {
 
     private static final Logger LOG = LoggerFactory.getLogger(CloseExpiredResendAction.class);
     private static final Pattern LINE_BREAKS = Pattern.compile("\\p{Cntrl}+");
+    // markCompleted (FR-004-012) derives completion_reason from an unanchored scan of audit_note
+    // for this literal marker; an operator's own text must never be able to plant it there.
+    private static final Pattern REPLAY_MARKER =
+            Pattern.compile(Pattern.quote("REPLAYED_AFTER_FAILURE"), Pattern.CASE_INSENSITIVE);
+    private static final String REPLAY_MARKER_ESCAPED = "REPLAYED-AFTER-FAILURE";
 
     private final CloseExpiredResendRepository repository;
 
@@ -42,13 +47,15 @@ public final class CloseExpiredResendAction {
      * Runs the statement for one request id.
      *
      * @param requestId the request id
-     * @param operator  the operator, not yet sanitised
-     * @param reason    the reason, not yet sanitised
+     * @param operator  the operator, not yet sanitised, never null
+     * @param reason    the reason, not yet sanitised, never null
      * @return the bounded outcome
      */
     public CloseExpiredResendOutcome close(final UUID requestId, final String operator,
                                            final String reason) {
         Objects.requireNonNull(requestId, "requestId");
+        Objects.requireNonNull(operator, "operator");
+        Objects.requireNonNull(reason, "reason");
         final CloseExpiredResendResult result = repository.close(requestId, sanitised(operator),
                 sanitised(reason));
         return switch (result) {
@@ -65,6 +72,7 @@ public final class CloseExpiredResendAction {
     }
 
     private static String sanitised(final String text) {
-        return LINE_BREAKS.matcher(text).replaceAll(" ").strip();
+        final String oneLine = LINE_BREAKS.matcher(text).replaceAll(" ").strip();
+        return REPLAY_MARKER.matcher(oneLine).replaceAll(REPLAY_MARKER_ESCAPED);
     }
 }

@@ -364,6 +364,26 @@ class ResendLegExecutionIT {
         }
 
         @Test
+        @DisplayName("resendLegExecutor shares the exact in-flight-run counter bean "
+                + "ConsumerLifecycleController waits on (H40; FR-004-060): the ObjectProvider "
+                + "fallback to a disconnected counter must never fire while both beans are wired "
+                + "from the same distribution.consumer.enabled conditional, and nothing else "
+                + "asserted that until this test")
+        void resendLegExecutor_shares_the_consumers_inFlightRunCounter_bean() {
+            EndToEndTestSupport.startSharedContainers();
+            servingContext().run(context -> {
+                assertThat(context).hasNotFailed();
+                final AtomicInteger sharedCounter = context.getBean(AtomicInteger.class);
+                final ResendLegExecutor executor = context.getBean(ResendLegExecutor.class);
+                assertThat(executor.inFlightRunsForTesting())
+                        .as("a disconnected, unshared counter here would silently reintroduce the "
+                                + "H40 drain bug, with no test failure anywhere, if the two beans' "
+                                + "conditionals ever diverge")
+                        .isSameAs(sharedCounter);
+            });
+        }
+
+        @Test
         @DisplayName("with intake disabled there is no LegResender, no executor and no ResendLegController")
         void servingContext_intakeDisabled_should_registerNoResendLegBeans() {
             EndToEndTestSupport.startSharedContainers();

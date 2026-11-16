@@ -91,6 +91,19 @@ class ResendLegRunnerTest {
         }
 
         @Test
+        @DisplayName("a flag given no value before the next recognised flag is missing-argument, "
+                + "not given the next flag's own name as its value (P2, PR #29 review; the same "
+                + "fix CloseExpiredResendRunner carries)")
+        void a_flag_with_no_value_does_not_swallow_the_next_flags_name() {
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "--reason", "why"))
+                    .contains(WholeRunRefusal.MISSING_ARGUMENT);
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--operator", "op", "--reason",
+                    "why", "--leg", "--request-ids", IDS))
+                    .contains(WholeRunRefusal.MISSING_ARGUMENT);
+        }
+
+        @Test
         @DisplayName("the forced-resend override --force-resend-sent is a readable flag")
         void forced_resend_is_readable() {
             final String[] forced = {"resend-leg", "--leg", "HMPPS", "--request-ids", IDS,

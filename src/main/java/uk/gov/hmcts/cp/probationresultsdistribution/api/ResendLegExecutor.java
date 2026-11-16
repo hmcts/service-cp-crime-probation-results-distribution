@@ -211,6 +211,17 @@ public final class ResendLegExecutor implements SmartLifecycle, AutoCloseable {
         return PHASE;
     }
 
+    /**
+     * The in-flight-run counter this executor shares (H40; FR-004-060), package-visible so a
+     * composition-root test can assert it is the very instance {@code ConsumerLifecycleController}
+     * waits on — never a disconnected fallback — without reflection into a private field.
+     *
+     * @return the shared counter
+     */
+    /* default */ AtomicInteger inFlightRunsForTesting() {
+        return inFlightRuns;
+    }
+
     /** Raises the stop, drops every queued run and shuts the thread down, exclusive of submit. */
     private synchronized void stopAndDrain() {
         stopping.set(true);
