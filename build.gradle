@@ -5,7 +5,7 @@ plugins {
   id 'io.spring.dependency-management' version '1.1.7'
   id 'jacoco'
   id 'maven-publish'
-  id 'com.github.ben-manes.versions' version '0.66.0'
+  id 'com.github.ben-manes.versions' version '0.67.0'
   id 'org.cyclonedx.bom' version '3.5.1'
   id 'com.gorylenko.gradle-git-properties' version '4.0.1'
 }
@@ -148,7 +148,7 @@ dependencies {
   // Security: pin transitive guava to patched version (CVE-2026-102554, unthrottled memory
   // allocation during deserialization). Brought in transitively via cp-audit-filter-springboot's
   // swagger-parser chain, resolved to the -android classifier; 32.1.3-android is vulnerable.
-  implementation 'com.google.guava:guava:33.7.2-android'
+  implementation 'com.google.guava:guava:33.8.0-android'
 
   // Security: pin transitive proton-j to patched version (CVE-2026-66274, denial of service via
   // unbounded type nesting). Brought in transitively via azure-core-amqp (azure-messaging-servicebus).
