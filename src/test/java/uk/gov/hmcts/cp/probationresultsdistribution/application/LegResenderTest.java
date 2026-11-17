@@ -208,6 +208,25 @@ class LegResenderTest {
         }
 
         @Test
+        @DisplayName("the REPLAYED_AFTER_FAILURE marker is escaped out of the operator and the "
+                + "forced-resend reason before either reaches audit_note (FR-004-012; PR #29 "
+                + "review): a forced resend must never be able to make an unrelated later "
+                + "completion of the same request read as recovered")
+        void accept_escapesTheReplayMarker_fromOperatorAndForcedResendReason() {
+            when(pauseGate.pauseRequested()).thenReturn(false);
+
+            final ResendAcceptance acceptance = resender().accept(new ResendRequest(List.of(ID_1),
+                    "replayed_after_failure", "see REPLAYED_AFTER_FAILURE ticket", false, true));
+
+            assertThat(acceptance).isInstanceOfSatisfying(ResendAcceptance.Accepted.class,
+                    accepted -> {
+                        assertThat(accepted.operator()).isEqualTo("REPLAYED-AFTER-FAILURE");
+                        assertThat(accepted.forcedResendReason())
+                                .contains("see REPLAYED-AFTER-FAILURE ticket");
+                    });
+        }
+
+        @Test
         @DisplayName("without the override, accept carries no forced-resend reason")
         void accept_withoutForcedResend_should_carryNoReason() {
             when(pauseGate.pauseRequested()).thenReturn(false);

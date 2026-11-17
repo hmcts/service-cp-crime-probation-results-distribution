@@ -37,7 +37,6 @@ public final class SubmitHearingAction {
     private static final String EVENT_TYPE = "Hearing_Resulted";
     private static final String SHARED_TIME = "sharedTime";
     private static final Pattern ISO_DATE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
-    private static final Pattern CONTROL = Pattern.compile("\\p{Cntrl}+");
     private static final UUID NO_REQUEST_YET = new UUID(0L, 0L);
 
     private final HearingPayloadSource cache;
@@ -153,7 +152,7 @@ public final class SubmitHearingAction {
     }
 
     private static String sanitised(final String text) {
-        return CONTROL.matcher(text).replaceAll(" ").strip();
+        return AuditNoteText.oneLine(text);
     }
 
     private static Optional<UUID> uuid(final String raw) {

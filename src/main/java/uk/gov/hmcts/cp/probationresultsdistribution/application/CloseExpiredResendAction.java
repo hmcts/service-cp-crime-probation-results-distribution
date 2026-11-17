@@ -2,7 +2,6 @@ package uk.gov.hmcts.cp.probationresultsdistribution.application;
 
 import java.util.Objects;
 import java.util.UUID;
-import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.CloseExpiredResendRepository;
@@ -16,21 +15,15 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.CloseExpiredRese
  * this one case. {@code processed_request.status} is never touched: the request's own state
  * machine is untouched by this statement.
  *
- * <p>The operator and the reason are sanitised to one line each, exactly as {@link LegResender}'s
- * own {@code sanitised} rule, before being appended to {@code audit_note} by the repository
- * statement. The shape of the arguments themselves (missing, too long, an unreadable
+ * <p>The operator and the reason are sanitised to one line each through the one
+ * {@link AuditNoteText} rule every {@code audit_note} writer shares, before being appended by the
+ * repository statement. The shape of the arguments themselves (missing, too long, an unreadable
  * {@code requestId}) is the command-line runner's own check (FR-004-020), run before this action is
  * ever reached.
  */
 public final class CloseExpiredResendAction {
 
     private static final Logger LOG = LoggerFactory.getLogger(CloseExpiredResendAction.class);
-    private static final Pattern LINE_BREAKS = Pattern.compile("\\p{Cntrl}+");
-    // markCompleted (FR-004-012) derives completion_reason from an unanchored scan of audit_note
-    // for this literal marker; an operator's own text must never be able to plant it there.
-    private static final Pattern REPLAY_MARKER =
-            Pattern.compile(Pattern.quote("REPLAYED_AFTER_FAILURE"), Pattern.CASE_INSENSITIVE);
-    private static final String REPLAY_MARKER_ESCAPED = "REPLAYED-AFTER-FAILURE";
 
     private final CloseExpiredResendRepository repository;
 
@@ -72,7 +65,6 @@ public final class CloseExpiredResendAction {
     }
 
     private static String sanitised(final String text) {
-        final String oneLine = LINE_BREAKS.matcher(text).replaceAll(" ").strip();
-        return REPLAY_MARKER.matcher(oneLine).replaceAll(REPLAY_MARKER_ESCAPED);
+        return AuditNoteText.oneLine(text);
     }
 }
