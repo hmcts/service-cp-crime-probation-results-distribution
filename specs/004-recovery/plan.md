@@ -3,31 +3,30 @@
 **Branch**: `004-recovery` | **Date**: 2026-10-24 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/004-recovery/spec.md`
 
-**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
-
 ## Summary
 
 This slice gives operations three bounded ways to get a hearing to HMPPS after a first attempt
-fails or a sent hearing must go again, without ever duplicating a leg already recorded `SENT` or
+fails or a sent hearing must go again, never duplicating a leg already recorded `SENT` or
 `NOT_APPLICABLE` by accident: a dead-letter resubmission admitted as a replay at broker delivery
-count 1 (DV-26); the service's own replay action, which re-enqueues the stored command byte for
-byte under a fresh `messageId`; and resend-leg, which re-runs the HMPPS leg for an explicit list of
+count 1 (DV-26); the service's own replay action, re-enqueuing the stored command byte for byte
+under a fresh `messageId`; and resend-leg, re-running the HMPPS leg for an explicit list of
 `requestId`s, with a forced-resend override for a deliberate duplicate. Around these sit the
-runners rollback and go-live rely on: pause/resume intake, purge-queue, submit-hearing, and two
-read-only listings. Everything here is reached either through the existing ASB listener (the
-dead-letter and service-replay routes reuse slice 002's guard and settlement) or through new
-command-line runners in the image — there is no HTTP surface in this slice (O-1; slice 005).
+runners rollback and go-live rely on: pause/resume intake, purge-queue, submit-hearing, two
+read-only listings. Everything is reached either through the existing ASB
+listener (dead-letter and service-replay routes reuse slice 002's guard and settlement) or through
+new command-line runners in the image — no HTTP surface in this slice (O-1; slice 005).
 
 The technical approach is almost entirely in the **application layer**: new use cases
 (`ReplayAction`, `LegResender`, `SubmitHearingAction`, `RequestIdRecipe`, the intake-pause and
 purge-queue actions, the two listings, the rollback close-in-flight statement) composed from
 slice 002's ports (`HearingPayloadSource`, `YouthFilterSource`, `HmppsSender`, `OutboundLog`, the
-request store) with **no new port and no new adapter**. The only schema change this slice may need
-is a persisted intake-pause flag (FR-004-052; see Research, Decision 3) — everything else reuses
-002's three tables and one view unchanged. A new driving-adapter package, `cli`, hosts the six
-runners and the two listings as thin classes registered with `RunnerDispatcher` that parse arguments, call one
-application service, and print its bounded outcome — mirroring how `inbound` and `api` already sit
-beside `application` without it depending on either.
+request store) with
+**no new port and no new adapter**. The only schema change this slice may need is a persisted
+intake-pause flag (FR-004-052; Research Decision 3) — everything else reuses 002's three tables
+and one view unchanged. A new driving-adapter package, `cli`, hosts the six runners and two
+listings as thin classes registered with `RunnerDispatcher`, each parsing arguments, calling one
+application service, and printing its bounded outcome — mirroring how `inbound` and `api` already
+sit beside `application` without depending on either.
 
 ## Technical Context
 
@@ -161,10 +160,10 @@ src/test/java/uk/gov/hmcts/cp/probationresultsdistribution/
 **Structure Decision**: single-project ports-and-adapters, unchanged from slices 001/002. The one
 addition is the `cli` package as a third driving adapter alongside `inbound` (queue) and `api`
 (HTTP, slice 005): command-line arguments in, one application-service call, one bounded outcome
-printed, nothing else. This keeps the parity-critical and fencing-critical logic in `application`
-testable with plain mocks and no Spring context, exactly as slice 002 established, and keeps the
-runners from duplicating any rule already enforced there (FR-004-042's "exactly the same rules
-through the same application service" is enforced by construction, not by code review).
+printed, nothing else. This keeps parity-critical and fencing-critical logic in `application`
+testable with plain mocks and no Spring context, as slice 002 established, and stops runners
+duplicating any rule already enforced there — FR-004-042's "same rules through the same
+application service" enforced by construction, not code review.
 
 ## Complexity Tracking
 
