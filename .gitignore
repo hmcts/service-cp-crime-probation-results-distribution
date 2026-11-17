@@ -47,3 +47,8 @@ applicationinsights-agent-*.jar
 .gemini/
 
 /graphify-out/
+
+# /speckit.token-budget.compact pre-compaction backups: local-only, never read (see CLAUDE.md),
+# never committed (PR #29 review)
+specs/**/*.full.md
+.specify/memory/*.full.md
