@@ -1,7 +1,6 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.cli;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -41,8 +40,10 @@ public final class ResendLegRunner {
     private static final String REASON_FLAG = "--reason";
     private static final String ALLOW_CHANGED_PAYLOAD_FLAG = "--allow-changed-payload";
     private static final String FORCE_RESEND_FLAG = "--force-resend-sent";
-    private static final Set<String> FLAGS = Set.of(LEG_FLAG, REQUEST_IDS_FLAG, OPERATOR_FLAG,
-            REASON_FLAG, ALLOW_CHANGED_PAYLOAD_FLAG, FORCE_RESEND_FLAG);
+    private static final Set<String> VALUE_FLAGS = Set.of(LEG_FLAG, REQUEST_IDS_FLAG, OPERATOR_FLAG,
+            REASON_FLAG);
+    private static final Set<String> BOOLEAN_FLAGS = Set.of(ALLOW_CHANGED_PAYLOAD_FLAG,
+            FORCE_RESEND_FLAG);
     private static final String HMPPS = "HMPPS";
     private static final int MAX_TEXT_LENGTH = 200;
 
@@ -58,10 +59,13 @@ public final class ResendLegRunner {
     }
 
     /**
-     * Checks the arguments' shape before any resource is opened (FR-004-020): a missing or blank
-     * {@code --leg}, {@code --request-ids}, {@code --operator} or {@code --reason} is
-     * {@code missing-argument}; a leg other than {@code HMPPS}, or an entry of the id list that is
-     * not a UUID, is {@code unreadable-argument}; an operator or reason over 200 characters is
+     * Checks the arguments' shape before any resource is opened (FR-004-020). The whole token
+     * stream is read by the shared {@link ArgumentParser}: an unrecognised flag, a flag given twice
+     * or a stray trailing token is {@code unreadable-argument}; a missing or blank {@code --leg},
+     * {@code --request-ids}, {@code --operator} or {@code --reason} — including one given no real
+     * value because the next token is itself a flag — is {@code missing-argument}; a leg other than
+     * {@code HMPPS}, or an entry of the id list that is not a UUID, is also
+     * {@code unreadable-argument}; an operator or reason over 200 characters is
      * {@code argument-too-long}. The cap and the pause are the capability's own checks.
      *
      * @param args the full command-line arguments, including the leading action name
@@ -121,13 +125,19 @@ public final class ResendLegRunner {
         return outcome;
     }
 
-    // Each check exits as soon as it decides, so the first unreadable argument names the refusal.
-    @SuppressWarnings("PMD.OnlyOneReturn")
     private static Parsed parse(final String... args) {
-        final String leg = valueOf(args, LEG_FLAG);
-        final String ids = valueOf(args, REQUEST_IDS_FLAG);
-        final String operator = valueOf(args, OPERATOR_FLAG);
-        final String reason = valueOf(args, REASON_FLAG);
+        return switch (ArgumentParser.parse(args, VALUE_FLAGS, BOOLEAN_FLAGS)) {
+            case ArgumentParser.Result.Refused refused -> Parsed.refused(refused.refusal());
+            case ArgumentParser.Result.Readable readable -> fromArguments(readable.arguments());
+        };
+    }
+
+    @SuppressWarnings("PMD.OnlyOneReturn")
+    private static Parsed fromArguments(final ArgumentParser arguments) {
+        final String leg = arguments.value(LEG_FLAG).orElse(null);
+        final String ids = arguments.value(REQUEST_IDS_FLAG).orElse(null);
+        final String operator = arguments.value(OPERATOR_FLAG).orElse(null);
+        final String reason = arguments.value(REASON_FLAG).orElse(null);
         if (blank(leg) || blank(ids) || blank(operator) || blank(reason)) {
             return Parsed.refused(WholeRunRefusal.MISSING_ARGUMENT);
         }
@@ -141,9 +151,8 @@ public final class ResendLegRunner {
         if (requestIds.isEmpty()) {
             return Parsed.refused(WholeRunRefusal.UNREADABLE_ARGUMENT);
         }
-        final List<String> flags = Arrays.asList(args);
         return new Parsed(Optional.empty(), Optional.of(new ResendRequest(requestIds.get(), operator,
-                reason, flags.contains(ALLOW_CHANGED_PAYLOAD_FLAG), flags.contains(FORCE_RESEND_FLAG))));
+                reason, arguments.has(ALLOW_CHANGED_PAYLOAD_FLAG), arguments.has(FORCE_RESEND_FLAG))));
     }
 
     private static Optional<List<UUID>> requestIds(final String raw) {
@@ -162,19 +171,6 @@ public final class ResendLegRunner {
 
     private static boolean blank(final String value) {
         return value == null || value.isBlank();
-    }
-
-    // A flag with no value before the next recognised flag (or the end of the arguments) is
-    // missing, not given the next flag's own name as its value (P2, PR #29 review).
-    private static String valueOf(final String[] args, final String flag) {
-        String value = null;
-        for (int i = 0; i < args.length - 1; i++) {
-            if (flag.equals(args[i]) && !FLAGS.contains(args[i + 1])) {
-                value = args[i + 1];
-                break;
-            }
-        }
-        return value;
     }
 
     /** The checked arguments: a refusal, or the request to run. */

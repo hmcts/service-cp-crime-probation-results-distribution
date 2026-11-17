@@ -15,10 +15,12 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
  * {@code contracts/cli-runners.md} §9):
  * {@code close-expired-resend --request-id <uuid> --operator <name> --reason <text>}.
  *
- * <p>The arguments are checked whole before any resource is opened (FR-004-020), as
- * {@link ResendLegRunner}'s own rules are: a missing or blank {@code --request-id},
- * {@code --operator} or {@code --reason} is {@code missing-argument}; a {@code --request-id} that
- * is not a UUID is {@code unreadable-argument}; an operator or reason over 200 characters is
+ * <p>The whole token stream is read by the shared {@link ArgumentParser} (FR-004-020; PR #29
+ * review), as {@link ResendLegRunner}'s own parsing is: an unrecognised flag, a flag given twice or
+ * a stray trailing token is {@code unreadable-argument}; a missing or blank {@code --request-id},
+ * {@code --operator} or {@code --reason} — including one given no real value because the next
+ * token is itself a flag — is {@code missing-argument}; a {@code --request-id} that is not a UUID
+ * is also {@code unreadable-argument}; an operator or reason over 200 characters is
  * {@code argument-too-long}. No intake pause is required, so this runner opens only the store —
  * no cache, broker or gateway client.
  */
@@ -28,7 +30,9 @@ public final class CloseExpiredResendRunner {
     private static final String REQUEST_ID_FLAG = "--request-id";
     private static final String OPERATOR_FLAG = "--operator";
     private static final String REASON_FLAG = "--reason";
-    private static final Set<String> FLAGS = Set.of(REQUEST_ID_FLAG, OPERATOR_FLAG, REASON_FLAG);
+    private static final Set<String> VALUE_FLAGS = Set.of(REQUEST_ID_FLAG, OPERATOR_FLAG,
+            REASON_FLAG);
+    private static final Set<String> BOOLEAN_FLAGS = Set.of();
     private static final int MAX_TEXT_LENGTH = 200;
 
     private final CloseExpiredResendAction action;
@@ -84,12 +88,18 @@ public final class CloseExpiredResendRunner {
         };
     }
 
-    // Each check exits as soon as it decides, so the first unreadable argument names the refusal.
-    @SuppressWarnings("PMD.OnlyOneReturn")
     private static Parsed parse(final String... args) {
-        final String requestId = valueOf(args, REQUEST_ID_FLAG);
-        final String operator = valueOf(args, OPERATOR_FLAG);
-        final String reason = valueOf(args, REASON_FLAG);
+        return switch (ArgumentParser.parse(args, VALUE_FLAGS, BOOLEAN_FLAGS)) {
+            case ArgumentParser.Result.Refused refused -> Parsed.refused(refused.refusal());
+            case ArgumentParser.Result.Readable readable -> fromArguments(readable.arguments());
+        };
+    }
+
+    @SuppressWarnings("PMD.OnlyOneReturn")
+    private static Parsed fromArguments(final ArgumentParser arguments) {
+        final String requestId = arguments.value(REQUEST_ID_FLAG).orElse(null);
+        final String operator = arguments.value(OPERATOR_FLAG).orElse(null);
+        final String reason = arguments.value(REASON_FLAG).orElse(null);
         if (blank(requestId) || blank(operator) || blank(reason)) {
             return Parsed.refused(WholeRunRefusal.MISSING_ARGUMENT);
         }
@@ -116,19 +126,6 @@ public final class CloseExpiredResendRunner {
 
     private static boolean blank(final String value) {
         return value == null || value.isBlank();
-    }
-
-    // A flag with no value before the next recognised flag (or the end of the arguments) is
-    // missing, not given the next flag's own name as its value (P2, PR #29 review).
-    private static String valueOf(final String[] args, final String flag) {
-        String value = null;
-        for (int i = 0; i < args.length - 1; i++) {
-            if (flag.equals(args[i]) && !FLAGS.contains(args[i + 1])) {
-                value = args[i + 1];
-                break;
-            }
-        }
-        return value;
     }
 
     /** The checked arguments: a refusal, or the request to run. */

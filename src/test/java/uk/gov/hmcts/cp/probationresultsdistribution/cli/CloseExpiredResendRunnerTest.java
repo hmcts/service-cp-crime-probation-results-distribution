@@ -84,6 +84,40 @@ class CloseExpiredResendRunnerTest {
         }
 
         @Test
+        @DisplayName("an unrecognised flag is unreadable-argument, not silently read as a value "
+                + "for the flag before it (PR #29 review)")
+        void unrecognised_flag_is_unreadable() {
+            assertThat(CloseExpiredResendRunner.checkArguments("close-expired-resend",
+                    "--request-id", REQUEST_ID.toString(), "--operator", "op", "--reason",
+                    "--ticket", "INC-123"))
+                    .contains(WholeRunRefusal.MISSING_ARGUMENT);
+            assertThat(CloseExpiredResendRunner.checkArguments("close-expired-resend",
+                    "--bogus", "x", "--request-id", REQUEST_ID.toString(), "--operator", "op",
+                    "--reason", "why"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
+        @DisplayName("a flag given twice is unreadable-argument, not a valid invocation that "
+                + "simply goes ahead on one of the two values (PR #29 review)")
+        void duplicate_flag_is_unreadable() {
+            assertThat(CloseExpiredResendRunner.checkArguments("close-expired-resend",
+                    "--request-id", REQUEST_ID.toString(), "--operator", "op", "--reason", "why",
+                    "--operator", "op2"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
+        @DisplayName("a stray trailing token is unreadable-argument, not silently dropped (PR #29 "
+                + "review)")
+        void stray_trailing_token_is_unreadable() {
+            assertThat(CloseExpiredResendRunner.checkArguments("close-expired-resend",
+                    "--request-id", REQUEST_ID.toString(), "--operator", "op", "--reason", "why",
+                    "extra"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
         @DisplayName("an operator or reason over 200 characters is argument-too-long")
         void too_long_arguments() {
             assertThat(CloseExpiredResendRunner.checkArguments(args(REQUEST_ID.toString(),

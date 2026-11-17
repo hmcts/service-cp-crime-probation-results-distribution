@@ -104,6 +104,40 @@ class ResendLegRunnerTest {
         }
 
         @Test
+        @DisplayName("an unrecognised flag is unreadable-argument, not silently read as a value "
+                + "for the flag before it (PR #29 review)")
+        void unrecognised_flag_is_unreadable() {
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "op", "--reason", "--ticket", "INC-123"))
+                    .contains(WholeRunRefusal.MISSING_ARGUMENT);
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--bogus", "x", "--leg",
+                    "HMPPS", "--request-ids", IDS, "--operator", "op", "--reason", "why"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
+        @DisplayName("a flag given twice is unreadable-argument, not a valid invocation that "
+                + "simply goes ahead on one of the two values (PR #29 review)")
+        void duplicate_flag_is_unreadable() {
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "op", "--reason", "why", "--operator",
+                    "op2")).contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "op", "--reason", "why",
+                    "--force-resend-sent", "--force-resend-sent"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
+        @DisplayName("a stray trailing token is unreadable-argument, not silently dropped (PR #29 "
+                + "review)")
+        void stray_trailing_token_is_unreadable() {
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "op", "--reason", "why", "extra"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
         @DisplayName("the forced-resend override --force-resend-sent is a readable flag")
         void forced_resend_is_readable() {
             final String[] forced = {"resend-leg", "--leg", "HMPPS", "--request-ids", IDS,
