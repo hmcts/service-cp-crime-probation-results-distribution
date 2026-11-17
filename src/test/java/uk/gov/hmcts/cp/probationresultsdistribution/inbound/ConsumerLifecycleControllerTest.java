@@ -11,6 +11,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.azure.messaging.servicebus.ServiceBusProcessorClient;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -32,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import uk.gov.hmcts.cp.probationresultsdistribution.api.ResendLegExecutor;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendAcceptance;
@@ -197,6 +202,37 @@ class ConsumerLifecycleControllerTest {
             final Duration elapsed = Duration.ofNanos(System.nanoTime() - startedAt);
 
             assertThat(elapsed).isGreaterThanOrEqualTo(drainTimeout);
+        }
+
+        @Test
+        @DisplayName("the timeout WARN names both a queue delivery's redelivery and a resend-leg "
+                + "run's close-expired-resend, since the shared counter does not say which kind "
+                + "of work is still in flight (PR #29 review)")
+        void timeout_warning_names_both_kinds_of_in_flight_work() {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicInteger inFlight = new AtomicInteger(1);
+            controller = newController(inFlight, Duration.ofMillis(200L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+            final Logger logger = (Logger) LoggerFactory.getLogger(ConsumerLifecycleController.class);
+            final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+            appender.start();
+            logger.addAppender(appender);
+
+            try {
+                controller.stop();
+            } finally {
+                logger.detachAppender(appender);
+                appender.stop();
+            }
+
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getLevel() == Level.WARN)
+                    .anySatisfy(event -> assertThat(event.getFormattedMessage())
+                            .contains("redeliver")
+                            .contains("close-expired-resend"));
         }
     }
 
