@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -201,14 +202,27 @@ public class OperationsConfiguration {
      * The one thread accepted resend-leg runs execute on, one at a time (FR-005-015); closed with
      * the context, when the running run claims nothing further and queued runs never start.
      *
-     * @param legResender slice 004's resend-leg capability
+     * <p>Shares {@code inFlightRunCounter} with {@code ServiceBusConsumerConfig}'s consumer wiring
+     * (H40; FR-004-060), the same counter {@code ConsumerLifecycleController#stop()} waits on for
+     * an in-flight queue delivery, whenever that bean exists. A deployed pod always has one, since
+     * {@code distribution.consumer.enabled=true} wherever a {@link LegResender} bean is the serving
+     * context's own ({@link #legResender}) — but a slice test can supply a {@link LegResender} of
+     * its own with the consumer switched off (no {@code ServiceBusConsumerConfig} in that context
+     * at all), so the counter is read through an {@link ObjectProvider} with its own fallback
+     * rather than required, and such a test's resend-leg run is simply never drained by a
+     * {@code ConsumerLifecycleController} that does not exist there either.
+     *
+     * @param legResender        slice 004's resend-leg capability
+     * @param inFlightRunCounter the consumer's shared in-flight-run counter, when one exists
      * @return the executor
      */
     /* default */
     @Bean(destroyMethod = "close")
     @ConditionalOnBean(LegResender.class)
-    ResendLegExecutor resendLegExecutor(final LegResender legResender) {
-        return new ResendLegExecutor(legResender);
+    ResendLegExecutor resendLegExecutor(final LegResender legResender,
+                                       final ObjectProvider<AtomicInteger> inFlightRunCounter) {
+        return new ResendLegExecutor(legResender,
+                inFlightRunCounter.getIfAvailable(AtomicInteger::new));
     }
 
     /**

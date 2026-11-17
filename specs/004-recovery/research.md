@@ -27,13 +27,13 @@ else a dead resend runner's `PENDING` row is never closed by resend-leg.
    resend claims with the same refusal.
 2. The Edge Cases section's own named risk: "a reclaim may send again a body the dead runner had
    already sent" — a duplicate the design does not count (A3-115). Refusing is the chosen
-   behaviour; the row stays blocked until operator recovery through the guarded rollback
-   close-in-flight procedure (FR-004-049/FR-004-049a).
+   behaviour; the row stays blocked until operator recovery (FR-004-049/FR-004-049a, now also
+   FR-004-059 — see Amendment below).
 3. No new mechanism needed. `resend-in-progress` is already a defined refusal code (FR-004-022);
    treating "expired" the same as "live" is a one-line predicate (`claim_owner IS NOT NULL`
    regardless of `claim_expires_at`), not a reclaim statement with its own fencing.
 
-**Consequence for A2-72's procedure**: a `PENDING` resend row left by a
+**Consequence for A2-72's procedure, as confirmed 2026-10-26**: a `PENDING` resend row left by a
 dead runner was closed only by the rollback's close-in-flight statement (FR-004-049a) — shipped as
 a runner because no other action does (Decision 2), requiring the operator pause and rollback
 procedure. Called out in `quickstart.md`'s operator notes and the runbook (FR-004-047) as a known
@@ -41,6 +41,15 @@ gap, not hidden behind a reclaim that might duplicate a send.
 
 **Status**: confirmed 2026-10-26. The conflicting reclaim reading is not implemented; changing it
 requires an explicit new decision and acceptance tests.
+
+**Amended 2026-11-09 (H40)**: the consequence above — recovery only through the paused,
+whole-intake rollback close-in-flight procedure — is superseded. A single-row command,
+`close-expired-resend` (FR-004-059), closes that one row `FAILED(rolled-back)` with no intake
+pause; the operator then confirms with HMPPS before resending it (FR-004-023). The refusal itself
+(option B, this decision) is unchanged: resend-leg still refuses an expired `PENDING` row
+`resend-in-progress`, never reclaiming it. Shutdown now also waits for a resend-leg run in
+progress up to the processing deadline (FR-004-060), so a rolling deploy is less likely to leave a
+row needing `close-expired-resend` at all.
 
 **Alternatives considered**:
 - *Reclaim in place, as (c)/A2-72 read.* Rejected: duplicate-send risk above; contradicts

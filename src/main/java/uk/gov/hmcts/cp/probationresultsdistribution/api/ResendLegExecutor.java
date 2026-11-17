@@ -8,6 +8,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.LegResender;
@@ -37,6 +38,14 @@ import uk.gov.hmcts.cp.probationresultsdistribution.application.ResendAcceptance
  *
  * <p>A run that throws is logged only; no metric counts it, as none is specified for it (design
  * §10.1): the ERROR line is the alert source.
+ *
+ * <p>Each run increments {@code inFlightRuns} before it starts and decrements it once it finishes
+ * (H40; FR-004-060), the same shared counter
+ * {@code inbound.ConsumerLifecycleController#stop()} already waits on for an in-flight queue
+ * delivery: no new drain mechanism, the existing one now also covers a resend-leg run reached
+ * through this executor, so a rolling deploy waits for it too, up to the processing deadline,
+ * rather than leaving its row for {@code close-expired-resend} every time. The standalone
+ * {@code cli.ResendLegRunner} process is unaffected — it has no Spring shutdown lifecycle to drain.
  */
 public final class ResendLegExecutor implements AutoCloseable {
 
@@ -47,22 +56,40 @@ public final class ResendLegExecutor implements AutoCloseable {
     private static final Duration SHUTDOWN_WAIT = Duration.ofMinutes(4);
 
     private final LegResender legResender;
+    private final AtomicInteger inFlightRuns;
     private final Duration shutdownWait;
     private final AtomicBoolean stopping = new AtomicBoolean();
     private final BlockingQueue<Runnable> queue = new LinkedBlockingQueue<>();
     private final ThreadPoolExecutor executor;
 
     /**
-     * Creates the executor and its one thread.
+     * Creates the executor and its one thread, counting nothing on any shared drain counter.
      *
      * @param legResender the capability whose run step it executes
      */
     public ResendLegExecutor(final LegResender legResender) {
-        this(legResender, SHUTDOWN_WAIT);
+        this(legResender, new AtomicInteger(), SHUTDOWN_WAIT);
+    }
+
+    /**
+     * Creates the executor and its one thread, sharing the consumer's own in-flight-run counter so
+     * a resend-leg run reached through it is waited for on shutdown (H40; FR-004-060).
+     *
+     * @param legResender  the capability whose run step it executes
+     * @param inFlightRuns the shared counter {@code ConsumerLifecycleController#stop()} waits on
+     */
+    public ResendLegExecutor(final LegResender legResender, final AtomicInteger inFlightRuns) {
+        this(legResender, inFlightRuns, SHUTDOWN_WAIT);
     }
 
     /* default */ ResendLegExecutor(final LegResender legResender, final Duration shutdownWait) {
+        this(legResender, new AtomicInteger(), shutdownWait);
+    }
+
+    /* default */ ResendLegExecutor(final LegResender legResender, final AtomicInteger inFlightRuns,
+                                    final Duration shutdownWait) {
         this.legResender = legResender;
+        this.inFlightRuns = inFlightRuns;
         this.shutdownWait = shutdownWait;
         this.executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS, queue,
                 Thread.ofPlatform().name(THREAD_NAME).factory());
@@ -132,11 +159,14 @@ public final class ResendLegExecutor implements AutoCloseable {
                 logNotStarted(accepted);
                 return;
             }
+            inFlightRuns.incrementAndGet();
             try {
                 legResender.run(accepted, stopping::get);
             } catch (final RuntimeException failure) {
                 LOG.error("resend-leg run failed resendRunId={} cause={}", accepted.resendRunId(),
                         failure.getClass().getSimpleName());
+            } finally {
+                inFlightRuns.decrementAndGet();
             }
         }
     }
