@@ -30,6 +30,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ReplayRoute;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.ResendAttempt;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.SupportSubmission;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
@@ -102,6 +103,32 @@ class RequestRecoveryTransitionTest extends SchemaTestSupport {
         assertThat(row.get("status")).isEqualTo("COMPLETED");
         assertThat(row.get("completion_reason")).isEqualTo("recovered");
         assertThat(row.get("replayed_at")).isNull();
+    }
+
+    @Test
+    @DisplayName("a submit-hearing admission whose audit_note carries only the escaped "
+            + "REPLAYED-AFTER-FAILURE text completes both-legs-terminal, not recovered (PR #29 "
+            + "review): the LIKE pattern itself must treat the marker's underscores as literal, not "
+            + "as SQL wildcards each matching the escape's own hyphens")
+    void completes_bothLegsTerminal_whenAuditNoteOnlyCarriesTheEscapedMarker() {
+        final UUID requestId = UUID.randomUUID();
+        final RunClaim claim = RunClaim.fresh();
+        final SupportSubmission support = SupportSubmission.fromProperties(
+                "replayed_after_failure", "run-id", "see REPLAYED_AFTER_FAILURE ticket");
+        assertThat(repository.insertClaim(command(requestId), "{}", "fp", claim, support))
+                .isTrue();
+        assertThat((String) requestRow(requestId).get("audit_note"))
+                .contains("REPLAYED-AFTER-FAILURE")
+                .doesNotContainIgnoringCase("REPLAYED_AFTER_FAILURE");
+
+        final boolean completed = repository.markCompleted(SOURCE, requestId, claim,
+                CompletionReason.BOTH_LEGS_TERMINAL);
+
+        assertThat(completed).isTrue();
+        final Map<String, Object> row = requestRow(requestId);
+        assertThat(row.get("status")).isEqualTo("COMPLETED");
+        assertThat(row.get("completion_reason")).isEqualTo("both-legs-terminal");
+        assertThat(row.get("failure_reason")).isNull();
     }
 
     @Test
@@ -301,6 +328,12 @@ class RequestRecoveryTransitionTest extends SchemaTestSupport {
                         + "'both-legs-terminal')")
                 .param("s", SOURCE).param("r", requestId)
                 .update();
+    }
+
+    private static DistributionCommand command(final UUID requestId) {
+        return new DistributionCommand(SOURCE, requestId, UUID.randomUUID(),
+                LocalDate.parse("2026-08-19"), Instant.parse("2026-08-19T16:42:07.512Z"),
+                "Hearing_Resulted", Optional.empty());
     }
 
     private void seedFailedRequest(final UUID requestId) {

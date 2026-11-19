@@ -460,9 +460,14 @@ public final class JdbcProcessedRequestRepository implements ProcessedRequestRep
         // (FR-004-012), even when the caller's own reason is both-legs-terminal: a replayed run's
         // first delivery may park and a later redelivery settle it, so the marker — not which run
         // settled it — decides. replayed_at is cleared here regardless, since completion is terminal.
+        // ESCAPE '\' makes the pattern's own underscores literal, not the SQL single-character
+        // wildcard they default to: unescaped, '%REPLAYED_AFTER_FAILURE%' matches
+        // domain.AuditNoteText's escaped "REPLAYED-AFTER-FAILURE" too, since '_' matches any one
+        // character including '-' — silently defeating that escape (PR #29 review).
         final int rows = jdbc.sql("UPDATE processed_request SET status = 'COMPLETED', "
                         + "completion_reason = CASE "
-                        + "WHEN audit_note LIKE '%REPLAYED_AFTER_FAILURE%' THEN 'recovered' "
+                        + "WHEN audit_note LIKE '%REPLAYED\\_AFTER\\_FAILURE%' ESCAPE '\\' "
+                        + "THEN 'recovered' "
                         + "ELSE :reason END, "
                         + "failure_reason = NULL, replayed_at = NULL, claim_owner = NULL, "
                         + "claim_token = NULL, claim_expires_at = NULL, updated_at = now() "
