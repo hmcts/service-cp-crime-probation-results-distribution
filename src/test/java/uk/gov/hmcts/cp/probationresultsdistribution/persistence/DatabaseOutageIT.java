@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
@@ -159,7 +160,7 @@ class DatabaseOutageIT extends EndToEndTestSupport {
         final IntakeControlRepository intakeControl =
                 new JdbcIntakeControlRepository(JdbcClient.create(store));
         controller = new ConsumerLifecycleController(outageProcessor, probe, intakeControl,
-                () -> null, metrics, Duration.ofSeconds(1));
+                () -> null, metrics, Duration.ofSeconds(1), new AtomicInteger(), Duration.ofSeconds(5));
         holder.set(controller);
         controller.start();
         awaitIntakeStarted();

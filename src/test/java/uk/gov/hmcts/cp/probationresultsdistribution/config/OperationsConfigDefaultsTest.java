@@ -87,10 +87,10 @@ class OperationsConfigDefaultsTest {
         void warns_once_and_starts() throws Exception {
             appender.start();
             configLogger.addAppender(appender);
-            final MockEnvironment environment = new MockEnvironment()
+            final MockEnvironment environment = withRequiredDeployedProperties(new MockEnvironment()
                     .withProperty("audit.http.enabled", "true")
                     .withProperty("cp.audit.enabled", "false")
-                    .withProperty("distribution.gateway.subscription-key", "a-key");
+                    .withProperty("distribution.gateway.subscription-key", "a-key"));
             final ApplicationRunner runner = new StartupValidationConfig()
                     .distributionConfigValidator(validProperties(), environment);
 
@@ -112,10 +112,10 @@ class OperationsConfigDefaultsTest {
         void no_warning_when_transport_is_also_on() throws Exception {
             appender.start();
             configLogger.addAppender(appender);
-            final MockEnvironment environment = new MockEnvironment()
+            final MockEnvironment environment = withRequiredDeployedProperties(new MockEnvironment()
                     .withProperty("audit.http.enabled", "true")
                     .withProperty("cp.audit.enabled", "true")
-                    .withProperty("distribution.gateway.subscription-key", "a-key");
+                    .withProperty("distribution.gateway.subscription-key", "a-key"));
             final ApplicationRunner runner = new StartupValidationConfig()
                     .distributionConfigValidator(validProperties(), environment);
 
@@ -130,9 +130,9 @@ class OperationsConfigDefaultsTest {
         void no_warning_when_transport_switch_is_unset() throws Exception {
             appender.start();
             configLogger.addAppender(appender);
-            final MockEnvironment environment = new MockEnvironment()
+            final MockEnvironment environment = withRequiredDeployedProperties(new MockEnvironment()
                     .withProperty("audit.http.enabled", "true")
-                    .withProperty("distribution.gateway.subscription-key", "a-key");
+                    .withProperty("distribution.gateway.subscription-key", "a-key"));
             final ApplicationRunner runner = new StartupValidationConfig()
                     .distributionConfigValidator(validProperties(), environment);
 
@@ -141,6 +141,18 @@ class OperationsConfigDefaultsTest {
             assertThat(appender.list).noneMatch(
                     event -> event.getFormattedMessage().contains("audit.http.enabled=true"));
         }
+    }
+
+    /**
+     * Adds the baseline a deployed profile needs to clear the Service Bus credential and Redis
+     * checks {@link StartupValidationConfig} now wires in, so these tests' own target — the audit
+     * filter/transport WARN — is reached without being masked by an unrelated refusal.
+     */
+    private static MockEnvironment withRequiredDeployedProperties(final MockEnvironment environment) {
+        return environment
+                .withProperty("distribution.servicebus.connection-string", "Endpoint=sb://test")
+                .withProperty("distribution.redis.host", "redis-host")
+                .withProperty("distribution.redis.key", "a-redis-key");
     }
 
     private static DistributionProperties validProperties() {

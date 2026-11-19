@@ -81,6 +81,8 @@ public class ResendTestSupport extends EndToEndTestSupport {
                                          final HmppsSender sender) {
         final TransactionTemplate tx =
                 new TransactionTemplate(new DataSourceTransactionManager(sharedDataSource()));
+        final ProcessedRequestRepository processedRequests =
+                new JdbcProcessedRequestRepository(jdbc(), tx, LEASE);
         final MetricRegistry registry = new MetricRegistry(meterRegistry());
         final ChainedHearingPayloadSource payload = new ChainedHearingPayloadSource(
                 new CachedHearingPayloadAdapter(cache, CACHE_PREFIX),
@@ -93,9 +95,10 @@ public class ResendTestSupport extends EndToEndTestSupport {
                 Duration.ofSeconds(5), 3, Duration.ofMillis(100), registry);
         final HmppsSender hmpps = sender != null ? sender : publisher(registry);
         final DistributionRunner runner = new DistributionRunner(payload, youthFilter, hmpps,
-                new OutboundLogAdapter(new OutboundMessageRepository(jdbc(), tx, "test-version")),
+                new OutboundLogAdapter(new OutboundMessageRepository(jdbc(), tx, "test-version",
+                        processedRequests)),
                 YouthSwitchRecordedValue.ACTIVE, registry);
-        return new LegResender(pauseGate, requestStore(), runner, registry, maxIdsPerRun);
+        return new LegResender(pauseGate, processedRequests, runner, registry, maxIdsPerRun);
     }
 
     /**

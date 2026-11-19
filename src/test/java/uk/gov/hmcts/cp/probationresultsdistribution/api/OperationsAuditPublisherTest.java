@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -21,6 +22,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jms.JmsException;
 import org.springframework.jms.core.JmsTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import uk.gov.hmcts.cp.probationresultsdistribution.config.MetricRegistry;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsAction;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.OperationsFailure;
@@ -48,6 +52,72 @@ class OperationsAuditPublisherTest {
 
     private OperationsAuditPublisher publisherWithoutTransport() {
         return new OperationsAuditPublisher(Optional.empty(), objectMapper, metrics);
+    }
+
+    @AfterEach
+    void clearRequestContext() {
+        RequestContextHolder.resetRequestAttributes();
+    }
+
+    @Nested
+    @DisplayName("the caller id (review of PR #8)")
+    class CallerId {
+
+        @Test
+        @DisplayName("is read from the request's own CJSCPPUID header, never the body")
+        void is_read_from_the_cjscppuid_header() {
+            final MockHttpServletRequest request = new MockHttpServletRequest();
+            request.addHeader("CJSCPPUID", "00000000-0000-0000-0000-0000000000aa");
+            RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+            final ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+
+            publisherWithTransport().publishRequestEvent(OperationsAction.REPLAY, Map.of("x", "y"));
+
+            verify(jmsTemplate).convertAndSend(eq("jms.topic.auditing.event"), body.capture());
+            assertThat(body.getValue())
+                    .contains("\"callerId\":\"00000000-0000-0000-0000-0000000000aa\"");
+        }
+
+        @Test
+        @DisplayName("is recorded on the response event too")
+        void is_recorded_on_the_response_event() {
+            final MockHttpServletRequest request = new MockHttpServletRequest();
+            request.addHeader("CJSCPPUID", "00000000-0000-0000-0000-0000000000aa");
+            RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+            final ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+
+            publisherWithTransport().publishResponseEvent(OperationsAction.RESEND_LEG,
+                    Map.of("outcome", "enqueued"));
+
+            verify(jmsTemplate).convertAndSend(eq("jms.topic.auditing.event"), body.capture());
+            assertThat(body.getValue())
+                    .contains("\"callerId\":\"00000000-0000-0000-0000-0000000000aa\"");
+        }
+
+        @Test
+        @DisplayName("is absent, not blank or placeholder, with no request bound to this thread")
+        void is_absent_with_no_bound_request() {
+            final ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+
+            publisherWithTransport().publishRequestEvent(OperationsAction.REPLAY, Map.of("x", "y"));
+
+            verify(jmsTemplate).convertAndSend(eq("jms.topic.auditing.event"), body.capture());
+            assertThat(body.getValue()).doesNotContain("callerId");
+        }
+
+        @Test
+        @DisplayName("is absent when the header is blank, not recorded as an empty string")
+        void is_absent_when_the_header_is_blank() {
+            final MockHttpServletRequest request = new MockHttpServletRequest();
+            request.addHeader("CJSCPPUID", "   ");
+            RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+            final ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+
+            publisherWithTransport().publishRequestEvent(OperationsAction.REPLAY, Map.of("x", "y"));
+
+            verify(jmsTemplate).convertAndSend(eq("jms.topic.auditing.event"), body.capture());
+            assertThat(body.getValue()).doesNotContain("callerId");
+        }
     }
 
     @Nested

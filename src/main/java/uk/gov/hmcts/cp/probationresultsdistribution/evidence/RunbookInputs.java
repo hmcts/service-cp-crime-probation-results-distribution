@@ -89,7 +89,7 @@ public final class RunbookInputs {
                         Optional.of("DailyReconciliationQuery's legacy-silence check (evidence "
                                 + "query, User Story 6)"),
                         "DailyReconciliationQuery's legacy-silence check reads zero lines in that "
-                                + "period (not yet built — corrected once User Story 6 lands)",
+                                + "period (LegacySilenceCheckSharedDefinitionTest)",
                         Optional.of("6")),
                 step(PLANNED_ROLLBACK, "6", OPERATIONS,
                         "Purge the queue, recording the count removed and the cut-off; only after "

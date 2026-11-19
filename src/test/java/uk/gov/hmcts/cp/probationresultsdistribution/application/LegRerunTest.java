@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HexFormat;
@@ -26,7 +27,9 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.PayloadSource;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.YouthSwitchRecordedValue;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.JdbcProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.OutboundMessageRepository;
+import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequestRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.SchemaTestSupport;
 
 /**
@@ -45,9 +48,12 @@ class LegRerunTest extends SchemaTestSupport {
     private static final String SENT_BODY = "{\"hearing\":{\"id\":\"x\"}}";
     private static final String PRIOR_DIGEST = sha256("prior-failed-body");
 
+    private final TransactionTemplate tx =
+            new TransactionTemplate(new DataSourceTransactionManager(datasource()));
+    private final ProcessedRequestRepository processedRequests =
+            new JdbcProcessedRequestRepository(jdbc(), tx, Duration.ofMinutes(4).plusSeconds(30));
     private final OutboundMessageRepository repository = new OutboundMessageRepository(
-            jdbc(), new TransactionTemplate(new DataSourceTransactionManager(datasource())),
-            "test-version");
+            jdbc(), tx, "test-version", processedRequests);
     private final OutboundLogAdapter adapter = new OutboundLogAdapter(repository);
 
     @Test
@@ -62,7 +68,7 @@ class LegRerunTest extends SchemaTestSupport {
         final String messageId = "RESULTS:" + requestId;
 
         final boolean recorded = adapter.recordReplay(sentOutcome(requestId, hearingId), claim,
-                messageId);
+                messageId, "unit-test");
 
         assertThat(recorded).isTrue();
         final List<Map<String, Object>> rows = legRows(requestId);
@@ -88,7 +94,7 @@ class LegRerunTest extends SchemaTestSupport {
         final String messageId = "RESULTS:" + requestId;
 
         final boolean recorded = adapter.recordReplay(sentOutcome(requestId, hearingId), claim,
-                messageId);
+                messageId, "unit-test");
 
         assertThat(recorded).isTrue();
         final List<Map<String, Object>> rows = legRows(requestId);
@@ -119,7 +125,7 @@ class LegRerunTest extends SchemaTestSupport {
         insertParkedResendAttempt(requestId, 2, RunClaim.fresh());
 
         final boolean recorded = adapter.recordReplay(sentOutcome(requestId, hearingId), claim,
-                messageId);
+                messageId, "unit-test");
 
         assertThat(recorded).as("the replay write is fenced to zero rows").isFalse();
         final List<Map<String, Object>> rows = legRows(requestId);
@@ -144,7 +150,7 @@ class LegRerunTest extends SchemaTestSupport {
                 "prev=FAILED/receiver-rejected;rerun-by=" + messageId, null);
 
         final boolean recorded = adapter.recordReplay(sentOutcome(requestId, hearingId), claim,
-                messageId);
+                messageId, "unit-test");
 
         assertThat(recorded).isFalse();
         final List<Map<String, Object>> rows = legRows(requestId);
@@ -165,10 +171,10 @@ class LegRerunTest extends SchemaTestSupport {
         insertFailedAttempt(requestId, 2, "resend", "gateway-transient", null, RunClaim.fresh());
 
         // The replay appends attempt 3, which itself FAILS on this delivery.
-        assertThat(adapter.recordReplay(failedOutcome(requestId, hearingId), claim, messageId))
+        assertThat(adapter.recordReplay(failedOutcome(requestId, hearingId), claim, messageId, "unit-test"))
                 .as("the appended FAILED replay row is created").isTrue();
         // The same replay message is redelivered: the appended FAILED row already names it.
-        assertThat(adapter.recordReplay(failedOutcome(requestId, hearingId), claim, messageId))
+        assertThat(adapter.recordReplay(failedOutcome(requestId, hearingId), claim, messageId, "unit-test"))
                 .as("the redelivery is skipped, not appended again").isFalse();
 
         final List<Map<String, Object>> rows = legRows(requestId);
@@ -193,11 +199,16 @@ class LegRerunTest extends SchemaTestSupport {
         insertFailedAttempt(requestId, 2, "resend", "gateway-transient", null, RunClaim.fresh());
 
         // The replay appends attempt 3, which itself parks on this delivery.
-        assertThat(adapter.recordReplay(parkedOutcome(requestId, hearingId), claim, messageId))
-                .as("the appended replay row is created").isTrue();
+        assertThat(adapter.recordReplay(parkedOutcome(requestId, hearingId), claim, messageId,
+                "unit-test")).as("the appended replay row is created").isTrue();
+        // The PARKED outcome's RETRYING transition clears the request claim in the same write
+        // (review of PR #8); a real redelivery would reclaim it afresh through the guard, so this
+        // simulates that reclaim directly before the second delivery.
+        final RunClaim redeliveryClaim = RunClaim.fresh();
+        reclaimRequest(requestId, redeliveryClaim);
         // The same replay message is redelivered: attempt 3 must be re-run in place, not attempt 1.
-        assertThat(adapter.recordReplay(sentOutcome(requestId, hearingId), claim, messageId))
-                .as("the redelivery re-runs the appended PARKED row in place").isTrue();
+        assertThat(adapter.recordReplay(sentOutcome(requestId, hearingId), redeliveryClaim, messageId,
+                "unit-test")).as("the redelivery re-runs the appended PARKED row in place").isTrue();
 
         final List<Map<String, Object>> rows = legRows(requestId);
         assertThat(rows).as("no fourth attempt is appended").hasSize(3);
@@ -225,10 +236,15 @@ class LegRerunTest extends SchemaTestSupport {
         seedReplayableRequest(requestId, claim);
         insertParkedAttemptOne(requestId);
 
-        assertThat(adapter.recordReplay(parkedOutcome(requestId, hearingId), claim, messageId))
-                .as("first redelivery re-runs the parked row").isTrue();
-        assertThat(adapter.recordReplay(parkedOutcome(requestId, hearingId), claim, messageId))
-                .as("a second redelivery re-runs it again, not skipped").isTrue();
+        assertThat(adapter.recordReplay(parkedOutcome(requestId, hearingId), claim, messageId,
+                "unit-test")).as("first redelivery re-runs the parked row").isTrue();
+        // The first PARKED outcome's RETRYING transition clears the request claim in the same write
+        // (review of PR #8); a real redelivery would reclaim it afresh through the guard.
+        final RunClaim redeliveryClaim = RunClaim.fresh();
+        reclaimRequest(requestId, redeliveryClaim);
+        assertThat(adapter.recordReplay(parkedOutcome(requestId, hearingId), redeliveryClaim,
+                messageId, "unit-test")).as("a second redelivery re-runs it again, not skipped")
+                .isTrue();
         final List<Map<String, Object>> rows = legRows(requestId);
         assertThat(rows).hasSize(1);
         assertThat(rows.get(0).get("status")).isEqualTo("PARKED");
@@ -242,6 +258,20 @@ class LegRerunTest extends SchemaTestSupport {
                         + "'RECEIVED', 1, '{}', now(), :owner, :token, now() + interval '5 minutes')")
                 .param("s", SOURCE).param("r", requestId)
                 .param("owner", claim.owner().toString()).param("token", claim.token())
+                .update();
+    }
+
+    /**
+     * Re-establishes the request's claim, as a redelivery's reclaim through {@code IdempotencyGuard}
+     * would in production, after an atomic write's own request transition cleared it (review of PR
+     * #8). This test exercises the repository directly, with no guard in the loop.
+     */
+    private void reclaimRequest(final UUID requestId, final RunClaim claim) {
+        jdbc().sql("UPDATE processed_request SET status = 'RETRYING', claim_owner = :owner, "
+                        + "claim_token = :token, claim_expires_at = now() + interval '5 minutes' "
+                        + "WHERE source = :s AND request_id = :r")
+                .param("owner", claim.owner().toString()).param("token", claim.token())
+                .param("s", SOURCE).param("r", requestId)
                 .update();
     }
 

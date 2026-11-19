@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.azure.messaging.servicebus.ServiceBusProcessorClient;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -93,7 +94,7 @@ class IntakeControlReconciliationIT extends SchemaTestSupport {
         final IntakeControlRepository intakeControl = new JdbcIntakeControlRepository(jdbc());
         final MetricRegistry metrics = new MetricRegistry(new SimpleMeterRegistry());
         return new ConsumerLifecycleController(processor, storeProbe, intakeControl, () -> null,
-                metrics, PROBE_INTERVAL);
+                metrics, PROBE_INTERVAL, new AtomicInteger(), Duration.ofSeconds(5));
     }
 
     private void pauseRow() {

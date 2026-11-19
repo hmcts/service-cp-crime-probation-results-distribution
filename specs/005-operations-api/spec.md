@@ -899,7 +899,7 @@ an identically seeded store, and compare the reports ID for ID.
 - **006-production-readiness** (downstream): lists platform asks 12 and 14, the five gates, among
   its external preconditions — not a cutover precondition, since the runners serve without them —
   and its rollback runbook inputs send replay through the service's replay action, which this
-  slice exposes (§9.4 step 6a). The purge count the rollback records (DevOps' record of the manual portal purge, H42) may include
+  slice exposes (§9.4 step 6a). The purge count the rollback records (the AMS team and 3rd line support's record of the manual portal purge, H42) may include
   replay
   commands enqueued while intake was paused (assumption 11).
 - **001-parity-kernel** and **003-body-retention**: none.

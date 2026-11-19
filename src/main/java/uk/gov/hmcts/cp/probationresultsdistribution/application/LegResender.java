@@ -24,10 +24,14 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.ProcessedRequest
  *
  * <p>The input is refused whole, before anything is read, when it is incomplete or too long, when
  * the distinct ids exceed {@code distribution.resend.max-ids-per-run}, or while intake is paused by
- * an operator — read against the reconciled in-memory flag ({@link IntakePauseGate}), never a fresh
- * store read (FR-004-019–FR-004-021). Duplicates are collapsed first. The ids then run one after
- * another (research.md Decision 4); before each, the pause is read again, and once a pause has begun
- * no further id is claimed and the rest are reported {@code not-run}.
+ * an operator — read against {@link IntakePauseGate#pauseRequested()}, never a fresh store read
+ * (FR-004-019–FR-004-021). Unlike rollback-close-in-flight and purge-queue, resend-leg refuses as
+ * soon as a pause is requested, not once a live pod confirms its drain has finished (review of PR
+ * #23 round 4; design H43, issue #27) — it has no in-flight send of its own to race, so there is
+ * nothing to gain by waiting, and refusing early is the safe default. Duplicates are collapsed
+ * first. The ids then run one after another (research.md Decision 4); before each, the pause is
+ * read again, and once a pause has begun no further id is claimed and the rest are reported
+ * {@code not-run}.
  *
  * <p>The run is split in two (slice 005, FR-005-015): {@link #accept} applies every whole-run check
  * and assigns the {@code resendRunId}, claiming nothing, and {@link #run} takes an accepted run's
@@ -157,7 +161,7 @@ public final class LegResender {
             refusal = Optional.of(WholeRunRefusal.TOO_MANY_REQUEST_IDS);
         } else {
             try {
-                refusal = pauseGate.pausedByOperator()
+                refusal = pauseGate.pauseRequested()
                         ? Optional.of(WholeRunRefusal.INTAKE_PAUSED) : Optional.empty();
             } catch (final DataAccessException storeFailure) {
                 // The pause cannot be confirmed, so nothing is claimed: refused whole, nothing changed.
@@ -195,7 +199,7 @@ public final class LegResender {
         }
         if (!state.stopped) {
             try {
-                state.stopped = pauseGate.pausedByOperator();
+                state.stopped = pauseGate.pauseRequested();
             } catch (final DataAccessException storeFailure) {
                 // The pause cannot be confirmed: claim nothing further, as a pause would, and fail
                 // the run (spec edge case "The store fails during a resend run").

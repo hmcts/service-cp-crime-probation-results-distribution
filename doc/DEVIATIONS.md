@@ -37,7 +37,7 @@ whether the behaviour is built. Withdrawn, unallocated and reserved ids carry on
 | DV-10 | Active | P13 | An empty, `{}` or non-JSON query-API 2xx is taken as a payload | It is treated as a miss, not a payload (non-JSON pending §16) | An empty or non-JSON 2xx is not a payload and must not be sent as one | Design owner; D1 | No | — | `ResultsQueryExternalHearingClientTest` (slice 002) | yes |
 | DV-11 | Unallocated | P35 | — | A payload fix that would need HMPPS's agreement; D10 is "no change". Kept so the id is never reused | — | — | — | — | — | n/a |
 | DV-12 | Unallocated | P21 | — | A payload fix that would need HMPPS's agreement; D10 is "no change". Kept so the id is never reused | — | — | — | — | — | n/a |
-| DV-13 | Active | P10, P11 | The Redis client does not reconnect and applies no timeouts | Lettuce client: reconnecting, with timeouts applied | A non-reconnecting client drops every send after a broker blip | Design owner; D1 | No | — | `RedisPayloadAdapterIT` (slice 002) | no |
+| DV-13 | Active | P10, P11 | The Redis client does not reconnect and applies no timeouts | Lettuce client: reconnecting (the library default), with command and connect timeouts applied | A non-reconnecting client drops every send after a broker blip | Design owner; D1 | No | — | `CachedHearingPayloadAdapterTest`, `PipelineClientsTest` (slice 002) | yes |
 | DV-14 | Active | P12 | The Redis TLS peer is not verified | The Redis TLS peer is verified | An unverified TLS peer is an interception risk | Design owner; D1 | No | — | `StartupValidationTest`, `StartupValidationConfigTest` (slice 002) | yes |
 | DV-15 | Withdrawn (H5) | P25 | — | VEP-only; not built | — | — | — | — | — | n/a |
 | DV-16 | Active | P26 | No inbound schema; a malformed or mis-typed message is part-processed | Closed inbound schema: a wrong `eventType`, a missing or an unknown field dead-letters `validation` at once, with no `processed_request` row | A malformed or mis-typed message must be rejected at once, not part-processed | Design owner; D1, H14 | No | — | `DistributionCommandSchemaTest`, `ContractValidationDeadLetterIT` (slice 002) | yes |
@@ -64,7 +64,7 @@ on the payload's shape is reported as a rules failure, never guarded.
 |---|---|---|
 | P17 | Only `permissions[0]` decides the youth switch; more than one permission is counted, with no change in behaviour | `FeaturePermissionClientTest` (slice 002) |
 | P18 | With the switch `ACTIVE`, a court application whose `subject.masterDefendant` is not truthy is removed (`PF/functions.js:41-47`) | corpus case 3 (slice 001, US4); `HmppsRedactionRulesFailureTest` (slice 001, US1) |
-| P19 | The rules have no null guards: `defendants` (R3, R5, R9, R10), `offences` (R5, R10), `courtOrderOffences`/`offence` (R7) and `judicialResults` (R10) are read without a guard, so a rule that meets an absent or null value throws → `FAILED(rules-exception)` | `HmppsRedactionRulesFailureTest` (slice 001, US1); `RulesExceptionIT` (slice 002) |
+| P19 | The rules have no null guards: `defendants` (R3, R5, R9, R10), `offences` (R5, R10), `courtOrderOffences`/`offence` (R7) and `judicialResults` (R10) are read without a guard, so a rule that meets an absent or null value throws → `FAILED(rules-exception)` | `HmppsRedactionRulesFailureTest` (slice 001, US1); `EndToEndRulesExceptionIT` (slice 002) |
 
 ## Pending-external defects (design §7.1)
 

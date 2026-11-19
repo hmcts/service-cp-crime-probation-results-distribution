@@ -34,8 +34,7 @@ class BodyRetentionRecoveryIT extends MaintenanceTestStore {
         final Path runbook = Path.of("doc/operations/body-partition-maintenance.md");
         assertThat(runbook).exists();
         final String documentation = Files.readString(runbook);
-        assertThat(documentation).contains("distribution.consumer.enabled=false", "in-flight",
-                "older than the cut-off");
+        assertThat(documentation).contains("pause-intake", "in-flight", "older than the cut-off");
         final String script = documentation.split("<!-- recovery-sql:start -->")[1]
                 .split("<!-- recovery-sql:end -->")[0].replace("```sql", "").replace("```", "")
                 .replace(":\"partition\"", name(month))

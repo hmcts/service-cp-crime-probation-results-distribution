@@ -95,7 +95,7 @@ class LegOutcomeLogLineTest {
                 when(sender.send(any())).thenReturn(new HmppsSender.SentBody(outcome, "{\"sent\":true}"));
             }
         }
-        when(outbound.record(any(), any())).thenReturn(true);
+        when(outbound.record(any(), any(), any())).thenReturn(true);
         final UUID requestId = UUID.randomUUID();
         final UUID hearingId = UUID.randomUUID();
         final DistributionCommand command = new DistributionCommand("RESULTS", requestId, hearingId,
@@ -104,7 +104,7 @@ class LegOutcomeLogLineTest {
         putMdc(requestId, hearingId);
         new DistributionRunner(payloads, youth, sender, outbound,
                 YouthSwitchRecordedValue.ACTIVE, new MetricRegistry(new SimpleMeterRegistry()))
-                .run(command, AttemptOrigin.QUEUE, RunClaim.fresh(), false);
+                .run(command, AttemptOrigin.QUEUE, RunClaim.fresh(), false, "unit-test");
     }
 
     private void assertOutcomeLog(final Level level, final String status, final String field,

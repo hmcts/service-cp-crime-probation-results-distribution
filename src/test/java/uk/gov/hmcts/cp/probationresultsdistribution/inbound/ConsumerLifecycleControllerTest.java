@@ -5,6 +5,7 @@ import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,7 +14,10 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -136,13 +140,234 @@ class ConsumerLifecycleControllerTest {
         }
     }
 
+    @Nested
+    @DisplayName("when a delivery is in flight at shutdown")
+    class RunInFlightAtShutdown {
+
+        @Test
+        @DisplayName("stop() blocks until the in-flight delivery finishes, then returns")
+        void waits_for_the_in_flight_delivery() throws InterruptedException {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicInteger inFlight = new AtomicInteger();
+            controller = newController(inFlight, Duration.ofSeconds(5L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            inFlight.incrementAndGet();
+            final CountDownLatch stopReturned = new CountDownLatch(1);
+            final Thread stopper = new Thread(() -> {
+                controller.stop();
+                stopReturned.countDown();
+            });
+            stopper.start();
+
+            // A rolling deploy must not kill a run mid-POST (design budget up to 215s): stop() has to
+            // still be blocked a moment later, not have returned while the delivery was in flight.
+            assertThat(stopReturned.await(200L, TimeUnit.MILLISECONDS)).isFalse();
+
+            inFlight.decrementAndGet();
+
+            assertThat(stopReturned.await(AWAIT_LIMIT.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
+        }
+
+        @Test
+        @DisplayName("gives up after the drain timeout rather than blocking for ever")
+        void gives_up_after_the_drain_timeout() {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicInteger inFlight = new AtomicInteger(1);
+            final Duration drainTimeout = Duration.ofMillis(200L);
+            controller = newController(inFlight, drainTimeout);
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            final long startedAt = System.nanoTime();
+            controller.stop();
+            final Duration elapsed = Duration.ofNanos(System.nanoTime() - startedAt);
+
+            assertThat(elapsed).isGreaterThanOrEqualTo(drainTimeout);
+        }
+    }
+
+    @Nested
+    @DisplayName("when the pause table does not exist until migration runs")
+    class PauseTableMissingBeforeMigration {
+
+        @Test
+        @DisplayName("migrates before reconciling the pause, so a fresh database still starts intake "
+                + "(review of PR #23)")
+        void migrates_before_querying_the_pause_table() {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            // Simulates intake_control not existing until Flyway has actually run: the controller's
+            // own flyway supplier is the one thing a brand-new database needs invoked before anything
+            // queries that table. Returning null here (as ServiceBusConsumerConfig's
+            // ObjectProvider<Flyway>::getIfAvailable would in a unit test with no Flyway bean) still
+            // flips the flag, since migrateOnce() treats "no Flyway configured" as migration done.
+            final AtomicBoolean migratedBySupplier = new AtomicBoolean(false);
+            when(intakeControl.pausedByOperator()).thenAnswer(invocation -> {
+                if (!migratedBySupplier.get()) {
+                    throw new IllegalStateException("relation \"intake_control\" does not exist");
+                }
+                return false;
+            });
+            controller = new ConsumerLifecycleController(processor, storeProbe, intakeControl, () -> {
+                migratedBySupplier.set(true);
+                return null;
+            }, metrics, PROBE_INTERVAL, new AtomicInteger(), Duration.ofSeconds(5L));
+
+            controller.start();
+
+            // Left in the old order (the pause reconciled before migration ran), every probe would
+            // fail the pause read and never reach the branch that migrates, so intake would never
+            // start against a fresh database.
+            awaitUntil(controller::intakeStarted);
+        }
+    }
+
+    @Nested
+    @DisplayName("when a delivery is in flight during a store-outage suspension")
+    class StoreOutageSuspensionWithRunInFlight {
+
+        @Test
+        @DisplayName("does not confirm SUSPENDED until the in-flight delivery drains, so an operator "
+                + "pause requested in that window is not confirmed either (review of PR #23 round 5)")
+        void waits_for_the_in_flight_delivery_before_suspending() throws InterruptedException {
+            final AtomicBoolean storeUp = new AtomicBoolean(true);
+            when(storeProbe.available()).thenAnswer(invocation -> storeUp.get());
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicBoolean paused = new AtomicBoolean(false);
+            when(intakeControl.pausedByOperator()).thenAnswer(invocation -> paused.get());
+            final AtomicInteger inFlight = new AtomicInteger();
+            controller = newController(inFlight, Duration.ofSeconds(5L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            inFlight.incrementAndGet();
+            storeUp.set(false);
+            controller.suspendIntake();
+
+            // The store-outage suspension must not reach SUSPENDED while the delivery this pod
+            // started is still running: stopForSuspension() now drains the same way
+            // stopForOperatorPause() always has, so an operator pause requested in this window is
+            // not confirmed off a stale SUSPENDED read either (reconcileOperatorPause()).
+            Thread.sleep(200L);
+            assertThat(gauge("probation_intake_suspended")).isEqualTo(0.0d);
+            paused.set(true);
+            Thread.sleep(200L);
+            assertThat(controller.pausedByOperator()).isFalse();
+
+            inFlight.decrementAndGet();
+
+            awaitUntil(() -> gauge("probation_intake_suspended") == 1.0d);
+            awaitUntil(controller::pausedByOperator);
+        }
+    }
+
+    @Nested
+    @DisplayName("when an operator pause is requested while a delivery is in flight")
+    class OperatorPauseWithRunInFlight {
+
+        @Test
+        @DisplayName("confirms the operator pause only after the in-flight delivery drains, not "
+                + "when the pause request is first read (M3)")
+        void confirms_paused_only_after_the_in_flight_delivery_drains() throws InterruptedException {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicBoolean paused = new AtomicBoolean(false);
+            when(intakeControl.pausedByOperator()).thenAnswer(invocation -> paused.get());
+            final AtomicInteger inFlight = new AtomicInteger();
+            controller = newController(inFlight, Duration.ofSeconds(5L));
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            inFlight.incrementAndGet();
+            paused.set(true);
+
+            // Several probe ticks (PROBE_INTERVAL = 20ms) go by: the request drives processor.stop(),
+            // but must never confirm pausedByOperator() - or its gauge - while the delivery this pod
+            // started is still running, since purge-queue and rollback-close-in-flight gate on
+            // exactly that flag.
+            Thread.sleep(200L);
+            assertThat(controller.pausedByOperator()).isFalse();
+            assertThat(gauge("probation_intake_suspended", "operator")).isEqualTo(0.0d);
+            // Resend-leg gates on pauseRequested() instead (review of PR #23 round 4; design H43,
+            // issue #27): it must already be true here, before the drain confirms, since resend-leg
+            // has no in-flight send of its own to race and must refuse at once.
+            assertThat(controller.pauseRequested()).isTrue();
+
+            inFlight.decrementAndGet();
+
+            awaitUntil(controller::pausedByOperator);
+            assertThat(gauge("probation_intake_suspended", "operator")).isEqualTo(1.0d);
+            assertThat(controller.pauseRequested()).isTrue();
+        }
+
+        @Test
+        @DisplayName("confirms the operator pause after the drain timeout rather than waiting for "
+                + "ever (M3)")
+        void confirms_paused_after_the_drain_timeout() {
+            when(storeProbe.available()).thenReturn(true);
+            doNothing().when(processor).start();
+            doNothing().when(processor).stop();
+            final AtomicBoolean paused = new AtomicBoolean(false);
+            when(intakeControl.pausedByOperator()).thenAnswer(invocation -> paused.get());
+            final AtomicInteger inFlight = new AtomicInteger(1);
+            final Duration drainTimeout = Duration.ofMillis(200L);
+            controller = newController(inFlight, drainTimeout);
+            controller.start();
+            awaitUntil(controller::intakeStarted);
+
+            final long startedAt = System.nanoTime();
+            paused.set(true);
+
+            awaitUntil(controller::pausedByOperator);
+            final Duration elapsed = Duration.ofNanos(System.nanoTime() - startedAt);
+
+            assertThat(elapsed).isGreaterThanOrEqualTo(drainTimeout);
+        }
+    }
+
+    @Nested
+    @DisplayName("when an operator pause is requested with nothing consuming")
+    class OperatorPauseWithNothingRunning {
+
+        @Test
+        @DisplayName("confirms the pause immediately: there is no delivery to race (M3)")
+        void confirms_paused_immediately_when_never_started() {
+            when(intakeControl.pausedByOperator()).thenReturn(true);
+            controller = newController();
+
+            controller.start();
+
+            awaitUntil(controller::pausedByOperator);
+            assertThat(gauge("probation_intake_suspended", "operator")).isEqualTo(1.0d);
+            assertThat(controller.pauseRequested()).isTrue();
+            verify(processor, never()).stop();
+        }
+    }
+
     private ConsumerLifecycleController newController() {
+        return newController(new AtomicInteger(), Duration.ofSeconds(5L));
+    }
+
+    private ConsumerLifecycleController newController(final AtomicInteger inFlightRuns,
+                                                       final Duration drainTimeout) {
         return new ConsumerLifecycleController(processor, storeProbe, intakeControl, () -> null,
-                metrics, PROBE_INTERVAL);
+                metrics, PROBE_INTERVAL, inFlightRuns, drainTimeout);
     }
 
     private double gauge(final String name) {
-        final Gauge found = meter.find(name).tag("cause", "database").gauge();
+        return gauge(name, "database");
+    }
+
+    private double gauge(final String name, final String cause) {
+        final Gauge found = meter.find(name).tag("cause", cause).gauge();
         return found == null ? Double.NaN : found.value();
     }
 

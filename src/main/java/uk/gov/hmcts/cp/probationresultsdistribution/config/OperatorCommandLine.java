@@ -8,6 +8,7 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -20,6 +21,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.convert.DurationStyle;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -36,6 +38,7 @@ import uk.gov.hmcts.cp.probationresultsdistribution.adapter.persistence.Outbound
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusCommandEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.servicebus.ServiceBusReplayEnqueuer;
 import uk.gov.hmcts.cp.probationresultsdistribution.adapter.usersgroups.FeaturePermissionClient;
+import uk.gov.hmcts.cp.probationresultsdistribution.application.ConfirmedIntakePauseGate;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DistributionRunner;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.DlqCompletedListingQuery;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.IntakePauseAction;
@@ -89,6 +92,17 @@ public final class OperatorCommandLine {
     private static final String SUBMIT_HEARING = "submit-hearing";
     private static final String REPLAY = "replay";
     private static final String QUEUE_NAME = "distribution.servicebus.queue-name";
+    /**
+     * Overrides {@code application.yaml}'s deployed readiness group, which names {@code
+     * intakeMigration} ({@link IntakeMigrationHealthIndicator}, review of PR #23) - a bean only
+     * {@link ServiceBusConsumerConfig} registers, never this standalone composition root. Left
+     * unoverridden, every operator command would fail Spring's own group-membership validation at
+     * startup ("Health contributor 'intakeMigration' ... does not exist") before ever reaching a
+     * runner. Passed as a command-line-style argument, not through {@code operatorArguments}, so it
+     * outranks {@code application.yaml} the way an operator's own free text deliberately never does.
+     */
+    private static final String CLI_READINESS_OVERRIDE =
+            "--management.endpoint.health.group.readiness.include=db";
 
     private OperatorCommandLine() {
     }
@@ -142,7 +156,7 @@ public final class OperatorCommandLine {
         // operator's free text is never turned into configuration.
         application.addInitializers(context -> context.getBeanFactory().registerSingleton(
                 "operatorArguments", new OperatorArguments(List.of(args))));
-        try (ConfigurableApplicationContext context = application.run()) {
+        try (ConfigurableApplicationContext context = application.run(CLI_READINESS_OVERRIDE)) {
             exitCode = context.getBean(RunnerDispatcher.class).dispatch(args).orElseThrow().exitCode();
         } catch (final RuntimeException failure) {
             final Optional<InvalidConfigurationException> invalid = invalidConfiguration(failure);
@@ -186,8 +200,13 @@ public final class OperatorCommandLine {
     /**
      * Explicit Boot source, deliberately without {@code @Configuration} or component scanning:
      * the normal server must not discover this separate composition root.
+     *
+     * <p>{@code BodyRetentionConfiguration} is excluded because it is a registered
+     * auto-configuration ({@code AutoConfiguration.imports}), so the bare
+     * {@code @EnableAutoConfiguration} below would otherwise pick it up and register the
+     * body-retention cron in every operator runner, against FR-004-045.
      */
-    @EnableAutoConfiguration
+    @EnableAutoConfiguration(exclude = BodyRetentionConfiguration.class)
     public static class CommandConfiguration {
 
         /* default */ @Bean
@@ -195,10 +214,26 @@ public final class OperatorCommandLine {
             return new JdbcIntakeControlRepository(jdbc);
         }
 
+        /**
+         * rollback-close-in-flight and purge-queue's gate only (review of PR #23 round 4; design
+         * H43, issue #27 — resend-leg reads the raw row instead, in {@link
+         * #commandResendLegRunner}). A standalone command has no running pod's in-memory,
+         * drain-confirmed pause flag to reconcile against, so it reads {@code intake_control}
+         * directly and applies the same confirmation window a live pod would have needed to reach
+         * {@code SUSPENDED}: one more probe tick to notice the request, then the full processing
+         * deadline for an in-flight delivery to drain (review of PR #8/#23, M3 follow-up). Read
+         * directly from the environment rather than the validated {@link DistributionProperties}
+         * bean, so pause, resume, rollback-close-in-flight and purge-queue keep needing no more
+         * configuration than the store connection they already require.
+         */
         /* default */ @Bean
-        IntakePauseGate commandPauseGate(final IntakeControlRepository repository) {
-            // A fresh standalone process reconciles from the persisted state before its guard.
-            return repository::pausedByOperator;
+        IntakePauseGate commandPauseGate(final IntakeControlRepository repository,
+                final Environment environment) {
+            final Duration probeInterval = DurationStyle.detectAndParse(
+                    environment.getProperty("distribution.store.probe-interval", "10s"));
+            final Duration drainTimeout = DurationStyle.detectAndParse(
+                    environment.getProperty("distribution.claim.processing-deadline", "4m"));
+            return new ConfirmedIntakePauseGate(repository, probeInterval.plus(drainTimeout));
         }
 
         /* default */ @Bean
@@ -278,6 +313,12 @@ public final class OperatorCommandLine {
          * same {@link PipelineClients} factory: built only when {@code resend-leg} is dispatched,
          * so no other command opens the cache or a client. Its metrics go to the context's own
          * registry, which the push registries flush when the context closes.
+         *
+         * <p>Reads {@code intake_control.paused_by_operator} directly, never {@link
+         * #commandPauseGate}'s confirmed, drain-waiting read (review of PR #23 round 4; design H43,
+         * issue #27): resend-leg has no in-flight send of its own to race, so it must refuse the
+         * instant a pause is requested, not wait out the same window rollback-close-in-flight and
+         * purge-queue need.
          */
         /* default */
         @Bean
@@ -286,8 +327,10 @@ public final class OperatorCommandLine {
                 final PlatformTransactionManager transactions,
                 final DistributionProperties commandDistributionProperties,
                 final StatefulRedisConnection<String, String> commandRedisConnection,
-                final IntakePauseGate gate, final ObjectProvider<BuildProperties> buildProperties,
+                final IntakeControlRepository intakeControl,
+                final ObjectProvider<BuildProperties> buildProperties,
                 final ObjectProvider<MeterRegistry> meterRegistry) {
+            final IntakePauseGate gate = intakeControl::pausedByOperator;
             final DistributionProperties properties = commandDistributionProperties;
             final TransactionTemplate tx = new TransactionTemplate(transactions);
             final MetricRegistry metrics = new MetricRegistry(
@@ -304,13 +347,15 @@ public final class OperatorCommandLine {
                     metrics);
             final BuildProperties build = buildProperties.getIfAvailable();
             final String serviceVersion = build == null ? "unknown" : build.getVersion();
+            final JdbcProcessedRequestRepository processedRequests = new JdbcProcessedRequestRepository(
+                    jdbc, tx, properties.claim().lease());
             final OutboundLogAdapter outboundLog = new OutboundLogAdapter(
-                    new OutboundMessageRepository(jdbc, tx, serviceVersion));
+                    new OutboundMessageRepository(jdbc, tx, serviceVersion, processedRequests));
             final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
                     outboundLog, YouthSwitchRecordedValue.fromValue(
                             properties.youthSwitch().defaultWhenUnreadable()), metrics);
-            final LegResender resender = new LegResender(gate, new JdbcProcessedRequestRepository(jdbc,
-                    tx, properties.claim().lease()), runner, metrics, properties.resend().maxIdsPerRun());
+            final LegResender resender = new LegResender(gate, processedRequests, runner, metrics,
+                    properties.resend().maxIdsPerRun());
             return new ResendLegRunner(resender);
         }
 

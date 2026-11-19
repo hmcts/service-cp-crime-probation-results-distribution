@@ -139,11 +139,20 @@ public final class DistributionCommandParser {
     }
 
     private static UUID parseUuid(final String value) {
+        final UUID parsed;
         try {
-            return UUID.fromString(value);
+            parsed = UUID.fromString(value);
         } catch (final IllegalArgumentException e) {
             throw new CommandValidationException(CommandValidationException.Kind.WRONG_TYPE);
         }
+        // UUID.fromString accepts non-canonical forms such as "1-1-1-1-1", which normalises to a
+        // different id than the one actually written (S13 review of PR #8/#23): checked by
+        // round-tripping through toString() rather than parsed again, so a malformed id can never
+        // alias a real one in the processed log.
+        if (!parsed.toString().equalsIgnoreCase(value)) {
+            throw new CommandValidationException(CommandValidationException.Kind.WRONG_TYPE);
+        }
+        return parsed;
     }
 
     private static LocalDate requireLocalDate(final JsonNode root) {

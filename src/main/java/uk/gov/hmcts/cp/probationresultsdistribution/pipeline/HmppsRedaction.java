@@ -56,7 +56,14 @@ public final class HmppsRedaction {
      */
     public RedactionResult redact(final JsonNode hearingPayload,
                                   final EffectiveSwitchState switchState) {
-        final ObjectNode json = (ObjectNode) hearingPayload.deepCopy();
+        // Not cast to ObjectNode here (review of PR #8/#23, S11): a non-object top-level payload
+        // (an array, a string, ...) must fail the same way the legacy does — at the first read the
+        // legacy also reads through unguarded, json.hearing in R1 — not with a ClassCastException
+        // that escapes both the try below and HmppsRedaction entirely, with no RulesFailure
+        // recorded. Every rule already reads through json as a JsonNode; only removePoliceCases (R0)
+        // ever needs to mutate the top level, and it casts only once it has proven, via a non-null
+        // get(), that the node is in fact an object.
+        final JsonNode json = hearingPayload.deepCopy();
 
         try {
             removePoliceCases(json);
@@ -142,10 +149,20 @@ public final class HmppsRedaction {
         }
     }
 
-    /** R0 (`PF/functions.js:5-7`): remove {@code policeCases} if it is truthy. */
-    private static void removePoliceCases(final ObjectNode json) {
+    /**
+     * R0 (`PF/functions.js:5-7`): remove {@code policeCases} if it is truthy.
+     *
+     * @param json the payload, not yet proven to be a JSON object — {@link JsonNode#get(String)}
+     *             returns {@code null} rather than throwing for any node that isn't one, exactly as
+     *             the legacy's {@code json.policeCases} would read {@code undefined} off a non-object
+     *             value, so a non-object payload is a no-op here and fails properly, further on, at
+     *             R1's unguarded {@code json.hearing} read instead
+     */
+    private static void removePoliceCases(final JsonNode json) {
         if (truthy(json.get(POLICE_CASES))) {
-            json.remove(POLICE_CASES);
+            // get(POLICE_CASES) returned non-null, which Jackson only ever does for an ObjectNode:
+            // this cast cannot fail.
+            ((ObjectNode) json).remove(POLICE_CASES);
         }
     }
 

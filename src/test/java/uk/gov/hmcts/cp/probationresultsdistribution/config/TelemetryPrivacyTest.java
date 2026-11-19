@@ -135,7 +135,7 @@ class TelemetryPrivacyTest {
         final UUID claimFails = UUID.randomUUID();
         final UUID sent = UUID.randomUUID();
         final UUID incomplete = UUID.randomUUID();
-        when(pauseGate.pausedByOperator()).thenReturn(false, false, false, false, false, true);
+        when(pauseGate.pauseRequested()).thenReturn(false, false, false, false, false, true);
         when(store.claimResend(eq("RESULTS"), eq(refused), any(), any(), any(), any()))
                 .thenReturn(new ResendClaim.Refused(ResendRefusal.UNKNOWN_REQUEST));
         when(store.claimResend(eq("RESULTS"), eq(claimFails), any(), any(), any(), any()))

@@ -121,6 +121,22 @@ public interface ProcessedRequestRepository {
                        String exhaustedMessageId);
 
     /**
+     * Releases the claim without otherwise touching the request, guarded by the claim (review of PR
+     * #8). Called when an unexpected failure strikes after admission, before any state transition was
+     * reached: left live, the claim rejects every redelivery as {@code claimLive()} until its lease
+     * naturally expires, burning the whole delivery budget in about a second and dead-lettering
+     * {@code exhausted} without a genuine retry ever running. Releasing it early lets the very next
+     * redelivery reclaim the request and try again for real.
+     *
+     * @param source    the command source
+     * @param requestId the request id
+     * @param claim     the claim to release
+     * @return {@code true} when the claim was released; {@code false} when it no longer matches (a
+     *     newer runner already took it over)
+     */
+    boolean releaseClaim(String source, UUID requestId, RunClaim claim);
+
+    /**
      * Admits a {@code FAILED} request as a replay, in one statement (design A2-62, FR-004-004):
      * moves it {@code FAILED} to {@code RECEIVED}, clears {@code failure_reason} and
      * {@code exhausted_message_id}, sets {@code replayed_at}, appends the

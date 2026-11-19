@@ -36,7 +36,10 @@ class YouthSwitchDefaultConfigTest {
         configLogger.addAppender(appender);
         final ApplicationRunner runner = new StartupValidationConfig().distributionConfigValidator(
                 validProperties(), new MockEnvironment()
-                        .withProperty("distribution.gateway.subscription-key", "a-key"));
+                        .withProperty("distribution.gateway.subscription-key", "a-key")
+                        .withProperty("distribution.servicebus.connection-string", "Endpoint=sb://test")
+                        .withProperty("distribution.redis.host", "redis-host")
+                        .withProperty("distribution.redis.key", "a-redis-key"));
 
         runner.run(new DefaultApplicationArguments());
 

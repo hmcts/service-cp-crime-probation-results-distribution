@@ -39,7 +39,7 @@ Jira: none — this work carries no ticket; features land on `main` through pull
 | Constitution | `.specify/memory/constitution.md` |
 | Contracts | `doc/API_CONTRACTS.md` |
 | Deviation register | `doc/DEVIATIONS.md` — seeded from design §7.2 (DV-01 … DV-26; next free DV-27); every intended difference from the legacy with its pinning test, plus the carried and pending-external defects |
-| Specifications | none yet — the first feature starts with `/speckit-specify` |
+| Specifications | `specs/001-parity-kernel`, `specs/002-hmpps-distribution`, `specs/003-body-retention`, `specs/004-recovery`, `specs/005-operations-api`, `specs/006-production-readiness` — each spec, plan, research, data model, tasks and quickstart; see Setup below for each slice's own status |
 | Inbound message schema | `src/main/resources/contracts/distribution-command.schema.json` — design Appendix B.1, vendored with the first feature |
 | Outbound HMPPS schema | **none in this release** — outbound schema validation is parked and gate G1 is not a gate (H13); the HMPPS ICD v0.8 is information only (H12) |
 

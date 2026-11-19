@@ -309,7 +309,7 @@ public class EndToEndTestSupport {
         final ProcessedRequestRepository processedRequests =
                 new JdbcProcessedRequestRepository(jdbc(), tx, Duration.ofMinutes(4).plusSeconds(30));
         final OutboundMessageRepository outboundMessages =
-                new OutboundMessageRepository(jdbc(), tx, "test-version");
+                new OutboundMessageRepository(jdbc(), tx, "test-version", processedRequests);
         final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
         final ChainedHearingPayloadSource payload = chainedPayloadSource();
         final MetricRegistry registry = new MetricRegistry(meters);
@@ -389,7 +389,8 @@ public class EndToEndTestSupport {
         final ProcessedRequestRepository processedRequests = new JdbcProcessedRequestRepository(
                 JdbcClient.create(store), tx, Duration.ofMinutes(4).plusSeconds(30));
         final OutboundMessageRepository outboundMessages =
-                new OutboundMessageRepository(JdbcClient.create(store), tx, "test-version");
+                new OutboundMessageRepository(JdbcClient.create(store), tx, "test-version",
+                        processedRequests);
         final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
         final ChainedHearingPayloadSource payload = chainedPayloadSource();
         final MetricRegistry registry = new MetricRegistry(meters);
@@ -414,33 +415,6 @@ public class EndToEndTestSupport {
                 new TransactionTemplate(new DataSourceTransactionManager(store));
         final ProcessedRequestRepository processedRequests = new JdbcProcessedRequestRepository(
                 JdbcClient.create(store), tx, Duration.ofMinutes(4).plusSeconds(30));
-        final ChainedHearingPayloadSource payload = chainedPayloadSource();
-        final MetricRegistry registry = new MetricRegistry(meters);
-        final FeaturePermissionClient youthFilter = new FeaturePermissionClient(
-                usersGroupsBaseUrl(), SYSTEM_USER_ID, "EMYouthFilter",
-                Duration.ofSeconds(2), Duration.ofSeconds(5), 3, Duration.ofSeconds(1), registry);
-        final HmppsPublisher publisher = new HmppsPublisher(
-                gatewayUrl(), SUBSCRIPTION_KEY, Duration.ofSeconds(5), Duration.ofSeconds(60),
-                registry);
-        sharedMetricRegistry = registry;
-        final DistributionRunner runner = new DistributionRunner(payload, youthFilter, publisher,
-                outboundLog, YouthSwitchRecordedValue.ACTIVE, registry);
-        return new ProbationMessageListener(new DistributionCommandParser(),
-                new IdempotencyGuard(processedRequests, new RequestFingerprint()), runner,
-                processedRequests, registry, gate, maxDeliveryCount);
-    }
-
-    /** Builds the production listener with a caller-supplied processed-request store, so a crash
-     * simulation can throw from one of its methods while every other dependency stays real. */
-    protected final ProbationMessageListener listenerOverWithProcessedRequests(final DataSource store,
-            final StoreGate gate, final int maxDeliveryCount,
-            final ProcessedRequestRepository processedRequests) {
-        meters = new SimpleMeterRegistry();
-        final TransactionTemplate tx =
-                new TransactionTemplate(new DataSourceTransactionManager(store));
-        final OutboundMessageRepository outboundMessages =
-                new OutboundMessageRepository(JdbcClient.create(store), tx, "test-version");
-        final OutboundLogAdapter outboundLog = new OutboundLogAdapter(outboundMessages);
         final ChainedHearingPayloadSource payload = chainedPayloadSource();
         final MetricRegistry registry = new MetricRegistry(meters);
         final FeaturePermissionClient youthFilter = new FeaturePermissionClient(

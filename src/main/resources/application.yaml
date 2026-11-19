@@ -28,6 +28,15 @@ spring:
     # unmigrated schema. Until that controller exists, Flyway runs at refresh.
     enabled: true
 
+  lifecycle:
+    # ConsumerLifecycleController#stop() can legitimately block for up to its own 30s shutdown
+    # grace plus distribution.claim.processing-deadline (default 4m) while it drains an in-flight
+    # delivery (review of PR #8/#23). Spring's own shutdown-phase wait defaults to 30s, which is
+    # shorter than that worst case: left at the default, the context would give up waiting on this
+    # bean and start closing the DataSource and HTTP clients out from under a send still draining.
+    # Keep this at or above (30s grace + distribution.claim.processing-deadline).
+    timeout-per-shutdown-phase: 5m
+
 server:
   port: ${SERVER_PORT:8082}
   error:
@@ -277,11 +286,14 @@ management:
         enabled: true   # enables liveness / readiness groups
       group:
         readiness:
-          # The store gates readiness, because processing is unsafe without it. The intake
-          # lifecycle controller's own indicator joins this group when it lands. The Service Bus
-          # indicator is deliberately never in it: a broker blip must never roll the pods, and the
-          # service cannot heal the queue by restarting.
-          include: db
+          # The store gates readiness, because processing is unsafe without it. intakeMigration
+          # joins it too (review of PR #23): db only proves the database is reachable, not that
+          # this service's own schema exists there - a reachable-but-unmigrated database (a
+          # checksum mismatch, a missing DDL grant) would otherwise report ready while intake can
+          # never gate its own start. The Service Bus indicator is deliberately never in it: a
+          # broker blip must never roll the pods, and the service cannot heal the queue by
+          # restarting.
+          include: db,intakeMigration
   health:
     # spring-boot-starter-artemis arrives with cp-audit-filter-springboot, and its indicator would
     # report the audit broker - which this service never gates on - as the pod's health.

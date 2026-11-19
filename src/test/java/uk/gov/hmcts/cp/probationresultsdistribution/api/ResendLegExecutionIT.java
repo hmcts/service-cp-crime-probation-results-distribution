@@ -180,7 +180,7 @@ class ResendLegExecutionIT {
                     mock(OutcomeMetrics.class), 100);
             final CountDownLatch inFlight = new CountDownLatch(1);
             final CountDownLatch release = new CountDownLatch(1);
-            when(pauseGate.pausedByOperator()).thenReturn(false);
+            when(pauseGate.pauseRequested()).thenReturn(false);
             when(store.claimResend(eq("RESULTS"), eq(ID_1), any(), any(), any(), any()))
                     .thenAnswer(invocation -> claimed(ID_1, invocation.getArgument(2)));
             when(runner.runResend(any(), any(), anyBoolean())).thenAnswer(invocation -> {

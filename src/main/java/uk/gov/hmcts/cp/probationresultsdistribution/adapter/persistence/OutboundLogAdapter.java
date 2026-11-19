@@ -32,30 +32,36 @@ public final class OutboundLogAdapter implements OutboundLog {
     }
 
     /**
-     * Writes the attempt-1 outcome and, when a body was sent, its exact bytes, in the repository's
-     * single transaction, fenced by the request claim against the re-runnable attempt-1 row.
+     * Writes the attempt-1 outcome and, when a body was sent, its exact bytes, plus the request-level
+     * transition the outcome implies, in the repository's single transaction, fenced by the request
+     * claim against the re-runnable attempt-1 row (review of PR #8).
      *
-     * @param outcome the derived leg outcome
-     * @param claim   the request claim fencing the write
+     * @param outcome          the derived leg outcome
+     * @param claim            the request claim fencing the write
+     * @param deliveryMessageId the delivery's own {@code messageId}, for an exhausted outcome
      * @return {@code true} when the guarded write took effect; {@code false} when it matched no row
      */
     @Override
-    public boolean record(final LegOutcome outcome, final RunClaim claim) {
-        return repository.writeOutcome(outcome, claim) == 1;
+    public boolean record(final LegOutcome outcome, final RunClaim claim,
+                          final String deliveryMessageId) {
+        return repository.writeOutcome(outcome, claim, deliveryMessageId) == 1;
     }
 
     /**
-     * Re-runs the attempt-1 row in place for a replayed run (slice 004, FR-004-008, FR-004-010).
+     * Re-runs the attempt-1 row in place for a replayed run (slice 004, FR-004-008, FR-004-010),
+     * plus the request-level transition the outcome implies, in the same transaction (review of PR
+     * #8).
      *
      * @param outcome          the derived leg outcome
      * @param claim            the request claim fencing the write
      * @param rerunByMessageId the replay message's {@code messageId}
+     * @param deliveryMessageId the replay delivery's own {@code messageId}, for an exhausted outcome
      * @return {@code true} when the guarded write took effect; {@code false} when it matched no row
      */
     @Override
     public boolean recordReplay(final LegOutcome outcome, final RunClaim claim,
-                                final String rerunByMessageId) {
-        return repository.writeReplayOutcome(outcome, claim, rerunByMessageId) == 1;
+                                final String rerunByMessageId, final String deliveryMessageId) {
+        return repository.writeReplayOutcome(outcome, claim, rerunByMessageId, deliveryMessageId) == 1;
     }
 
     /**
