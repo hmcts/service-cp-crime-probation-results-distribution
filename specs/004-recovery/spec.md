@@ -1115,7 +1115,16 @@ Assumptions.
   FR-004-049a)*
 - **FR-004-060**: On shutdown the service MUST wait for resend-leg runs in progress, as it does for
   queue deliveries, up to the processing deadline, before it stops; a run still going at the
-  deadline is logged at WARN and left to FR-004-059. *(H40)*
+  deadline is logged at WARN and left to FR-004-059. Because this is the same shared drain the
+  service already used for queue deliveries, an operator pause and a store-outage suspension also
+  wait for a resend-leg run in progress, up to the same bound, before either confirms — not only
+  shutdown (clarified 2026-11-17, PR #29 review: implemented behaviour from the shared counter's
+  introduction, not a new requirement). For a pause this is immaterial, since resend-leg's own run
+  loop already stops claiming further ids once a pause is requested; a suspension has no equivalent
+  signal into that loop, so it can wait the full bound against a resend run still attempting ids
+  against the very store that is unreachable — accepted as bounded, not fixed with a second stop
+  signal. A run still going when either wait ends is left to FR-004-059, exactly as at shutdown.
+  *(H40)*
 
 **Submit-hearing**
 

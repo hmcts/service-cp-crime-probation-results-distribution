@@ -1,7 +1,6 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.domain;
 
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 /**
  * The operator markers a submit-hearing command carries as broker application properties
@@ -16,7 +15,6 @@ public record SupportSubmission(String operator, String runId, String reason) {
 
     private static final int MAX_LENGTH = 200;
     private static final String ABSENT = "-";
-    private static final Pattern CONTROL = Pattern.compile("\\p{Cntrl}+");
 
     /** Rejects null components. */
     public SupportSubmission {
@@ -28,10 +26,15 @@ public record SupportSubmission(String operator, String runId, String reason) {
     /**
      * Reads the markers from the delivery's application property values, each sanitised to one
      * line of at most 200 characters before it can reach {@code audit_note}: control characters
-     * become a space and the value is stripped and cut at 200 characters, never inside a
-     * surrogate pair. A value that is absent,
-     * not text, or blank once sanitised is {@code -}. The values are written to
-     * {@code audit_note} only, never logged or echoed (FR-004-041).
+     * become a space, the value is stripped and cut at 200 characters (never inside a surrogate
+     * pair), and the {@code REPLAYED_AFTER_FAILURE} marker is escaped out through
+     * {@link AuditNoteText} — this is the actual {@code audit_note} write path for a submit-hearing
+     * admission (via {@code JdbcProcessedRequestRepository#appendSupportLine}), reading whatever
+     * application properties the delivered message carries rather than trusting
+     * {@code application.SubmitHearingAction}'s own sanitising of its broker properties, so a
+     * delivery marked {@code origin = SUPPORT} from anywhere else on the queue is covered too (PR
+     * #29 review). A value that is absent, not text, or blank once sanitised is {@code -}. The
+     * values are written to {@code audit_note} only, never logged or echoed (FR-004-041).
      *
      * @param operator the {@code operator} property value, or null
      * @param runId    the {@code runId} property value, or null
@@ -46,7 +49,7 @@ public record SupportSubmission(String operator, String runId, String reason) {
     private static String oneLine(final Object value) {
         String line = ABSENT;
         if (value instanceof String text) {
-            final String sanitised = CONTROL.matcher(text).replaceAll(" ").strip();
+            final String sanitised = AuditNoteText.oneLine(text);
             final String bounded = sanitised.length() > MAX_LENGTH
                     ? sanitised.substring(0, cut(sanitised)).strip() : sanitised;
             line = bounded.isEmpty() ? ABSENT : bounded;

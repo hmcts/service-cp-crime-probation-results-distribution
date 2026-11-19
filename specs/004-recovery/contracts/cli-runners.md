@@ -183,6 +183,42 @@ peek); each entry's `requestId` is read from its body; a dead-letter reason outs
 closed set prints as `other` (none recorded: `none`) and a `messageId` that is not `RESULTS:<uuid>`
 or `REPLAY:<uuid>` prints as `other`, so text chosen elsewhere is never echoed.
 
+## 9. `close-expired-resend` (FR-004-059, FR-004-060; H40 — added 2026-11-13, appended rather than
+inserted so §1–§8 above keep the section numbers `tasks.md`'s completed-task records already cite)
+
+```
+close-expired-resend --request-id <uuid> --operator <name> --reason <text>
+```
+
+| Input | Rule |
+|---|---|
+| `--request-id` | UUID; not one → `unreadable-argument` |
+| `--operator`, `--reason` | As resend-leg's: required, ≤ 200 characters |
+
+No intake pause required; does not touch `processed_request.status`. In one transaction, under
+the request-row then leg-row lock order already fixed for this slice's rollback and resend
+statements, closes the leg whose latest row is a `PENDING` resend row (`attempt_origin = resend`,
+attempt ≥ 2) with an expired lease: the row → `FAILED(rolled-back)`, `note` `prev=PENDING/-`
+(replacing any earlier `prev=`), a fresh `claim_token`, every outcome and evidence column
+preserved — the per-row transition of FR-004-049a — and appends the operator and the sanitised
+reason to `audit_note`.
+
+Refused, changing nothing: `unknown-request` (no request row), `not-eligible` (the leg's latest
+row is not a `PENDING` resend row), `resend-in-progress` (its lease is still live). The closed row
+is then resend-eligible (FR-004-023); the runbook tells the operator to confirm with HMPPS before
+resending it, since its earlier POST may already have reached HMPPS. A late runner's completion of
+the now-closed row updates no row under the leg claim-token guard and is counted as a stale-runner
+rejection, the same as any other stale completion in this slice. HTTP exposure is part of O-1.
+
+This is the only route back for an expired `PENDING` resend row: resend-leg refuses it
+`resend-in-progress` whether the lease is live or expired (FR-004-024 option B), and the guarded
+rollback close-in-flight procedure (§6 above) is a paused, whole-intake action, not a single-row
+one.
+
+**Shutdown (FR-004-060)**: a `resend-leg` run in progress is waited for up to the processing
+deadline, exactly as a queue delivery is; a run still going at the deadline logs WARN and leaves
+its row for a later `close-expired-resend` invocation.
+
 ## Cross-cutting rules (every runner above)
 
 - Runs under the pod's own workload identity and network path; no role issued for a runner alone

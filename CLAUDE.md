@@ -165,64 +165,30 @@ dependency, not a code gap). Both `[NEEDS CLARIFICATION]` markers (FR-001-020, F
 resolved (spec.md Clarifications).
 
 `004-recovery` (`specs/004-recovery/plan.md`, with `research.md`, `data-model.md`, `quickstart.md`,
-`contracts/` and `tasks.md` alongside it) is implemented: all three confirmed decisions (FR-004-024,
-FR-004-049, FR-004-052) landed, replay is wired through a production `ReplayEnqueuer` in both
-composition roots (T078), and 74 of its 79 tasks are checked. Five remain open, none of them a
-guard/runner/port gap: T037 (the `pause-intake`/`rollback-close-in-flight`/`resume-intake` halves of
-the quickstart's step 6 are proven live against a running instance 2026-11-02, but `purge-queue`
-itself stays open — the installed Service Bus SDK has no native cutoff-delete operation, a dependency
-gap recorded 2026-10-27, not an application bug); T053 (walking the DLQ runbook with the owning team
-— a live session, not a build step, pending T052's 2026-10-30 landing); T075 (run live end to end
-2026-11-02: every other quickstart step, including replay, resend-leg, forced resend and
-submit-hearing, matches `quickstart.md` exactly); T076 (re-checked 2026-11-02: no owning-team change
-has overturned any of the three confirmed decisions since 2026-10-26); and this paragraph (T077).
+`contracts/` and `tasks.md` alongside it) is implemented, H40 (`close-expired-resend`) included:
+85 of 86 tasks checked. T050g (quickstart step 9, close an expired resend lease) ran live
+2026-11-16 against a local Postgres and Service Bus emulator, every outcome matching the doc
+exactly. Two tasks remain open, neither a code gap: **T037** — a successful `purge-queue` needs a
+native cutoff-delete the Java Service Bus SDK still does not expose on `ServiceBusReceiverClient`
+(checked against 7.18.1; only the .NET client has `DeleteMessagesAsync`/`PurgeMessagesAsync`); the
+already-rejected receive/abandon workaround is not revisited. **T053** — walking the DLQ runbook
+with the owning team is a live session, out of an agent's reach by its own task text. Full detail,
+including PR #29's shutdown-ordering and argument-parsing fix rounds, is in
+`specs/004-recovery/tasks.md` and the PR's own review thread, not here.
 
 `005-operations-api` (`specs/005-operations-api/plan.md`, with `research.md`, `data-model.md`,
-`quickstart.md` and `contracts/` alongside it) is **implemented in full — all 52 tasks checked** —
-over 004's real `ReplayAction` and `LegResender`; both `[NEEDS CLARIFICATION]` markers are resolved
-(resend-leg answers `202` accepted-run; the caller group defaults to `Second Line Support` pending
-H31's confirmation). The two audit defects (T051, T052) its own manual quickstart run exposed — the
-transport-off silent-503 bug and the library audit filter's double-publish — are fixed and pinned
-(2026-10-30), and both are now re-confirmed live, not just by the automated suite: a 2026-11-02 run
-with the audit transport off got the documented WARN and normal `200`/`202` answers, never the old
-`503`; a second run with a real Artemis broker (after freeing Docker's VM disk, which had been
-stalling real brokers — see below) put exactly two bounded audit events per call, neither carrying
-the caller's operator, reason or the request body. The `[BLOCKED-ON-004]` tags once attached to
-US2/US3/US7 are gone: 004's T078 wired the real `ReplayAction`/`LegResender` into both composition
-roots, and the same live runs confirmed replay, resend-leg and forced resend all work over real
-HTTP against the real services, with the exact `202`/`200` shapes `quickstart.md` documents, the
-`401` with no `CJSCPPUID`, and the US7 HTTP/CLI parity check. **Nothing left open in 005.**
-`006-production-readiness` (`specs/006-production-readiness/plan.md`, with `research.md`,
-`data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it) is **implemented in
-full — all 43 tasks checked**. All 3 `[NEEDS CLARIFICATION]` markers were resolved 2026-11-02
-before planning (the replay publishes directly onto `probation.requests`, bypassing results, with
-`EXT_` payloads loaded from the SIT export into STE's Redis; the daily reconciliation's
-results-side count comes from a results viewstore query on the UTC calendar day; the row-9
-reachability-proof call is a real hearing via `submit-hearing`, with HMPPS's agreement that the
-duplicate is acceptable). This slice adds nothing to the message path — no new migration, no new
-endpoint, no new metric — only a replay comparator extending 001's `pipeline/support`
-(`ReplayComparator`/`ReplayReport`, over `HearingPairing`/`HearingComparisonClass`/
-`ExplanationEntry`/`PreRunChecks`), a new read-only `evidence` package (`GoNoGoEvidenceQuery`/
-`GoNoGoEvidenceIndex`, `DailyReconciliationQuery`, `DecommissioningEvidenceQuery`,
-`LegacyBothPathsCheck`), and a typed `config.AlertCatalogue` (no new dependency). 001's own
-`JsonParity`/`RegisteredFieldDeviations` moved from `src/test` to `src/main` in the same package
-(2026-11-02) so `ReplayComparator` — production code the owning team runs against real STE data,
-not a JUnit fixture — can depend on them; no import changed. A real staleness was found and fixed
-while implementing User Story 3: FR-006-040 said rollback step 4 had no supported execution path,
-but 004 had already built and wired `rollback-close-in-flight` (commits 33787cf/f1e4c1f) before
-this phase started — the spec, research notes, tasks and runbook doc are corrected to name the
-real runner. One governance item surfaced while planning, not this slice's to fix: the
-constitution (version 2.0.1, last amended 2026-10-21) predates H36–H39 and still describes the
-`outbound_body` digest trigger H39 removed and omits `scheduled_job_status` (H38) — due its own
-amendment separately from any feature, and not closed by this slice.
+`quickstart.md` and `contracts/` alongside it) is **implemented in full — all 52 tasks checked**
+over 004's real `ReplayAction` and `LegResender`, both `[NEEDS CLARIFICATION]` markers resolved,
+and confirmed live against real HTTP, a real Artemis broker and the real services. **Nothing left
+open in 005.**
 
-**Environment note**: this branch's local Docker Desktop VM disk was found at 95% capacity
-(unused build cache and dangling images from unrelated projects sharing the daemon), which makes a
-real or Testcontainers-managed Artemis broker silently block producers rather than error — the
-likely cause of an unrelated `OperationsAuditTransportIT` hang found mid-session. Freed with
-`docker buildx prune -f` (8.376 GB) and `docker image prune -f` (154.4 MB), down to 44% used. If a
-broker-based test or manual run stalls with no error again, check `docker run --rm alpine df -h /`
-before assuming a code regression.
+`006-production-readiness` (`specs/006-production-readiness/plan.md`, with `research.md`,
+`data-model.md`, `quickstart.md`, `contracts/` and `tasks.md` alongside it) is implemented, H41
+(alert 6 renamed "Gateway refusing", fixed status) included: **45 of 45 tasks checked.** One
+governance item remains open, not this slice's to close: the constitution (version 2.0.1, last
+amended 2026-10-21) predates H36–H39 and still describes the `outbound_body` digest trigger H39
+removed and omits `scheduled_job_status` (H38) — due its own amendment separately from any
+feature.
 
 **The Spec Kit scripts resolve the active feature from the current branch name by default**
 (`specs/<NNN>-*` matching the branch's numeric prefix), which only resolves correctly for

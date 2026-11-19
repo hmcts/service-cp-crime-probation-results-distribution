@@ -92,6 +92,25 @@ With the local stack running and the service started normally (`./gradlew bootRu
    java -jar build/libs/app.jar list-dlq-completed
    ```
 
+9. **Close an expired resend lease** (H40, added 2026-11-13 — steps 1–8 above are unchanged from
+   this slice's original quickstart and are cited by step number in `tasks.md`'s completed-run
+   records; this step is appended rather than inserted so those citations stay correct): after a
+   `resend-leg` lease expires without a rollback (e.g. the pod that claimed it was killed
+   mid-run), confirm resend-leg still refuses it:
+   ```bash
+   java -jar build/libs/app.jar resend-leg --leg HMPPS --request-ids <requestId> \
+       --operator "local-dev" --reason "retry after crash"
+   # Refused resend-in-progress — the expired lease is never reclaimed automatically.
+   java -jar build/libs/app.jar close-expired-resend --request-id <requestId> \
+       --operator "local-dev" --reason "lease expired, pod killed mid-run"
+   # Closes the leg FAILED(rolled-back) with no intake pause; processed_request.status untouched.
+   java -jar build/libs/app.jar resend-leg --leg HMPPS --request-ids <requestId> \
+       --operator "local-dev" --reason "resend after close-expired-resend"
+   # Now runs a fresh resend attempt.
+   ```
+   Confirm `unknown-request` and `not-eligible` on, respectively, a request with no row and a
+   request whose latest leg row is not a `PENDING` resend row.
+
 ## What "done" looks like for this slice
 
 - Every acceptance scenario of the spec's eight user stories passes as a test, named per the

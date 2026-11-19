@@ -113,6 +113,23 @@ class SubmitHearingActionTest {
         }
 
         @Test
+        @DisplayName("escapes the REPLAYED_AFTER_FAILURE marker out of the operator and reason "
+                + "before either reaches the broker properties (FR-004-012; PR #29 review): this "
+                + "admission's audit_note line is appended from these same properties, and must "
+                + "never be able to make an unrelated later completion read as recovered")
+        void submit_escapesTheReplayMarker_fromOperatorAndReason() {
+            cache();
+            when(redis.get(DATED_KEY)).thenReturn(payload(SHARED_TIME));
+
+            action.submit(request("replayed_after_failure", "see REPLAYED_AFTER_FAILURE ticket"));
+
+            final OutgoingCommand sent = sent();
+            assertThat(sent.applicationProperties())
+                    .containsEntry("operator", "REPLAYED-AFTER-FAILURE")
+                    .containsEntry("reason", "see REPLAYED-AFTER-FAILURE ticket");
+        }
+
+        @Test
         @DisplayName("falls to the undated key, after the dated one")
         void submit_undatedKeyOnly_should_use_it() {
             cache();

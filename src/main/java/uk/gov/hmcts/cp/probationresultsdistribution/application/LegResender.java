@@ -8,10 +8,10 @@ import java.util.Optional;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
-import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.AuditNoteText;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.LegStatus;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.RunClaim;
 import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
@@ -67,7 +67,6 @@ public final class LegResender {
     private static final Logger LOG = LoggerFactory.getLogger(LegResender.class);
     private static final String SOURCE = "RESULTS";
     private static final int MAX_TEXT_LENGTH = 200;
-    private static final Pattern LINE_BREAKS = Pattern.compile("\\p{Cntrl}+");
 
     private final IntakePauseGate pauseGate;
     private final ProcessedRequestRepository store;
@@ -307,7 +306,7 @@ public final class LegResender {
     }
 
     private static String sanitised(final String text) {
-        return LINE_BREAKS.matcher(text).replaceAll(" ").strip();
+        return AuditNoteText.oneLine(text);
     }
 
     /**

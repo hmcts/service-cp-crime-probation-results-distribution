@@ -91,6 +91,53 @@ class ResendLegRunnerTest {
         }
 
         @Test
+        @DisplayName("a flag given no value before the next recognised flag is missing-argument, "
+                + "not given the next flag's own name as its value (P2, PR #29 review; the same "
+                + "fix CloseExpiredResendRunner carries)")
+        void a_flag_with_no_value_does_not_swallow_the_next_flags_name() {
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "--reason", "why"))
+                    .contains(WholeRunRefusal.MISSING_ARGUMENT);
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--operator", "op", "--reason",
+                    "why", "--leg", "--request-ids", IDS))
+                    .contains(WholeRunRefusal.MISSING_ARGUMENT);
+        }
+
+        @Test
+        @DisplayName("an unrecognised flag is unreadable-argument, not silently read as a value "
+                + "for the flag before it (PR #29 review)")
+        void unrecognised_flag_is_unreadable() {
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "op", "--reason", "--ticket", "INC-123"))
+                    .contains(WholeRunRefusal.MISSING_ARGUMENT);
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--bogus", "x", "--leg",
+                    "HMPPS", "--request-ids", IDS, "--operator", "op", "--reason", "why"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
+        @DisplayName("a flag given twice is unreadable-argument, not a valid invocation that "
+                + "simply goes ahead on one of the two values (PR #29 review)")
+        void duplicate_flag_is_unreadable() {
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "op", "--reason", "why", "--operator",
+                    "op2")).contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "op", "--reason", "why",
+                    "--force-resend-sent", "--force-resend-sent"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
+        @DisplayName("a stray trailing token is unreadable-argument, not silently dropped (PR #29 "
+                + "review)")
+        void stray_trailing_token_is_unreadable() {
+            assertThat(ResendLegRunner.checkArguments("resend-leg", "--leg", "HMPPS",
+                    "--request-ids", IDS, "--operator", "op", "--reason", "why", "extra"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
         @DisplayName("the forced-resend override --force-resend-sent is a readable flag")
         void forced_resend_is_readable() {
             final String[] forced = {"resend-leg", "--leg", "HMPPS", "--request-ids", IDS,

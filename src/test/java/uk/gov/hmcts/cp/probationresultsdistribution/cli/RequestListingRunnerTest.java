@@ -109,6 +109,35 @@ class RequestListingRunnerTest {
         }
 
         @Test
+        @DisplayName("an unrecognised flag is unreadable-argument, not silently read as a value "
+                + "for the flag before it (PR #29 review)")
+        void unrecognised_flag_is_unreadable() {
+            assertThat(RequestListingRunner.checkArguments("list-requests", "--status", "FAILED",
+                    "--reason", "--ticket", "INC-123")).contains(WholeRunRefusal.MISSING_ARGUMENT);
+            assertThat(RequestListingRunner.checkArguments("list-requests", "--bogus", "x",
+                    "--hearing-id", HEARING_ID.toString(), "--hearing-day", DAY))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
+        @DisplayName("a flag given twice is unreadable-argument, not a valid invocation that "
+                + "simply goes ahead on one of the two values (PR #29 review)")
+        void duplicate_flag_is_unreadable() {
+            assertThat(RequestListingRunner.checkArguments("list-requests", "--hearing-id",
+                    HEARING_ID.toString(), "--hearing-day", DAY, "--hearing-id",
+                    HEARING_ID.toString())).contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
+        @DisplayName("a stray trailing token is unreadable-argument, not silently dropped (PR #29 "
+                + "review)")
+        void stray_trailing_token_is_unreadable() {
+            assertThat(RequestListingRunner.checkArguments("list-requests", "--hearing-id",
+                    HEARING_ID.toString(), "--hearing-day", DAY, "extra"))
+                    .contains(WholeRunRefusal.UNREADABLE_ARGUMENT);
+        }
+
+        @Test
         @DisplayName("a refused run calls nothing, answers refused and never echoes the value")
         void refused_run_echoes_nothing() {
             final RunnerOutcome outcome = new RequestListingRunner(query).run("list-requests",

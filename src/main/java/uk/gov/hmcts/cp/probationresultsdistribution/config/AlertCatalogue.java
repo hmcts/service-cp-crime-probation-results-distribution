@@ -66,11 +66,13 @@ public final class AlertCatalogue {
                         "Each counted read is a hearing sent on an assumed switch value. Re-check "
                                 + "the default against the live toggle (FR-006-033)",
                         Optional.empty()),
-                alert(6, "Repeated 401s", LEG_OUTCOMES,
-                        Map.of("reason", "receiver-rejected", "http", "401"),
-                        "> 3 in an hour", Optional.of(Duration.ofHours(1)), PROPOSAL, LOG_SEARCH,
-                        "The gateway is refusing the service's credentials. A 401 is terminal at "
-                                + "once", Optional.empty()),
+                alert(6, "Gateway refusing", LEG_OUTCOMES,
+                        Map.of("reason", "receiver-rejected", "http", "401|4xx-other"),
+                        "> 3 in an hour", Optional.of(Duration.ofHours(1)), FIXED, LOG_SEARCH,
+                        "The gateway is refusing the service: its credentials (401), its key or a "
+                                + "policy (403), or its route (404). Each is terminal at once, and "
+                                + "the request is COMPLETED; once fixed, the affected legs are "
+                                + "FAILED and resend-eligible", Optional.empty()),
                 alert(7, "Send re-run after a crash", "probation_crash_reruns_total", Map.of(),
                         "any increase", Optional.empty(), FIXED, LOG_SEARCH,
                         "A possible duplicate at HMPPS: record the hearing for HMPPS",

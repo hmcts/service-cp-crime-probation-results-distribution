@@ -150,10 +150,22 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     }
 
     /**
-     * Blocks until no delivery is still running, or until {@link #drainTimeout} elapses, whichever
-     * comes first. Every caller — {@link #stop()}, {@link #stopForOperatorPause()} and
-     * {@link #stopForSuspension()} — has already stopped the processor by the time this runs, so no
-     * further delivery starts while this waits.
+     * Blocks until nothing is still running on {@link #inFlightRuns}, or until {@link
+     * #drainTimeout} elapses, whichever comes first. Every caller — {@link #stop()},
+     * {@link #stopForOperatorPause()} and {@link #stopForSuspension()} — has already stopped the
+     * processor by the time this runs, so no further delivery starts while this waits.
+     *
+     * <p>{@link #inFlightRuns} is shared with {@code api.ResendLegExecutor} (H40; FR-004-060), so
+     * this wait also covers a resend-leg run reached through that executor, not only a queue
+     * delivery — true for all three callers, not only {@link #stop()} (PR #29 review). For
+     * {@link #stopForOperatorPause()} this is harmless: {@code application.LegResender}'s own run
+     * loop reads the pause before each id and stops claiming further ones on its own, so a resend
+     * run in flight when a pause begins is already winding down, not running the whole batch out.
+     * A store-outage suspension has no equivalent signal into that run loop, so
+     * {@link #stopForSuspension()} can wait up to the full {@link #drainTimeout} against a resend
+     * run that keeps attempting its remaining ids against the very store that is unreachable —
+     * bounded, not unbounded, and accepted rather than given resend runs a second, suspension-aware
+     * stop signal of their own.
      */
     private void awaitInFlightRunsToDrain() {
         final long deadline = System.nanoTime() + drainTimeout.toNanos();
@@ -167,8 +179,13 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
         }
         final int stillRunning = inFlightRuns.get();
         if (stillRunning > 0) {
-            LOG.warn("{} delivery(ies) still in flight after waiting {}; their lock will expire and "
-                    + "the broker will redeliver", stillRunning, drainTimeout);
+            // The counter does not say which kind of work it is counting (PR #29 review): a queue
+            // delivery's lock expires for the broker to redeliver, but a resend-leg run has no
+            // lock and no redelivery — it stays a PENDING resend row needing close-expired-resend
+            // once its own lease expires. Both are named so this line is never wrong for either.
+            LOG.warn("{} run(s) still in flight after waiting {}; a queue delivery's lock will "
+                    + "expire for the broker to redeliver, and a resend-leg run will need "
+                    + "close-expired-resend once its lease expires", stillRunning, drainTimeout);
         }
     }
 
@@ -207,6 +224,22 @@ public class ConsumerLifecycleController implements SmartLifecycle, StoreGate, I
     @Override
     public boolean isRunning() {
         return active;
+    }
+
+    /**
+     * One phase below {@link SmartLifecycle#DEFAULT_PHASE}: a {@code SmartLifecycle} group stops
+     * highest phase first, and {@code api.ResendLegExecutor} sits at that default phase
+     * deliberately, so its cooperative stop raises and drains a resend-leg run it has reached (H40;
+     * FR-004-060) before this bean's own {@link #stop()} starts its wait on the same {@link
+     * #inFlightRuns} counter below. Left at the unoverridden default, both beans would sit at the
+     * same phase with no guaranteed order between them, and the ordering this class's own
+     * {@code stop()} Javadoc relies on would not hold (PR #29 review).
+     *
+     * @return one below {@code SmartLifecycle.DEFAULT_PHASE}
+     */
+    @Override
+    public int getPhase() {
+        return DEFAULT_PHASE - 1;
     }
 
     /**

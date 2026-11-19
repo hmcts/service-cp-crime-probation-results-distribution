@@ -94,6 +94,14 @@ or properties file, and no new parsing dependency.
 SC-006-005 requires the catalogue to be test-checkable against the service's real metric
 vocabulary, which needs it to exist as data a test can iterate, not prose a human reads.
 
+**Amended 2026-11-09 (H41)**: this decision is about the catalogue's *form* (a typed Java registry)
+and is unaffected — H41 only changes one entry's *data*. Alert 6 is renamed "Gateway refusing",
+widens its `http` label from `401` only to `401|4xx-other` (a 403 or 404 is as silent a credential,
+key/policy or route failure as a 401), and its threshold status moves from `proposal` to `fixed`.
+`config/AlertCatalogue.java` had not yet been amended for this at the time this staleness was found
+(2026-11-13) — see `plan.md`'s "Known pre-existing drift" note and `contracts/
+evidence-and-catalogue-shapes.md` §3.
+
 ---
 
 ## Decision 4 — go/no-go evidence lives in a new `evidence` package, not `persistence`
@@ -157,3 +165,5 @@ deployed outside this repository, Assumption 3) and does not change what code th
 - Decommissioning's service-side evidence (FR-006-047) reuses the go/no-go evidence index's own
   machinery (§9.5 green, the reconciliation gap, the dead-letter queue count) — it is not a fourth,
   separate query surface.
+
+<!-- token-budget: compacted (level=medium) on 2026-11-13T14:02:15Z; original at research.full.md -->

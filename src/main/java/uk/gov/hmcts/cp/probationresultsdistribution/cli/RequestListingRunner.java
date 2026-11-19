@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.probationresultsdistribution.cli;
 
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.RequestListing;
@@ -18,8 +19,10 @@ import uk.gov.hmcts.cp.probationresultsdistribution.persistence.RequestListingRe
  * {@code list-requests --status <status> [--reason <reason>] [--updated-after <instant>]
  * [--updated-before <instant>]}.
  *
- * <p>The arguments are checked whole before anything is opened (FR-004-020) by the listing's own
- * check ({@link RequestListingQuery#check}), and the run calls that same {@link RequestListingQuery}.
+ * <p>The whole token stream is read by the shared {@link ArgumentParser} first (FR-004-020; PR #29
+ * review): an unrecognised flag, a flag given twice or a stray trailing token is
+ * {@code unreadable-argument}. A readable stream then goes to the listing's own check
+ * ({@link RequestListingQuery#check}), and the run calls that same {@link RequestListingQuery}.
  * It prints one line per row — identifiers, statuses and reasons, attempt numbers and origins, the
  * HTTP status and times, nothing else (FR-004-041) — and a summary saying whether more rows exist
  * than the page shown. No supplied text is echoed.
@@ -28,6 +31,14 @@ public final class RequestListingRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(RequestListingRunner.class);
     private static final String ABSENT = "-";
+    private static final String HEARING_ID_FLAG = "--hearing-id";
+    private static final String HEARING_DAY_FLAG = "--hearing-day";
+    private static final String STATUS_FLAG = "--status";
+    private static final String REASON_FLAG = "--reason";
+    private static final String UPDATED_AFTER_FLAG = "--updated-after";
+    private static final String UPDATED_BEFORE_FLAG = "--updated-before";
+    private static final Set<String> VALUE_FLAGS = Set.of(HEARING_ID_FLAG, HEARING_DAY_FLAG,
+            STATUS_FLAG, REASON_FLAG, UPDATED_AFTER_FLAG, UPDATED_BEFORE_FLAG);
 
     private final RequestListingQuery query;
 
@@ -47,7 +58,9 @@ public final class RequestListingRunner {
      * @return the whole-run refusal, or empty when the arguments are readable
      */
     public static Optional<WholeRunRefusal> checkArguments(final String... args) {
-        return RequestListingQuery.check(request(args));
+        final Parsed parsed = parse(args);
+        return parsed.refusal().isPresent() ? parsed.refusal()
+                : RequestListingQuery.check(parsed.request().orElseThrow());
     }
 
     /**
@@ -57,14 +70,20 @@ public final class RequestListingRunner {
      * @return the bounded runner outcome
      */
     public RunnerOutcome run(final String... args) {
-        final RequestListingRequest request = request(args);
-        final Optional<WholeRunRefusal> refusal = RequestListingQuery.check(request);
+        final Parsed parsed = parse(args);
         final RunnerOutcome outcome;
-        if (refusal.isPresent()) {
-            LOG.warn("list-requests refused reason={}", refusal.get().value());
+        if (parsed.refusal().isPresent()) {
+            LOG.warn("list-requests refused reason={}", parsed.refusal().get().value());
             outcome = RunnerOutcome.REFUSED;
         } else {
-            outcome = render(query.list(request));
+            final RequestListingRequest request = parsed.request().orElseThrow();
+            final Optional<WholeRunRefusal> refusal = RequestListingQuery.check(request);
+            if (refusal.isPresent()) {
+                LOG.warn("list-requests refused reason={}", refusal.get().value());
+                outcome = RunnerOutcome.REFUSED;
+            } else {
+                outcome = render(query.list(request));
+            }
         }
         return outcome;
     }
@@ -109,25 +128,31 @@ public final class RequestListingRunner {
         return value.isPresent() ? Integer.toString(value.getAsInt()) : ABSENT;
     }
 
-    private static RequestListingRequest request(final String... args) {
-        return new RequestListingRequest(valueOf(args, "--hearing-id"),
-                valueOf(args, "--hearing-day"), valueOf(args, "--status"),
-                valueOf(args, "--reason"), valueOf(args, "--updated-after"),
-                valueOf(args, "--updated-before"));
+    private static Parsed parse(final String... args) {
+        return switch (ArgumentParser.parse(args, VALUE_FLAGS, Set.of())) {
+            case ArgumentParser.Result.Refused refused -> Parsed.refused(refused.refusal());
+            case ArgumentParser.Result.Readable readable -> Parsed.readable(request(
+                    readable.arguments()));
+        };
     }
 
-    /**
-     * A flag's value; a flag given last, with no value after it, is present but blank, so it is
-     * refused {@code missing-argument} rather than read as absent.
-     */
-    private static Optional<String> valueOf(final String[] args, final String flag) {
-        Optional<String> value = Optional.empty();
-        for (int i = 0; i < args.length; i++) {
-            if (flag.equals(args[i])) {
-                value = Optional.of(i + 1 < args.length ? args[i + 1] : "");
-                break;
-            }
+    private static RequestListingRequest request(final ArgumentParser arguments) {
+        return new RequestListingRequest(arguments.value(HEARING_ID_FLAG),
+                arguments.value(HEARING_DAY_FLAG), arguments.value(STATUS_FLAG),
+                arguments.value(REASON_FLAG), arguments.value(UPDATED_AFTER_FLAG),
+                arguments.value(UPDATED_BEFORE_FLAG));
+    }
+
+    /** The checked token stream: a refusal, or the request to check and run. */
+    private record Parsed(Optional<WholeRunRefusal> refusal,
+                          Optional<RequestListingRequest> request) {
+
+        /* default */ static Parsed refused(final WholeRunRefusal refusal) {
+            return new Parsed(Optional.of(refusal), Optional.empty());
         }
-        return value;
+
+        /* default */ static Parsed readable(final RequestListingRequest request) {
+            return new Parsed(Optional.empty(), Optional.of(request));
+        }
     }
 }
