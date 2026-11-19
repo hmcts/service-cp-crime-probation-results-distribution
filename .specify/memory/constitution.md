@@ -1,6 +1,48 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 2.0.1 → 2.1.0
+Bump rationale: MINOR (2026-11-19; specs/007-replay-by-sequence-number).
+                DV-26 is widened. A copy of a `FAILED` request under its
+                exhausted `messageId` kept exactly one admission chance, at
+                broker delivery count 1, so a portal Re-send whose first
+                delivery was handed back before admission (store outage,
+                guard-read failure) was re-dead-lettered `exhausted` without
+                ever running. It is now also admitted at any count once
+                enqueued later than the request's parking plus a margin, and
+                the delivery that parked the request is recognised by its
+                broker sequence number and re-dead-lettered at any count.
+                MINOR, not MAJOR: the count-1 admission, PENDING deferral,
+                the support-origin route and the replay action are kept, so
+                no existing practice is invalidated; no DV id is allocated
+                (the same departure, widened). Agreed by the design owner
+                ahead of the design page's own amendment of A2-62 and A3-30.
+
+Modified sections (2.1.0):
+  - Principle I - the DV-26 clause of the deviation-register bullet.
+  - Technology Stack & Deployment - settlement item 2 (dead-letter) and the
+    two-replay-routes bullet.
+  - Governance - the design baseline names the 007 widening at 2.1.0.
+
+Templates requiring updates (2.1.0):
+  - .specify/templates/*.md                   ✅ compatible - no change.
+  - The Confluence design page (A2-62, A3-30, H9/DV-26) and
+    doc/design/DIGEST.md §4, §7, §11; doc/API_CONTRACTS.md (replay rule,
+    dead-letter reasons); doc/DEVIATIONS.md (DV-26 predicate and pinning
+    test); .claude/rules/design_rules.md, .claude/rules/technical-rules.md
+    and the .claude/agents/ definitions that state DV-26
+                                              ⚠ PENDING - amended before
+      007's code, contract first (FR-007-013 and its Dependencies); until
+      then this document wins where they disagree. The service still
+      applies the 2.0.1 rule until 007 is implemented.
+  - specs/004-recovery (FR-004-001, FR-004-002, FR-004-004)
+                                              ⚠ PENDING - amended by 007's
+      implementation, as its documents list sets out.
+  - Step 3 (`/speckit-analyze`): 007 is the only spec that changes DV-26;
+    004 is amended by it (above), and 005 names DV-26 only as the route a
+    dead-letter resubmission takes (005 spec, Out of Scope) - unaffected.
+
+Previous amendment (2.0.0 → 2.0.1):
 Version change: 2.0.0 → 2.0.1
 Bump rationale: PATCH (2026-10-21; design rev 3.6 + H35). H35 settles how
                 an expired `outbound_body` month is removed: a plain `DROP`
@@ -282,9 +324,11 @@ cases.
   like an improvement. DV ids are never reused: DV-01, DV-02, DV-03 and DV-15
   are withdrawn; DV-11 and DV-12 are unallocated until D10; DV-18 to DV-22 are
   reserved; DV-25 is the unreadable-switch default (H8); DV-26 admits a copy
-  resubmitted under the exhausted `messageId` at broker delivery count 1 as a
-  replay (H9; row A3-30) — a departure from the informant guard, registered
-  like any other; the next free id is **DV-27** (design §7.0). Two rows
+  resubmitted under the exhausted `messageId` as a replay at broker delivery
+  count 1, or at any count once it was enqueued later than the request's
+  parking plus a margin, and re-dead-letters the delivery carrying the parking
+  sequence number at any count (H9; row A3-30, widened by specs/007 at 2.1.0)
+  — a departure from the informant guard, registered like any other; the next free id is **DV-27** (design §7.0). Two rows
   changed meaning without a new id: DV-04 now retries in-run only a
   connection failure and 429 (H11, H15; rows A3-43, A3-54), and DV-08 rests
   on the processed-log guard alone (H14; row A3-53).
@@ -551,9 +595,11 @@ failure path therefore ends in exactly one of:
    or an admitted message whose final permitted delivery still leaves a
    `PARKED` leg (`leg-exhausted`, item 1). The reason set is closed:
    `{validation, collision, exhausted, leg-exhausted}` (row A2-34). A copy of
-   a `FAILED` request under its exhausted `messageId` is re-dead-lettered
-   `exhausted` only above broker delivery count 1; at count 1 it is admitted
-   as a replay (DV-26).
+   a `FAILED` request under its exhausted `messageId` is admitted as a replay
+   at broker delivery count 1, or at any count once enqueued later than the
+   request's parking plus a margin; otherwise it is re-dead-lettered
+   `exhausted`, as is the delivery carrying the parking sequence number at any
+   count (DV-26, as widened by specs/007).
 3. **Record a terminal failure and complete** — `receiver-rejected` (a 4xx
    other than 408 and 429, a 401 included) and `rules-exception` are terminal
    at once. `contract-invalid` is reserved and unreachable while validation is
@@ -833,8 +879,10 @@ here" change re-opens decisions the business has taken.
   - **Two replay routes** (H9; rows A3-30, A3-53): (a) a **resubmission from
     the dead-letter queue** with the broker tools — the route operations
     prefer; a copy under the exhausted `messageId` is admitted as a replay at
-    broker delivery count 1 and re-dead-lettered `exhausted` above it
-    (DV-26); (b) the service's **replay action** re-sends the command stored
+    broker delivery count 1, or at any count once enqueued later than the
+    request's parking plus a margin, and is otherwise re-dead-lettered
+    `exhausted`; the delivery carrying the parking sequence number is always
+    re-dead-lettered (DV-26, as widened by specs/007); (b) the service's **replay action** re-sends the command stored
     at admission (`processed_request.command`) byte for byte under a fresh
     `messageId` with `origin = REPLAY` (row A2-48) — the only route after a
     rollback purge (design §9.4 step 6a). The fresh id keeps the replay
@@ -1043,8 +1091,11 @@ The design — the Confluence page "Probation Results Distribution Service" in
 the CRA space
 (https://hmcts.atlassian.net/wiki/spaces/CRA/pages/343377459/Probation+Results+Distribution+Service),
 rev 3.1 at ratification, rev 3.3 at amendment 1.1.0 (H8 only), rev 3.6
-(2026-10-20; decisions H1–H34) at amendment 2.0.0, and its H35 (2026-10-21)
-at amendment 2.0.1 — is the source of truth for names and behaviour. Where a
+(2026-10-20; decisions H1–H34) at amendment 2.0.0, its H35 (2026-10-21)
+at amendment 2.0.1, and the widening of DV-26 specified in
+`specs/007-replay-by-sequence-number` (rows A2-62, A3-30; agreed by the design
+owner 2026-11-19, the page's own amendment to follow) at amendment 2.1.0 — is
+the source of truth for names and behaviour. Where a
 section of the page and rev 3.6 or H35 differ, the decision cited here
 applies and the difference is raised with the design owner.
 `doc/design/DIGEST.md` restates rev 3.6's rules and H35, each with its design
@@ -1080,4 +1131,4 @@ is adopted by amendment.
   reverted or registered retrospectively with named approval. DV ids are
   stable: renumber never, reuse never, append only.
 
-**Version**: 2.0.1 | **Ratified**: 2026-10-19 | **Last Amended**: 2026-10-21
+**Version**: 2.1.0 | **Ratified**: 2026-10-19 | **Last Amended**: 2026-11-19
