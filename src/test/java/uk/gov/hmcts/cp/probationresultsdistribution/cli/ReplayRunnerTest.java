@@ -45,6 +45,38 @@ class ReplayRunnerTest {
     }
 
     @Test
+    @DisplayName("an unrecognised flag is unreadable-argument, not silently dropped (PR #29 "
+            + "review)")
+    void refuses_an_unrecognised_flag() {
+        final ReplayRunner runner = new ReplayRunner(action);
+
+        assertThat(runner.run("replay", "--bogus", "x", "--request-id", REQUEST_ID.toString()))
+                .isEqualTo(RunnerOutcome.REFUSED);
+        verify(action, org.mockito.Mockito.never()).replay(any());
+    }
+
+    @Test
+    @DisplayName("--request-id given twice is unreadable-argument (PR #29 review)")
+    void refuses_a_duplicate_flag() {
+        final ReplayRunner runner = new ReplayRunner(action);
+
+        assertThat(runner.run("replay", "--request-id", REQUEST_ID.toString(), "--request-id",
+                REQUEST_ID.toString())).isEqualTo(RunnerOutcome.REFUSED);
+        verify(action, org.mockito.Mockito.never()).replay(any());
+    }
+
+    @Test
+    @DisplayName("a stray trailing token is unreadable-argument, not silently dropped (PR #29 "
+            + "review)")
+    void refuses_a_stray_trailing_token() {
+        final ReplayRunner runner = new ReplayRunner(action);
+
+        assertThat(runner.run("replay", "--request-id", REQUEST_ID.toString(), "extra"))
+                .isEqualTo(RunnerOutcome.REFUSED);
+        verify(action, org.mockito.Mockito.never()).replay(any());
+    }
+
+    @Test
     @DisplayName("answers done when the action enqueues")
     void answers_done_on_enqueue() {
         when(action.replay(REQUEST_ID)).thenReturn(new ReplayOutcome.Enqueued("REPLAY:abc"));

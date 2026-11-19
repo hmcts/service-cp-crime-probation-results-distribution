@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.cli;
 
 import java.util.Optional;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import uk.gov.hmcts.cp.probationresultsdistribution.application.SubmitHearingAction;
@@ -15,16 +16,26 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
  * {@code submit-hearing --hearing-id <uuid> --hearing-day <YYYY-MM-DD> --operator <name>
  * --reason <text>}.
  *
- * <p>The arguments are checked whole before anything is opened (FR-004-020) by the action's own
- * check ({@link SubmitHearingAction#check}), and the run calls that same {@link SubmitHearingAction}.
- * It prints {@code enqueued} with the {@code requestId}, the run id and the {@code messageId}, or a
- * bounded refusal or failure code — never the operator's name, the reason's text or any other
- * supplied value (FR-004-041). It is never refused for the intake state (FR-004-058).
+ * <p>The whole token stream is read by the shared {@link ArgumentParser} (FR-004-020; PR #29
+ * review) before anything else: an unrecognised flag, a flag given twice or a stray trailing token
+ * is {@code unreadable-argument}, and a flag given no real value because the next token is itself
+ * a flag is {@code missing-argument}, both refused before {@link SubmitHearingAction#check} ever
+ * runs. A readable token stream then goes to that same check, and the run calls that same
+ * {@link SubmitHearingAction}. It prints {@code enqueued} with the {@code requestId}, the run id
+ * and the {@code messageId}, or a bounded refusal or failure code — never the operator's name, the
+ * reason's text or any other supplied value (FR-004-041). It is never refused for the intake state
+ * (FR-004-058).
  */
 public final class SubmitHearingRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(SubmitHearingRunner.class);
     private static final String REFUSED = "submit-hearing refused reason={}";
+    private static final String HEARING_ID_FLAG = "--hearing-id";
+    private static final String HEARING_DAY_FLAG = "--hearing-day";
+    private static final String OPERATOR_FLAG = "--operator";
+    private static final String REASON_FLAG = "--reason";
+    private static final Set<String> VALUE_FLAGS = Set.of(HEARING_ID_FLAG, HEARING_DAY_FLAG,
+            OPERATOR_FLAG, REASON_FLAG);
 
     private final SubmitHearingAction action;
 
@@ -44,7 +55,9 @@ public final class SubmitHearingRunner {
      * @return the whole-run refusal, or empty when the arguments are readable
      */
     public static Optional<WholeRunRefusal> checkArguments(final String... args) {
-        return SubmitHearingAction.check(request(args));
+        final Parsed parsed = parse(args);
+        return parsed.refusal().isPresent() ? parsed.refusal()
+                : SubmitHearingAction.check(parsed.request().orElseThrow());
     }
 
     /**
@@ -54,14 +67,20 @@ public final class SubmitHearingRunner {
      * @return the bounded runner outcome
      */
     public RunnerOutcome run(final String... args) {
-        final SubmitHearingRequest request = request(args);
-        final Optional<WholeRunRefusal> refusal = SubmitHearingAction.check(request);
+        final Parsed parsed = parse(args);
         final RunnerOutcome outcome;
-        if (refusal.isPresent()) {
-            LOG.warn(REFUSED, refusal.get().value());
+        if (parsed.refusal().isPresent()) {
+            LOG.warn(REFUSED, parsed.refusal().get().value());
             outcome = RunnerOutcome.REFUSED;
         } else {
-            outcome = render(action.submit(request));
+            final SubmitHearingRequest request = parsed.request().orElseThrow();
+            final Optional<WholeRunRefusal> refusal = SubmitHearingAction.check(request);
+            if (refusal.isPresent()) {
+                LOG.warn(REFUSED, refusal.get().value());
+                outcome = RunnerOutcome.REFUSED;
+            } else {
+                outcome = render(action.submit(request));
+            }
         }
         return outcome;
     }
@@ -89,24 +108,29 @@ public final class SubmitHearingRunner {
         };
     }
 
-    private static SubmitHearingRequest request(final String... args) {
-        return new SubmitHearingRequest(valueOf(args, "--hearing-id"),
-                valueOf(args, "--hearing-day"), valueOf(args, "--operator"),
-                valueOf(args, "--reason"));
+    private static Parsed parse(final String... args) {
+        return switch (ArgumentParser.parse(args, VALUE_FLAGS, Set.of())) {
+            case ArgumentParser.Result.Refused refused -> Parsed.refused(refused.refusal());
+            case ArgumentParser.Result.Readable readable -> Parsed.readable(request(
+                    readable.arguments()));
+        };
     }
 
-    /**
-     * A flag's value; a flag given last, with no value after it, is present but blank, so it is
-     * refused {@code missing-argument}.
-     */
-    private static Optional<String> valueOf(final String[] args, final String flag) {
-        Optional<String> value = Optional.empty();
-        for (int i = 0; i < args.length; i++) {
-            if (flag.equals(args[i])) {
-                value = Optional.of(i + 1 < args.length ? args[i + 1] : "");
-                break;
-            }
+    private static SubmitHearingRequest request(final ArgumentParser arguments) {
+        return new SubmitHearingRequest(arguments.value(HEARING_ID_FLAG),
+                arguments.value(HEARING_DAY_FLAG), arguments.value(OPERATOR_FLAG),
+                arguments.value(REASON_FLAG));
+    }
+
+    /** The checked token stream: a refusal, or the request to check and run. */
+    private record Parsed(Optional<WholeRunRefusal> refusal, Optional<SubmitHearingRequest> request) {
+
+        /* default */ static Parsed refused(final WholeRunRefusal refusal) {
+            return new Parsed(Optional.of(refusal), Optional.empty());
         }
-        return value;
+
+        /* default */ static Parsed readable(final SubmitHearingRequest request) {
+            return new Parsed(Optional.empty(), Optional.of(request));
+        }
     }
 }

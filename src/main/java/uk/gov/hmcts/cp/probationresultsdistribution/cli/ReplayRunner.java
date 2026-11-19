@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.probationresultsdistribution.cli;
 
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,12 +14,15 @@ import uk.gov.hmcts.cp.probationresultsdistribution.domain.WholeRunRefusal;
  * The {@code replay} command-line runner (design §4.8 action 2; slice 004, FR-004-042;
  * {@code contracts/cli-runners.md} §1): {@code replay --request-id <uuid>}. Calls the same
  * {@link ReplayAction} the operations API will call (FR-004-005's "same application service"),
- * printing its bounded outcome and nothing else — no caller value is echoed (FR-004-020).
+ * printing its bounded outcome and nothing else — no caller value is echoed (FR-004-020). The
+ * whole token stream is read by the shared {@link ArgumentParser} (PR #29 review): an unrecognised
+ * flag, a flag given twice or a stray trailing token is {@code unreadable-argument}.
  */
 public final class ReplayRunner {
 
     private static final Logger LOG = LoggerFactory.getLogger(ReplayRunner.class);
     private static final String REQUEST_ID_FLAG = "--request-id";
+    private static final Set<String> VALUE_FLAGS = Set.of(REQUEST_ID_FLAG);
 
     private final ReplayAction action;
 
@@ -40,16 +44,7 @@ public final class ReplayRunner {
      * @return the refusal, or empty when the arguments can be run
      */
     public static Optional<WholeRunRefusal> checkArguments(final String... args) {
-        final String raw = valueOf(args, REQUEST_ID_FLAG);
-        final Optional<WholeRunRefusal> refusal;
-        if (raw == null || raw.isBlank()) {
-            refusal = Optional.of(WholeRunRefusal.MISSING_ARGUMENT);
-        } else if (parse(raw).isEmpty()) {
-            refusal = Optional.of(WholeRunRefusal.UNREADABLE_ARGUMENT);
-        } else {
-            refusal = Optional.empty();
-        }
-        return refusal;
+        return parse(args).refusal();
     }
 
     /**
@@ -59,18 +54,38 @@ public final class ReplayRunner {
      * @return the bounded runner outcome
      */
     public RunnerOutcome run(final String... args) {
-        final Optional<WholeRunRefusal> refusal = checkArguments(args);
+        final Parsed parsed = parse(args);
         final RunnerOutcome outcome;
-        if (refusal.isPresent()) {
-            LOG.warn("replay refused {}: --request-id", refusal.get().value());
+        if (parsed.refusal().isPresent()) {
+            LOG.warn("replay refused {}: --request-id", parsed.refusal().get().value());
             outcome = RunnerOutcome.REFUSED;
         } else {
-            outcome = render(action.replay(parse(valueOf(args, REQUEST_ID_FLAG)).orElseThrow()));
+            outcome = render(action.replay(parsed.requestId().orElseThrow()));
         }
         return outcome;
     }
 
-    private static Optional<UUID> parse(final String raw) {
+    private static Parsed parse(final String... args) {
+        return switch (ArgumentParser.parse(args, VALUE_FLAGS, Set.of())) {
+            case ArgumentParser.Result.Refused refused -> Parsed.refused(refused.refusal());
+            case ArgumentParser.Result.Readable readable -> fromArguments(readable.arguments());
+        };
+    }
+
+    private static Parsed fromArguments(final ArgumentParser arguments) {
+        final Optional<String> raw = arguments.value(REQUEST_ID_FLAG);
+        final Parsed parsed;
+        if (raw.isEmpty() || raw.get().isBlank()) {
+            parsed = Parsed.refused(WholeRunRefusal.MISSING_ARGUMENT);
+        } else {
+            final Optional<UUID> requestId = uuid(raw.get());
+            parsed = requestId.isEmpty() ? Parsed.refused(WholeRunRefusal.UNREADABLE_ARGUMENT)
+                    : new Parsed(Optional.empty(), requestId);
+        }
+        return parsed;
+    }
+
+    private static Optional<UUID> uuid(final String raw) {
         Optional<UUID> parsed;
         try {
             parsed = Optional.of(UUID.fromString(raw));
@@ -106,14 +121,11 @@ public final class ReplayRunner {
         };
     }
 
-    private static String valueOf(final String[] args, final String flag) {
-        String value = null;
-        for (int i = 0; i < args.length - 1; i++) {
-            if (flag.equals(args[i])) {
-                value = args[i + 1];
-                break;
-            }
+    /** The checked arguments: a refusal, or the request id to run. */
+    private record Parsed(Optional<WholeRunRefusal> refusal, Optional<UUID> requestId) {
+
+        /* default */ static Parsed refused(final WholeRunRefusal refusal) {
+            return new Parsed(Optional.of(refusal), Optional.empty());
         }
-        return value;
     }
 }
