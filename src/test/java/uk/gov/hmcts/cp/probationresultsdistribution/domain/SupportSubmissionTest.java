@@ -63,4 +63,17 @@ class SupportSubmissionTest {
         assertThat(SupportSubmission.fromProperties(null, null, raw).reason())
                 .isEqualTo("x".repeat(198) + SMILE);
     }
+
+    @Test
+    @DisplayName("the REPLAYED_AFTER_FAILURE marker is escaped out of every value before it "
+            + "reaches audit_note (FR-004-012; PR #29 review): this is the actual admission write "
+            + "path, reached from whatever application properties a delivery marked "
+            + "origin = SUPPORT carries, not only submit-hearing's own runner")
+    void fromProperties_escapesTheReplayMarker() {
+        final SupportSubmission markers = SupportSubmission.fromProperties("replayed_after_failure",
+                "run-id", "see REPLAYED_AFTER_FAILURE ticket");
+
+        assertThat(markers.operator()).isEqualTo("REPLAYED-AFTER-FAILURE");
+        assertThat(markers.reason()).isEqualTo("see REPLAYED-AFTER-FAILURE ticket");
+    }
 }

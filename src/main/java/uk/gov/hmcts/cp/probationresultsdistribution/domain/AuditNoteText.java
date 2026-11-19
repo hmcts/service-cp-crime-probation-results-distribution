@@ -1,4 +1,4 @@
-package uk.gov.hmcts.cp.probationresultsdistribution.application;
+package uk.gov.hmcts.cp.probationresultsdistribution.domain;
 
 import java.util.regex.Pattern;
 
@@ -10,13 +10,21 @@ import java.util.regex.Pattern;
  * {@code JdbcProcessedRequestRepository#markCompleted} scans {@code audit_note} for, unanchored
  * and case-insensitive, to decide a completion is {@code recovered} — is escaped out of the text.
  * Without this, an operator's own reason or name could plant that marker and make an unrelated
- * completion of the same request read as a replay recovery it never was. Every caller that appends
- * to {@code audit_note} with operator-supplied text — {@link LegResender}'s forced-resend line,
- * {@link SubmitHearingAction}'s submit-hearing admission line, and
- * {@link CloseExpiredResendAction}'s close line — sanitises through this one method, so the rule
- * cannot drift between them.
+ * completion of the same request read as a replay recovery it never was.
+ *
+ * <p>In {@code domain}, not {@code application}, so {@link SupportSubmission} can share it too:
+ * {@code application.SubmitHearingAction}'s own sanitising only covers the application properties
+ * it puts on the broker message it sends, never the submit-hearing admission's own
+ * {@code audit_note} line, which is written from {@code SupportSubmission.fromProperties} reading
+ * whatever the delivered message actually carries — a message marked {@code origin = SUPPORT}
+ * admitted from anywhere else on the queue, not only this service's own runner, reaches
+ * {@code audit_note} through this class, never {@code SubmitHearingAction}'s. Every other
+ * operator-supplied-text writer — {@code LegResender}'s forced-resend line,
+ * {@code CloseExpiredResendAction}'s close line, and {@code SubmitHearingAction}'s own broker
+ * properties — sanitises through this one method too, so the rule cannot drift between any of
+ * them.
  */
-final class AuditNoteText {
+public final class AuditNoteText {
 
     private static final Pattern CONTROL_CHARACTERS = Pattern.compile("\\p{Cntrl}+");
     private static final Pattern REPLAY_MARKER =
@@ -32,7 +40,7 @@ final class AuditNoteText {
      * @param text the raw operator or reason text, never {@code null}
      * @return the text, safe to append to {@code audit_note}
      */
-    /* default */ static String oneLine(final String text) {
+    public static String oneLine(final String text) {
         final String collapsed = CONTROL_CHARACTERS.matcher(text).replaceAll(" ").strip();
         return REPLAY_MARKER.matcher(collapsed).replaceAll(REPLAY_MARKER_ESCAPED);
     }

@@ -4,6 +4,7 @@ import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import uk.gov.hmcts.cp.probationresultsdistribution.domain.AuditNoteText;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.CloseExpiredResendRepository;
 import uk.gov.hmcts.cp.probationresultsdistribution.persistence.CloseExpiredResendRepository.CloseExpiredResendResult;
 
